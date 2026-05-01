@@ -1,0 +1,14 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+
+config/proxy-config.json
+!config/proxy-config.example.json
+
+var/
+.learnings/
+.agentdocs/tmp/
+
+__served_dashboard.html
+current_dashboard_response.html

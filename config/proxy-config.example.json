@@ -1,0 +1,50 @@
+{
+  "pools": [
+    {
+      "name": "primary",
+      "enabled": true,
+      "priority": 100,
+      "urls": [
+        "https://your-upstream.example/v1"
+      ],
+      "keys": [
+        {
+          "key": "sk-your-upstream-key"
+        }
+      ],
+      "route_policy": {
+        "reasoning_effort": "high",
+        "prompt_cache_mode": "exact",
+        "compression_mode": "balanced",
+        "max_history_messages": 24,
+        "max_tool_chars": 24000,
+        "max_input_chars": 180000,
+        "max_output_tokens": 0
+      }
+    }
+  ],
+  "model_aliases_text": "deepseek-v4-flash=deepseek-ai/deepseek-v4-flash\ndeepseek-v4-pro=deepseek-ai/deepseek-v4-pro",
+  "model_capabilities_text": "# model=context_tokens,max_output_tokens\ndeepseek-v4-flash=1048576,393216\ndeepseek-v4-pro=1048576,393216",
+  "request_timeout": 600,
+  "force_upstream_chat_stream": true,
+  "enable_request_normalization": true,
+  "max_completion_tokens": 0,
+  "inject_zh_system_prompt": true,
+  "proxy_system_prompt_zh": "",
+  "max_retries": 12,
+  "retry_backoff_ms": 1200,
+  "retry_max_backoff_ms": 6000,
+  "route_switch_window_seconds": 60,
+  "randomize_endpoints": true,
+  "image_upstream_protocol": "auto",
+  "image_task_poll_timeout_seconds": 90,
+  "image_task_poll_interval_seconds": 2,
+  "enable_model_probe": true,
+  "model_probe_timeout_seconds": 4,
+  "model_probe_ttl_seconds": 300,
+  "model_route_cache_ttl_seconds": 86400,
+  "request_cache_ttl_seconds": 900,
+  "enable_model_candidate_race": true,
+  "model_candidate_race_limit": 3,
+  "model_candidate_race_timeout_seconds": 8
+}

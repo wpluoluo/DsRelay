@@ -1,0 +1,2515 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>代理控制台</title>
+  <style>
+    /* ===== CSS Variables ===== */
+    :root {
+      --bg: #f5f6f8;
+      --bg-alt: #eaecf0;
+      --surface: #ffffff;
+      --surface-alt: #f8f9fb;
+      --border: #e2e5ea;
+      --border-light: #eef0f3;
+      --ink: #101214;
+      --ink-soft: #1d1f23;
+      --muted: #5e636e;
+      --muted-soft: #8b9099;
+      --accent: #0d9488;
+      --accent-strong: #0f766e;
+      --accent-glow: rgba(13, 148, 136, 0.18);
+      --accent-soft: #f0fdfa;
+      --green: #059669;
+      --green-soft: #ecfdf5;
+      --green-glow: rgba(5, 150, 105, 0.15);
+      --warn: #d97706;
+      --warn-soft: #fffbeb;
+      --error: #dc2626;
+      --error-soft: #fef2f2;
+      --sidebar-w: 224px;
+      --radius-sm: 8px;
+      --radius-md: 10px;
+      --radius-lg: 12px;
+      --radius-xl: 16px;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.03);
+      --shadow-md: 0 2px 8px rgba(0,0,0,0.05);
+      --shadow-lg: 0 4px 16px rgba(0,0,0,0.07);
+      --transition: 160ms cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* ===== Dark Theme ===== */
+    [data-theme="dark"] {
+      --bg: #0d1117;
+      --bg-alt: #111820;
+      --surface: #151b24;
+      --surface-alt: #1a202b;
+      --border: #212837;
+      --border-light: #1c2430;
+      --ink: #e1e4e8;
+      --ink-soft: #c9cdd3;
+      --muted: #6e7681;
+      --muted-soft: #545d68;
+      --accent: #2dd4bf;
+      --accent-strong: #14b8a6;
+      --accent-glow: rgba(45, 212, 191, 0.2);
+      --accent-soft: #0d2e2b;
+      --green: #34d399;
+      --green-soft: #0a2e22;
+      --green-glow: rgba(52, 211, 153, 0.2);
+      --warn: #fbbf24;
+      --warn-soft: #2d2408;
+      --error: #f87171;
+      --error-soft: #2d1014;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.18);
+      --shadow-md: 0 2px 8px rgba(0,0,0,0.25);
+      --shadow-lg: 0 4px 16px rgba(0,0,0,0.35);
+    }
+
+    /* ===== Reset ===== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Inter", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+      display: flex;
+      min-height: 100vh;
+    }
+    a, button, input, textarea, select { font: inherit; color: inherit; }
+    button { cursor: pointer; border: 0; background: none; }
+    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    /* ===== Sidebar ===== */
+    .sidebar {
+      position: fixed;
+      top: 0; left: 0; bottom: 0;
+      width: var(--sidebar-w);
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      z-index: 50;
+      transition: transform var(--transition);
+    }
+    .sidebar-brand {
+      padding: 22px 20px 18px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      border-bottom: 1px solid var(--border-light);
+    }
+    .sidebar-logo {
+      width: 38px; height: 38px;
+      border-radius: 11px;
+      background: linear-gradient(135deg, #0f766e, #0d9488);
+      box-shadow: 0 2px 8px rgba(13, 148, 136, 0.18);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      flex: none;
+    }
+    .sidebar-title {
+      font-size: 15px;
+      font-weight: 800;
+      line-height: 1.2;
+      color: var(--ink);
+    }
+    .sidebar-sub {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .sidebar-nav {
+      flex: 1;
+      padding: 14px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      overflow-y: auto;
+    }
+    .sidebar-nav button {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 11px 14px;
+      border-radius: var(--radius-sm);
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--muted);
+      transition: all var(--transition);
+      text-align: left;
+    }
+    .sidebar-nav button .nav-icon { font-size: 17px; width: 24px; text-align: center; flex: none; }
+    .sidebar-nav button:hover { background: var(--accent-soft); color: var(--accent); }
+    .sidebar-nav button.is-active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      box-shadow: inset 3px 0 0 var(--accent);
+      font-weight: 700;
+    }
+    .sidebar-footer {
+      padding: 12px;
+      border-top: 1px solid var(--border-light);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .sidebar-footer .status-dot {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      font-size: 11.5px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .status-dot::before {
+      content: "";
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green-glow);
+      flex: none;
+    }
+    .theme-toggle {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+      background: var(--surface-alt);
+      transition: all var(--transition);
+      width: 100%;
+    }
+    .theme-toggle:hover { background: var(--accent-soft); color: var(--accent); }
+    .theme-toggle .toggle-track {
+      width: 40px; height: 22px;
+      border-radius: 11px;
+      background: var(--border);
+      position: relative;
+      transition: background var(--transition);
+      flex: none;
+      margin-left: auto;
+    }
+    .theme-toggle .toggle-thumb {
+      position: absolute;
+      top: 3px; left: 3px;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+      transition: transform var(--transition);
+    }
+    [data-theme="dark"] .toggle-track { background: var(--accent); }
+    [data-theme="dark"] .toggle-thumb { transform: translateX(18px); }
+
+    /* ===== Main ===== */
+    .main-wrap {
+      margin-left: var(--sidebar-w);
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      padding: 16px 28px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .topbar-left h1 {
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--ink);
+      line-height: 1.2;
+    }
+    .topbar-left .eyebrow {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 2px;
+    }
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 13px;
+      border-radius: 999px;
+      font-size: 11.5px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .pill.ok { background: var(--green-soft); color: var(--green); }
+    .pill.warn { background: var(--warn-soft); color: var(--warn); }
+    .pill.accent { background: var(--accent-soft); color: var(--accent); }
+    .endpoint-tag {
+      padding: 6px 13px;
+      border-radius: 999px;
+      font-size: 11.5px;
+      font-weight: 600;
+      background: var(--surface-alt);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      font-family: "Cascadia Code", "JetBrains Mono", "Consolas", monospace;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 15px;
+      border-radius: var(--radius-sm);
+      font-size: 12.5px;
+      font-weight: 700;
+      transition: all var(--transition);
+      white-space: nowrap;
+    }
+    .btn-primary { background: var(--accent); color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .btn-primary:hover { background: var(--accent-strong); transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0,0,0,0.12); }
+    .btn-ghost { color: var(--muted); border: 1px solid var(--border); }
+    .btn-ghost:hover { background: var(--surface-alt); color: var(--ink); }
+
+    /* ===== Page Content ===== */
+    .page {
+      flex: 1;
+      padding: 24px 28px 36px;
+    }
+    .view { display: none; }
+    .view.is-active { display: grid; gap: 20px; }
+
+    /* ===== Hero Row ===== */
+    .hero-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .hero-card {
+      padding: 24px 28px;
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero-card::after {
+      content: "";
+      position: absolute;
+      top: -60px; right: -60px;
+      width: 180px; height: 180px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(13,148,136,0.06), transparent 70%);
+      pointer-events: none;
+    }
+    .hero-card h2 { font-size: 22px; font-weight: 800; position: relative; z-index: 1; }
+    .hero-card .hero-val {
+      font-size: 28px;
+      font-weight: 800;
+      color: var(--accent);
+      position: relative;
+      z-index: 1;
+    }
+    .hero-card .hero-sub { font-size: 12.5px; color: var(--muted); position: relative; z-index: 1; }
+
+    /* ===== Stat Row ===== */
+    .stat-row {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 10px;
+    }
+    .stat-card {
+      padding: 16px;
+      border-radius: var(--radius-md);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      position: relative;
+      overflow: hidden;
+      transition: all var(--transition);
+    }
+    .stat-card:hover {
+      border-color: var(--accent);
+      box-shadow: var(--shadow-md);
+      transform: translateY(-1px);
+    }
+    .stat-card .stat-icon { font-size: 20px; }
+    .stat-card .stat-label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .stat-card .stat-value { font-size: 26px; font-weight: 800; color: var(--ink); line-height: 1; }
+    .stat-card .stat-bar {
+      height: 4px;
+      border-radius: 2px;
+      background: var(--border);
+      margin-top: 4px;
+      overflow: hidden;
+    }
+    .stat-card .stat-bar-fill {
+      height: 100%;
+      border-radius: 2px;
+      background: var(--accent);
+      transition: width 600ms cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* ===== Panel ===== */
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-sm);
+      padding: 22px 24px;
+    }
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .panel-head h3 { font-size: 15px; font-weight: 800; }
+    .panel-head .subtle { font-size: 12px; color: var(--muted); }
+
+    /* ===== Grid layouts ===== */
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .grid-2-3 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .grid-4 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+
+    /* ===== Info cards ===== */
+    .info-card {
+      padding: 15px 18px;
+      border-radius: var(--radius-md);
+      background: var(--surface-alt);
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: all var(--transition);
+    }
+    .info-card:hover { border-color: var(--accent); }
+    .info-card .ic-label { font-size: 10.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    .info-card .ic-value { font-size: 16px; font-weight: 800; color: var(--ink); }
+    .info-card .ic-sub { font-size: 11.5px; color: var(--muted); }
+
+    /* ===== Capability ===== */
+    .capability-card {
+      padding: 12px 14px;
+      border-radius: var(--radius-md);
+      background: var(--surface-alt);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 12.5px;
+      color: var(--ink-soft);
+      transition: all var(--transition);
+    }
+    .capability-card:hover { border-color: var(--accent); }
+    .cap-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-soft);
+      flex: none;
+      margin-top: 5px;
+    }
+    /* Capability Tabs */
+    .cap-tabs {
+      display: flex; gap: 4px; flex-wrap: wrap;
+      padding: 8px 0 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px;
+    }
+    .cap-tab {
+      font-size: 12px; font-weight: 600; padding: 6px 14px;
+      border-radius: 7px; cursor: pointer; user-select: none;
+      background: transparent; color: var(--muted); border: none;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .cap-tab:hover { background: var(--bg-alt); color: var(--ink-soft); }
+    .cap-tab.active { background: var(--accent); color: #fff; }
+    .cap-tab .cap-tab-count {
+      display: inline-block; background: rgba(255,255,255,0.25); color: inherit;
+      font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 5px;
+      font-weight: 700;
+    }
+    .cap-tab:not(.active) .cap-tab-count { background: var(--bg); color: var(--muted-soft); }
+    .cap-panel { display: none; }
+    .cap-panel.active { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    @media (max-width: 760px) {
+      .cap-panel.active { grid-template-columns: 1fr; }
+    }
+
+    /* ===== Sparkline ===== */
+    .sparkline { display: flex; align-items: flex-end; gap: 3px; height: 32px; }
+    .sparkline .spark-bar {
+      flex: 1;
+      border-radius: 2px 2px 0 0;
+      background: var(--accent);
+      min-height: 4px;
+      opacity: 0.7;
+      transition: height 400ms ease;
+    }
+
+    /* ===== Request cards ===== */
+    .req-list { display: grid; gap: 8px; max-height: 64vh; overflow: auto; }
+    .req-card {
+      padding: 14px 16px;
+      border-radius: var(--radius-md);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      display: grid;
+      gap: 8px;
+      transition: all var(--transition);
+    }
+    .req-card:hover { border-color: var(--accent); }
+    .req-top { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .req-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      background: var(--surface-alt);
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+    .req-badge.err { background: var(--error-soft); color: var(--error); border-color: transparent; }
+    .req-badge.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+    .req-badge.ok { background: var(--green-soft); color: var(--green); border-color: transparent; }
+    .req-badge.accent { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+    .req-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 11px; color: var(--muted); }
+    .req-preview {
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: var(--surface-alt);
+      color: var(--muted);
+      font-size: 11.5px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      font-family: "Cascadia Code", "JetBrains Mono", "Consolas", monospace;
+    }
+    .request-workbench { padding: 0; overflow: hidden; }
+    .request-filter-bar {
+      padding: 12px 16px 10px;
+      border-bottom: 1px solid var(--border);
+      display: grid;
+      gap: 10px;
+      background: var(--surface);
+    }
+    .filter-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px 10px;
+    }
+    .filter-field { display: grid; gap: 5px; }
+    .filter-field span {
+      font-size: 10.5px;
+      font-weight: 700;
+      color: var(--muted);
+      letter-spacing: .02em;
+    }
+    .filter-field input, .request-scope-select {
+      width: 100%;
+      min-height: 34px;
+      padding: 7px 11px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface-alt);
+      color: var(--ink);
+      outline: none;
+      transition: all var(--transition);
+    }
+    .filter-field input:focus, .request-scope-select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+      background: var(--surface);
+    }
+    .filter-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .request-table-wrap { overflow: auto; max-height: calc(100vh - 224px); }
+    .request-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      min-width: 1280px;
+      font-size: 12px;
+      table-layout: fixed;
+    }
+    .request-table thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 11.5px;
+      font-weight: 800;
+      text-align: left;
+      padding: 9px 8px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .request-table tbody td {
+      padding: 8px 8px;
+      border-bottom: 1px solid var(--border-light);
+      vertical-align: top;
+      line-height: 1.38;
+    }
+    .request-table tbody tr:hover { background: rgba(13, 148, 136, 0.03); }
+    .request-empty {
+      padding: 22px 16px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 12.5px;
+    }
+    .request-stack { display: grid; gap: 4px; min-width: 0; }
+    .request-cell-title { font-weight: 700; color: var(--ink); font-size: 12px; overflow-wrap: anywhere; }
+    .request-cell-sub { font-size: 11px; color: var(--muted); line-height: 1.35; overflow-wrap: anywhere; }
+    .request-chip-row { display: flex; gap: 4px; flex-wrap: wrap; }
+    .request-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 7px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+      background: var(--surface-alt);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .request-ellipsis {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .request-chip.ok { background: #e9f8ef; color: #1f7a45; border-color: transparent; }
+    .request-chip.warn { background: #fff3df; color: #a85f04; border-color: transparent; }
+    .request-chip.err { background: #fdebec; color: #c2363d; border-color: transparent; }
+    .request-chip.accent { background: #eaf7f6; color: #0f766e; border-color: transparent; }
+    .request-mono {
+      font-family: "Cascadia Code", "JetBrains Mono", "Consolas", monospace;
+      word-break: break-word;
+    }
+
+    /* ===== Log workbench ===== */
+    .log-panel { padding: 0; overflow: hidden; }
+    .log-filter-bar {
+      padding: 12px 16px 10px;
+      border-bottom: 1px solid var(--border);
+      display: grid;
+      gap: 10px;
+      background: var(--surface);
+    }
+    .log-table-wrap { overflow: auto; max-height: calc(100vh - 224px); }
+    .log-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      min-width: 1380px;
+      font-size: 12px;
+      table-layout: fixed;
+    }
+    .log-table thead th:nth-child(1),
+    .log-table tbody td:nth-child(1) {
+      width: 168px;
+      min-width: 168px;
+      white-space: nowrap;
+    }
+    .log-table thead th:nth-child(2),
+    .log-table tbody td:nth-child(2) {
+      width: 74px;
+      min-width: 74px;
+      white-space: nowrap;
+    }
+    .log-table thead th:nth-child(3),
+    .log-table tbody td:nth-child(3) {
+      width: 108px;
+      min-width: 108px;
+      white-space: nowrap;
+    }
+    .log-table thead th:nth-child(4),
+    .log-table tbody td:nth-child(4) {
+      width: 116px;
+      min-width: 116px;
+    }
+    .log-table thead th:nth-child(5),
+    .log-table tbody td:nth-child(5) {
+      width: 132px;
+      min-width: 132px;
+    }
+    .log-table thead th:nth-child(6),
+    .log-table tbody td:nth-child(6) {
+      width: 210px;
+      min-width: 210px;
+    }
+    .log-table thead th:nth-child(7),
+    .log-table tbody td:nth-child(7) {
+      width: auto;
+    }
+    .log-table thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 11.5px;
+      font-weight: 800;
+      text-align: left;
+      padding: 9px 8px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .log-table tbody td {
+      padding: 8px 8px;
+      border-bottom: 1px solid var(--border-light);
+      vertical-align: top;
+      line-height: 1.38;
+    }
+    .log-table tbody tr:hover { background: rgba(13, 148, 136, 0.03); }
+    .log-level-chip.info { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+    .log-level-chip.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+    .log-level-chip.error { background: var(--error-soft); color: var(--error); border-color: transparent; }
+    .log-level-chip.debug { background: var(--surface-alt); color: var(--muted); }
+    .log-message {
+      font-family: "Cascadia Code", "JetBrains Mono", "Consolas", "SF Mono", monospace;
+      font-size: 11px;
+      color: var(--ink-soft);
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: break-word;
+      display: -webkit-box;
+      -webkit-line-clamp: 4;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .log-event {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+    }
+    .log-event-title {
+      font-size: 11.5px;
+      font-weight: 700;
+      color: var(--ink);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .log-subtle {
+      font-size: 10.5px;
+      color: var(--muted);
+      line-height: 1.3;
+    }
+    .log-route {
+      font-family: "Cascadia Code", "JetBrains Mono", "Consolas", monospace;
+      font-size: 10.5px;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* ===== Config ===== */
+    .config-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1.6fr) 370px;
+      gap: 18px;
+      align-items: start;
+    }
+    .config-form { display: grid; gap: 16px; }
+    .config-tab-panel { display: none; gap: 16px; }
+    .config-tab-panel.active { display: grid; }
+    .config-section { display: grid; gap: 12px; }
+    .config-section + .config-section { padding-top: 18px; border-top: 1px solid var(--border); }
+    .config-section h4 { font-size: 13.5px; font-weight: 800; color: var(--ink); }
+    .field { display: grid; gap: 5px; }
+    .field label { font-size: 12px; font-weight: 700; color: var(--muted); }
+    .field input, .field textarea, .field select {
+      width: 100%;
+      padding: 10px 13px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface-alt);
+      color: var(--ink);
+      font-size: 14px;
+      outline: none;
+      transition: all var(--transition);
+    }
+    .field textarea { min-height: 100px; line-height: 1.5; resize: vertical; }
+    .field input:focus, .field textarea:focus, .field select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+      background: var(--surface);
+    }
+    .config-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .config-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .config-grid-3i { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .field.full { grid-column: 1 / -1; }
+    /* Pool Manager */
+    .pool-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .pool-overview-list { display: grid; gap: 10px; }
+    .pool-overview-card { border: 1px solid var(--border); border-radius: 10px; background: var(--surface-alt); overflow: hidden; }
+    .pool-overview-head { display: flex; align-items: center; gap: 12px; padding: 12px 14px; }
+    .pool-collapse-btn { width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); display: inline-flex; align-items: center; justify-content: center; color: var(--muted); transition: all var(--transition); }
+    .pool-collapse-btn:hover { color: var(--ink); border-color: var(--accent); }
+    .pool-collapse-btn svg { transition: transform var(--transition); }
+    .pool-overview-card.is-collapsed .pool-collapse-btn svg { transform: rotate(-90deg); }
+    .pool-overview-main { min-width: 0; flex: 1; display: grid; gap: 4px; }
+    .pool-overview-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+    .pool-overview-title { font-size: 13.5px; font-weight: 800; color: var(--ink); }
+    .pool-overview-meta { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pool-badge { display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; background: var(--surface); border: 1px solid var(--border); color: var(--muted); }
+    .pool-badge.ok { color: var(--green); background: var(--green-soft); border-color: transparent; }
+    .pool-badge.off { color: var(--muted); background: var(--surface); }
+    .pool-overview-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .pool-test-result {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--surface-alt);
+      display: grid;
+      gap: 10px;
+    }
+    .pool-test-route {
+      padding: 10px 12px;
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      display: grid;
+      gap: 8px;
+    }
+    .pool-test-route-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+      font-size: 12.5px;
+    }
+    .pool-test-key-list {
+      display: grid;
+      gap: 6px;
+    }
+    .pool-test-key {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 10px;
+      align-items: center;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .pool-test-key strong { color: var(--ink); font-weight: 700; }
+    .pool-test-status-ok { color: var(--green); font-weight: 700; }
+    .pool-test-status-err { color: var(--error); font-weight: 700; }
+    .pool-inline-btn { display: inline-flex; align-items: center; gap: 5px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 700; transition: all var(--transition); }
+    .pool-inline-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .pool-inline-btn.primary { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    .pool-inline-btn.primary:hover { border-color: var(--accent-strong); color: var(--accent-strong); background: var(--accent-soft); }
+    .pool-inline-btn.danger:hover { border-color: var(--error); color: var(--error); background: var(--error-soft); }
+    .pool-inline-btn:disabled { opacity: 0.45; cursor: default; }
+    .pool-overview-body { border-top: 1px solid var(--border); padding: 12px 14px; display: grid; gap: 10px; }
+    .pool-overview-card.is-collapsed .pool-overview-body { display: none; }
+    .pool-inline-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .pool-inline-block { display: grid; gap: 6px; }
+    .pool-inline-block label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .pool-inline-item { min-height: 34px; display: flex; align-items: center; padding: 8px 10px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); font-size: 12px; color: var(--ink); font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pool-inline-empty { font-size: 12px; color: var(--muted-soft); padding: 6px 2px; }
+    .pool-test-inline { display: grid; gap: 8px; padding-top: 2px; }
+    .pool-test-inline-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .pool-test-inline-title { font-size: 11px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .pool-test-inline-route { display: grid; gap: 6px; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); }
+    .pool-test-inline-route-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .pool-test-inline-route-url { font-size: 11.5px; color: var(--ink); font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; }
+    .pool-test-inline-key { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(160px, 1.2fr); gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+    .pool-test-inline-empty { font-size: 12px; color: var(--muted-soft); }
+    .pool-card { background: var(--surface-alt); border: 1px solid var(--border); border-radius: 10px; padding: 16px; display: grid; gap: 12px; }
+    .pool-card-header { display: flex; align-items: center; gap: 10px; }
+    .pool-card-header .pool-name { flex: 1; font-weight: 700; font-size: 13px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); outline: none; }
+    .pool-card-header .pool-name:focus { border-color: var(--accent); }
+    .pool-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--muted); cursor: pointer; user-select: none; }
+    .pool-toggle input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+    .pool-card-body { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .pool-urls, .pool-keys { display: grid; gap: 6px; }
+    .pool-urls label, .pool-keys label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
+    .pool-entry-row { display: flex; gap: 6px; align-items: center; }
+    .pool-entry-row input { flex: 1; font-size: 12px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); outline: none; font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; }
+    .pool-entry-row input:focus { border-color: var(--accent); }
+    .pool-entry-row .btn-icon { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--muted); cursor: pointer; font-size: 15px; line-height: 1; padding: 0; transition: all 0.15s; }
+    .pool-entry-row .btn-icon:hover { border-color: var(--error); color: var(--error); background: var(--error-soft); }
+    .pool-entry-row .btn-icon.add:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    @media (max-width: 760px) {
+      .pool-overview-head { align-items: flex-start; }
+      .pool-overview-actions { width: 100%; }
+      .pool-inline-grid, .pool-card-body { grid-template-columns: 1fr; }
+      .filter-grid { grid-template-columns: 1fr; }
+      .request-filter-bar { padding: 12px; }
+    }
+    /* Modal */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(16, 18, 20, 0.55);
+      z-index: 1000; align-items: center; justify-content: center; padding: 20px;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal-panel {
+      background: var(--surface); border-radius: 14px; width: 100%; max-width: 780px;
+      max-height: 85vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+      overflow: hidden;
+    }
+    .modal-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 22px; border-bottom: 1px solid var(--border);
+    }
+    .modal-head h3 { margin: 0; font-size: 15px; font-weight: 700; color: var(--ink); }
+    .modal-close {
+      background: none; border: none; font-size: 24px; color: var(--muted); cursor: pointer;
+      padding: 0 4px; line-height: 1; border-radius: 6px;
+    }
+    .modal-close:hover { color: var(--ink); background: var(--bg-alt); }
+    .modal-body { padding: 20px 22px; overflow-y: auto; flex: 1; }
+    .modal-foot {
+      display: flex; gap: 10px; padding: 14px 22px; border-top: 1px solid var(--border);
+      justify-content: flex-end;
+    }
+    .modal-form-grid { display: grid; gap: 14px; }
+    .check-card {
+      padding: 13px 14px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+      background: var(--surface-alt);
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+    .check-card:hover { border-color: var(--accent); }
+    .check-card:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+    .check-card input { width: 16px; height: 16px; margin-top: 1px; accent-color: var(--accent); flex: none; }
+    .check-card strong { display: block; font-size: 13px; margin-bottom: 3px; color: var(--ink); }
+    .check-card .subtle { font-size: 11.5px; color: var(--muted); }
+    .check-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .status-msg { font-size: 12px; min-height: 18px; color: var(--muted); }
+    .status-msg.ok { color: var(--green); }
+    .status-msg.warn { color: var(--warn); }
+    .status-msg.err { color: var(--error); }
+    details {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--surface-alt);
+      padding: 12px 14px;
+    }
+    summary { font-weight: 700; cursor: pointer; color: var(--muted); list-style: none; }
+    summary::-webkit-details-marker { display: none; }
+    .sticky-side {
+      position: sticky;
+      top: 84px;
+      display: grid;
+      gap: 14px;
+    }
+    .sticky-side .grid-4 { grid-template-columns: 1fr; }
+
+    /* ===== Empty state ===== */
+    .empty-state {
+      padding: 32px 16px;
+      border: 1px dashed var(--border);
+      border-radius: var(--radius-md);
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+      background: var(--surface-alt);
+    }
+
+    /* ===== Channel badges ===== */
+    .channel-row { display: flex; flex-wrap: wrap; gap: 6px; }
+    .channel-badge {
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 11.5px;
+      font-weight: 600;
+      font-family: "Cascadia Code", "JetBrains Mono", "Consolas", monospace;
+      word-break: break-all;
+    }
+    .mono {
+      font-family: "Cascadia Code", "JetBrains Mono", "Consolas", "SF Mono", monospace;
+      overflow-wrap: anywhere;
+    }
+
+    /* ===== Responsive ===== */
+    @media (max-width: 1400px) {
+      .stat-row { grid-template-columns: repeat(4, 1fr); }
+      .hero-row { grid-template-columns: 1fr; }
+      .config-shell { grid-template-columns: 1fr; }
+      .sticky-side { position: static; }
+      .check-grid-3 { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 1100px) {
+      .sidebar { transform: translateX(-100%); }
+      .sidebar.open { transform: translateX(0); }
+      .main-wrap { margin-left: 0; }
+      .stat-row { grid-template-columns: repeat(3, 1fr); }
+      .grid-2 { grid-template-columns: 1fr; }
+      .config-grid-3, .config-grid-3i { grid-template-columns: 1fr 1fr; }
+      .check-grid-3 { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 700px) {
+      .stat-row { grid-template-columns: 1fr 1fr; }
+      .grid-2, .grid-2-3, .grid-4 { grid-template-columns: 1fr; }
+      .config-grid-3, .config-grid-3i, .config-grid-2, .check-grid-3 { grid-template-columns: 1fr; }
+      .topbar { padding: 12px 16px; }
+      .page { padding: 16px; }
+      .stat-card .stat-value { font-size: 22px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="sidebar-logo"><svg width="22" height="22" viewBox="0 0 20 20" fill="none"><rect x="2" y="2" width="16" height="5.5" rx="1" stroke="#fff" stroke-width="1.3"/><rect x="2" y="12.5" width="16" height="5.5" rx="1" stroke="#fff" stroke-width="1.3"/><circle cx="14.5" cy="4.75" r="1" fill="#fff"/><circle cx="14.5" cy="15.25" r="1" fill="#fff"/></svg></div>
+      <div>
+        <div class="sidebar-title">AI 本地代理</div>
+        <div class="sidebar-sub">兼容修复 / 模型路由</div>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <button type="button" class="is-active" data-nav="overview">
+        <span class="nav-icon" id="navIconOverview"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.4"/><circle cx="10" cy="10" r="3" stroke="currentColor" stroke-width="1.4"/></svg></span> 运行总览
+      </button>
+      <button type="button" data-nav="requests">
+        <span class="nav-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3.5 5h13M3.5 10h13M3.5 15h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span> 请求观测
+      </button>
+      <button type="button" data-nav="logs">
+        <span class="nav-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2.5" y="2" width="15" height="16" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M6 7h8M6 10h6M6 13h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></span> 运行日志
+      </button>
+      <button type="button" data-nav="config">
+        <span class="nav-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.4"/><path d="M10 1v3M10 16v3M3 10H1M19 10h-2M3.5 3.5l2 2M14.5 14.5l2 2M16.5 3.5l-2 2M5.5 14.5l-2 2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></span> 路由与策略
+      </button>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="status-dot" id="sidebarStatus">代理运行中</div>
+      <button class="theme-toggle" id="themeToggle" type="button">
+        <svg id="themeIcon" width="16" height="16" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;"><circle cx="10" cy="10" r="4" stroke="currentColor" stroke-width="1.5"/><path d="M10 1v2M10 17v2M2 10H0M20 10h-2M3.5 3.5l1.5 1.5M15 15l1.5 1.5M16.5 3.5L15 5M5 15l-1.5 1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg> 主题切换
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main-wrap">
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="eyebrow" id="viewEyebrow">概览</div>
+        <h1 id="viewTitle">运行总览</h1>
+      </div>
+      <div class="topbar-right">
+        <span class="endpoint-tag" id="heroEndpoint">http://127.0.0.1:8000/v1</span>
+        <span class="pill ok" id="heroAuth">鉴权读取中</span>
+        <span class="pill accent" id="heroRoutes">链路读取中</span>
+        <span class="pill" id="lastUpdated" style="background:var(--surface-alt);color:var(--muted);border:1px solid var(--border);">等待刷新...</span>
+        <button class="btn btn-primary" id="refreshNowBtn" type="button"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;"><path d="M17 10a7 7 0 01-12.2 4.9M3 10a7 7 0 0112.2-4.9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M3 3v4h4M17 17v-4h-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg> 刷新</button>
+      </div>
+    </header>
+
+    <div class="page">
+      <!-- ===== Overview View ===== -->
+      <section class="view is-active" data-view="overview">
+        <div class="panel">
+          <div class="panel-head"><h3><svg width="18" height="18" viewBox="0 0 20 20" fill="none" style="vertical-align:-4px;margin-right:6px;"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.4"/><circle cx="10" cy="10" r="3" stroke="currentColor" stroke-width="1.4"/></svg>运行状态</h3><span class="subtle mono" style="font-size:11px;" id="sidebarStatusAlt"></span></div>
+          <div class="stat-row" id="stats"></div>
+        </div>
+
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-head"><h3><svg width="18" height="18" viewBox="0 0 20 20" fill="none" style="vertical-align:-4px;margin-right:6px;"><rect x="2" y="2" width="16" height="5.5" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="2" y="12.5" width="16" height="5.5" rx="1" stroke="currentColor" stroke-width="1.4"/><circle cx="14.5" cy="4.75" r="1" fill="currentColor"/><circle cx="14.5" cy="15.25" r="1" fill="currentColor"/></svg>链路与入口</h3></div>
+            <div style="padding:0;display:grid;gap:12px;">
+              <div><span style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px;">代理入口</span><code style="font-size:13px;" id="overviewEndpoint">http://127.0.0.1:8000/v1</code></div>
+              <div><span style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px;">主上游</span><code style="font-size:12px;" id="primaryUpstream">读取中...</code></div>
+              <div><span style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px;">链路列表</span><div id="routeChips" style="display:flex;flex-wrap:wrap;gap:4px;"></div></div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div><span style="font-size:11px;font-weight:700;color:var(--muted);">鉴权状态</span><div id="overviewAuth" style="font-size:12px;margin-top:2px;">读取中</div></div>
+                <div><span style="font-size:11px;font-weight:700;color:var(--muted);">链路信息</span><div id="overviewRoutes" style="font-size:12px;margin-top:2px;">读取中</div></div>
+                <div><span style="font-size:11px;font-weight:700;color:var(--muted);">模型别名</span><div id="heroModelInfo" style="font-size:12px;margin-top:2px;">读取中</div></div>
+                <div><span style="font-size:11px;font-weight:700;color:var(--muted);">运行时间</span><div id="heroUptime" style="font-size:12px;margin-top:2px;">读取中</div></div>
+              </div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3><svg width="18" height="18" viewBox="0 0 20 20" fill="none" style="vertical-align:-4px;margin-right:6px;"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.4"/><ellipse cx="10" cy="10" rx="3.5" ry="8" stroke="currentColor" stroke-width="1.4"/><path d="M2 10h16" stroke="currentColor" stroke-width="1.4"/></svg>代理能力</h3></div>
+            <div class="cap-tabs" id="capTabs"></div>
+            <div id="capPanels"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Requests View ===== -->
+      <section class="view" data-view="requests">
+        <div class="panel request-workbench">
+          <div class="request-filter-bar">
+            <div class="filter-grid">
+              <label class="filter-field"><span>开始时间</span><input id="requestTimeStart" type="datetime-local"></label>
+              <label class="filter-field"><span>结束时间</span><input id="requestTimeEnd" type="datetime-local"></label>
+              <label class="filter-field"><span>Request ID</span><input id="requestIdFilter" type="text" placeholder="Request ID"></label>
+              <label class="filter-field"><span>上游模型/链路</span><input id="requestModelFilter" type="text" placeholder="模型名称或链路"></label>
+              <label class="filter-field"><span>协议</span><input id="requestProtocolFilter" type="text" placeholder="协议"></label>
+              <label class="filter-field"><span>来源</span><input id="requestRemoteFilter" type="text" placeholder="来源 IP"></label>
+            </div>
+            <div class="filter-actions">
+              <select id="requestScopeFilter" class="request-scope-select">
+                <option value="recent">最近请求</option>
+                <option value="active">活跃请求</option>
+                <option value="all">合并显示</option>
+              </select>
+              <button class="btn btn-primary" id="applyRequestFiltersBtn" type="button">查询</button>
+              <button class="btn btn-ghost" id="resetRequestFiltersBtn" type="button">重置</button>
+            </div>
+          </div>
+          <div class="request-table-wrap">
+            <table class="request-table">
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>协议</th>
+                  <th>来源</th>
+                  <th>路径</th>
+                  <th>模型 / 池</th>
+                  <th>耗时 / 流量</th>
+                  <th>修复</th>
+                  <th>状态</th>
+                  <th>详情</th>
+                </tr>
+              </thead>
+              <tbody id="requestTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Logs View ===== -->
+      <section class="view" data-view="logs">
+        <div class="panel log-panel">
+          <div class="log-filter-bar">
+            <div class="filter-actions" style="justify-content:space-between;gap:12px;">
+              <div class="request-chip-row">
+                <span class="request-chip">运行日志</span>
+                <span class="request-chip accent mono" id="logPath">读取中...</span>
+              </div>
+              <div class="request-chip-row">
+                <span class="request-chip">最近 120 行</span>
+              </div>
+            </div>
+          </div>
+          <div class="log-table-wrap">
+            <table class="log-table">
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>级别</th>
+                  <th>Request ID</th>
+                  <th>事件</th>
+                  <th>池 / Key</th>
+                  <th>线路 / 模型</th>
+                  <th>摘要</th>
+                </tr>
+              </thead>
+              <tbody id="logTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Config View ===== -->
+      <section class="view" data-view="config">
+        <div class="config-shell">
+          <div class="panel config-form" id="configFormWrap">
+            <form id="configForm" style="display:grid;gap:16px;">
+              <div class="cap-tabs" id="configTabs" style="margin-bottom:0;">
+                <button type="button" class="cap-tab active" data-config-tab="routes">连接池</button>
+                <button type="button" class="cap-tab" data-config-tab="routing">模型与路由</button>
+                <button type="button" class="cap-tab" data-config-tab="strategy">策略</button>
+              </div>
+              <div class="config-tab-panel active" data-config-panel="routes">
+              <div class="config-section" id="poolManagerSection">
+                <div style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;">
+                  <div>
+                    <h4 style="margin:0 0 4px 0;"><svg width="15" height="15" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;margin-right:4px;"><rect x="2" y="2" width="16" height="5.5" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="2" y="12.5" width="16" height="5.5" rx="1" stroke="currentColor" stroke-width="1.4"/><circle cx="14.5" cy="4.75" r="1" fill="currentColor"/><circle cx="14.5" cy="15.25" r="1" fill="currentColor"/></svg>连接池管理</h4>
+                    <span style="font-size:12px;color:var(--muted);" id="poolSummaryText">未配置连接池</span>
+                  </div>
+                  <div class="pool-actions">
+                    <button class="btn btn-ghost" id="addPoolBtn" type="button" style="gap:5px;display:flex;align-items:center;">
+                      <svg width="14" height="14" viewBox="0 0 20 20" fill="none"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> 添加连接池
+                    </button>
+                    <button class="btn btn-ghost" id="importPoolsBtn" type="button" style="gap:5px;display:flex;align-items:center;">
+                      <svg width="14" height="14" viewBox="0 0 20 20" fill="none"><path d="M6 14l4-4 4 4M10 10v7M4 18h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg> 导入 JSON
+                    </button>
+                    <input type="file" id="importPoolsFile" accept=".json" style="display:none;">
+                  </div>
+                </div>
+                <div id="poolOverviewList" class="pool-overview-list"></div>
+              </div>
+              <div class="config-section">
+                <h4><svg width="15" height="15" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;margin-right:4px;"><path d="M6 5V3h8v2M5 5h10l-1 12H6L5 5z" stroke="currentColor" stroke-width="1.3"/><path d="M8 9v4M12 9v4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>连接池优先级</h4>
+                <div class="subtle" style="font-size:12px;">优先级越高越先参与路由；同优先级按列表顺序。</div>
+              </div>
+              </div>
+              <div class="config-tab-panel" data-config-panel="routing">
+              <div class="config-section">
+                <div class="config-grid-2">
+                  <div class="field full">
+                    <label for="modelAliasesText">模型别名映射</label>
+                    <textarea id="modelAliasesText" placeholder="deepseek-v4-flash=deepseek-ai/deepseek-v4-flash"></textarea>
+                  </div>
+                  <div class="field full">
+                    <label for="modelCapabilitiesText">模型能力表</label>
+                    <textarea id="modelCapabilitiesText" placeholder="deepseek-v4-flash=1048576,393216"></textarea>
+                  </div>
+                </div>
+              </div>
+              </div>
+              <div class="config-tab-panel" data-config-panel="strategy">
+              <div class="config-section">
+                <h4><svg width="15" height="15" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;margin-right:4px;"><rect x="2" y="11" width="3.5" height="7" rx="0.6" fill="currentColor" opacity="0.45"/><rect x="8" y="5" width="3.5" height="13" rx="0.6" fill="currentColor"/><rect x="14" y="8" width="3.5" height="10" rx="0.6" fill="currentColor" opacity="0.7"/></svg>重试与稳定性</h4>
+                <div class="config-grid-3">
+                  <div class="field"><label for="requestTimeout">请求超时（秒）</label><input id="requestTimeout" type="number" min="30" max="3600" step="1"></div>
+                  <div class="field"><label for="maxCompletionTokens">全局兜底上限</label><input id="maxCompletionTokens" type="number" min="0" max="10000000" step="1"></div>
+                  <div class="field"><label for="maxRetries">最大重试次数</label><input id="maxRetries" type="number" min="0" max="30" step="1"></div>
+                  <div class="field"><label for="retryBackoffMs">重试退避（毫秒）</label><input id="retryBackoffMs" type="number" min="0" max="60000" step="100"></div>
+                  <div class="field"><label for="retryMaxBackoffMs">最大退避（毫秒）</label><input id="retryMaxBackoffMs" type="number" min="0" max="120000" step="100"></div>
+                  <div class="field"><label for="routeSwitchWindowSeconds">换路窗口（秒）</label><input id="routeSwitchWindowSeconds" type="number" min="1" max="600" step="1"></div>
+                  <div class="field"><label for="modelProbeTimeoutSeconds">模型探测超时（秒）</label><input id="modelProbeTimeoutSeconds" type="number" min="1" max="30" step="1"></div>
+                  <div class="field"><label for="modelProbeTtlSeconds">模型列表缓存（秒）</label><input id="modelProbeTtlSeconds" type="number" min="10" max="3600" step="10"></div>
+                  <div class="field"><label for="modelRouteCacheTtlSeconds">路由记忆（秒）</label><input id="modelRouteCacheTtlSeconds" type="number" min="60" max="604800" step="60"></div>
+                  <div class="field"><label for="modelCandidateRaceLimit">候选并发数</label><input id="modelCandidateRaceLimit" type="number" min="1" max="6" step="1"></div>
+                  <div class="field"><label for="modelCandidateRaceTimeoutSeconds">候选竞速超时（秒）</label><input id="modelCandidateRaceTimeoutSeconds" type="number" min="1" max="60" step="1"></div>
+                </div>
+              </div>
+              <div class="config-section">
+                <h4><svg width="15" height="15" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;margin-right:4px;"><circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.4"/><path d="M10 1v3M10 16v3M3 10H1M19 10h-2M3.5 3.5l2 2M14.5 14.5l2 2M16.5 3.5l-2 2M5.5 14.5l-2 2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>兼容修复开关</h4>
+                <div class="check-grid-3">
+                  <label class="check-card"><input id="randomizeEndpoints" type="checkbox"><span><strong>随机轮换链路</strong><span class="subtle">多条候选链路时随机打散尝试顺序。</span></span></label>
+                  <label class="check-card"><input id="forceUpstreamChatStream" type="checkbox"><span><strong>强制上游流式</strong><span class="subtle">先拉成流，再由代理做兼容修复。</span></span></label>
+                  <label class="check-card"><input id="enableRequestNormalization" type="checkbox"><span><strong>启用请求修复</strong><span class="subtle">自动补齐常见 schema 和别名字段。</span></span></label>
+                  <label class="check-card"><input id="injectZhSystemPrompt" type="checkbox"><span><strong>注入中文规则</strong><span class="subtle">默认注入中文思考和结构化输出约束。</span></span></label>
+                  <label class="check-card"><input id="enableModelProbe" type="checkbox"><span><strong>探测模型列表</strong><span class="subtle">首轮短探测 /models 优先命中实际模型名。</span></span></label>
+                  <label class="check-card"><input id="enableModelCandidateRace" type="checkbox"><span><strong>候选名竞速</strong><span class="subtle">无记忆且探测不明确时竞速试模型名。</span></span></label>
+                </div>
+              </div>
+              <div class="config-section">
+                <h4><svg width="15" height="15" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;margin-right:4px;"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.4"/><circle cx="10" cy="10" r="3" stroke="currentColor" stroke-width="1.4"/></svg>图像生成代理</h4>
+                <div class="config-grid-3i">
+                  <div class="field">
+                    <label for="imageUpstreamProtocol">上游图像协议</label>
+                    <select id="imageUpstreamProtocol">
+                      <option value="auto">自动识别</option>
+                      <option value="openai">OpenAI 兼容</option>
+                      <option value="google">Google Imagen/Gemini</option>
+                      <option value="dashscope">DashScope 千问/万相</option>
+                    </select>
+                  </div>
+                  <div class="field"><label for="imageTaskPollTimeoutSeconds">异步任务等待（秒）</label><input id="imageTaskPollTimeoutSeconds" type="number" min="0" max="600" step="1"></div>
+                  <div class="field"><label for="imageTaskPollIntervalSeconds">轮询间隔（秒）</label><input id="imageTaskPollIntervalSeconds" type="number" min="1" max="30" step="1"></div>
+                </div>
+              </div>
+              <div class="config-section">
+                <h4><svg width="15" height="15" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;margin-right:4px;"><path d="M3.5 5h13M3.5 10h13M3.5 15h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>高级提示与保存</h4>
+                <details>
+                  <summary>代理注入提示词</summary>
+                  <div class="field" style="margin-top:10px;">
+                    <label for="proxySystemPromptZh">中文规则提示</label>
+                    <textarea id="proxySystemPromptZh" placeholder="可选：自定义代理插入的中文规则提示"></textarea>
+                  </div>
+                </details>
+                <div class="actions">
+                  <button class="btn btn-primary" id="saveConfigBtn" type="submit"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;"><path d="M6.5 10l2.5 2.5 4.5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> 保存并生效</button>
+                  <button class="btn btn-ghost" id="reloadConfigBtn" type="button"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;"><path d="M4 10a6 6 0 019-4.5M16 10a6 6 0 01-9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M4 4v3.5h3.5M16 16v-3.5h-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg> 恢复当前配置</button>
+                </div>
+                <div class="status-msg" id="configStatus"></div>
+              </div>
+              </div>
+            </form>
+          </div>
+
+          <div class="sticky-side">
+            <div class="panel">
+              <div class="panel-head"><h3><svg width="18" height="18" viewBox="0 0 20 20" fill="none" style="vertical-align:-4px;margin-right:6px;"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.4"/><circle cx="10" cy="10" r="3" stroke="currentColor" stroke-width="1.4"/></svg>当前生效状态</h3></div>
+              <div class="grid-4">
+                <div class="info-card">
+                  <div class="ic-label">链路池状态</div>
+                  <div class="ic-value" id="configRouteInfo">读取中...</div>
+                  <div class="ic-sub" id="configRouteMeta">同步中...</div>
+                </div>
+                <div class="info-card">
+                  <div class="ic-label">请求策略</div>
+                  <div class="ic-value" id="configPolicyInfo">读取中...</div>
+                  <div class="ic-sub" id="configPolicyMeta">同步中...</div>
+                </div>
+                <div class="info-card">
+                  <div class="ic-label">图像代理</div>
+                  <div class="ic-value" id="configImageInfo">读取中...</div>
+                  <div class="ic-sub" id="configImageMeta">同步中...</div>
+                </div>
+                <div class="info-card">
+                  <div class="ic-label">模型别名</div>
+                  <div class="ic-value" id="configModelAliasInfo">读取中...</div>
+                  <div class="ic-sub" id="configModelAliasMeta">同步中...</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ===== Pool Editor Modal (must be BEFORE the <script> so JS can find it) ===== -->
+  <div class="modal-overlay" id="poolModalOverlay">
+    <div class="modal-panel" id="poolModalPanel">
+      <div class="modal-head">
+        <h3 id="poolModalTitle"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" style="vertical-align:-4px;margin-right:6px;"><rect x="2" y="2" width="16" height="5.5" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="2" y="12.5" width="16" height="5.5" rx="1" stroke="currentColor" stroke-width="1.4"/><circle cx="14.5" cy="4.75" r="1" fill="currentColor"/><circle cx="14.5" cy="15.25" r="1" fill="currentColor"/></svg>连接池管理</h3>
+        <button class="modal-close" id="closePoolModalBtn" type="button" title="关闭" aria-label="关闭">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div id="poolEditorBody" class="modal-form-grid"></div>
+      </div>
+      <div class="modal-body" id="poolTestResult" style="display:none;"></div>
+      <div class="modal-foot">
+        <button class="btn btn-primary" id="savePoolBtn" type="button"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;"><path d="M6.5 10l2.5 2.5 4.5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> 保存该连接池</button>
+        <button class="btn btn-ghost" id="cancelPoolBtn" type="button">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ===== DOM refs =====
+    const statsEl = document.getElementById("stats");
+    const requestTableBodyEl = document.getElementById("requestTableBody");
+    const logTableBodyEl = document.getElementById("logTableBody");
+    const lastUpdatedEl = document.getElementById("lastUpdated");
+    const logPathEl = document.getElementById("logPath");
+    const viewTitleEl = document.getElementById("viewTitle");
+    const viewEyebrowEl = document.getElementById("viewEyebrow");
+    const primaryUpstreamEl = document.getElementById("primaryUpstream");
+    const routeChipsEl = document.getElementById("routeChips");
+    const heroAuthEl = document.getElementById("heroAuth");
+    const heroRoutesEl = document.getElementById("heroRoutes");
+    const heroEndpointEl = document.getElementById("heroEndpoint");
+    const overviewAuthEl = document.getElementById("overviewAuth");
+    const overviewRoutesEl = document.getElementById("overviewRoutes");
+    const overviewEndpointEl = document.getElementById("overviewEndpoint");
+    const heroModelInfoEl = document.getElementById("heroModelInfo");
+    const heroUptimeEl = document.getElementById("heroUptime");
+    const capTabsEl = document.getElementById("capTabs");
+    const capPanelsEl = document.getElementById("capPanels");
+    const requestSparklineEl = document.getElementById("requestSparkline");
+    const sidebarStatusEl = document.getElementById("sidebarStatus");
+    const sidebarStatusAltEl = document.getElementById("sidebarStatusAlt");
+    const configTabsEl = document.getElementById("configTabs");
+    const configTabPanels = Array.from(document.querySelectorAll("[data-config-panel]"));
+
+    const configForm = document.getElementById("configForm");
+    const modelAliasesTextEl = document.getElementById("modelAliasesText");
+    const modelCapabilitiesTextEl = document.getElementById("modelCapabilitiesText");
+    const requestTimeoutEl = document.getElementById("requestTimeout");
+    const maxCompletionTokensEl = document.getElementById("maxCompletionTokens");
+    const maxRetriesEl = document.getElementById("maxRetries");
+    const retryBackoffMsEl = document.getElementById("retryBackoffMs");
+    const retryMaxBackoffMsEl = document.getElementById("retryMaxBackoffMs");
+    const routeSwitchWindowSecondsEl = document.getElementById("routeSwitchWindowSeconds");
+    const modelProbeTimeoutSecondsEl = document.getElementById("modelProbeTimeoutSeconds");
+    const modelProbeTtlSecondsEl = document.getElementById("modelProbeTtlSeconds");
+    const modelRouteCacheTtlSecondsEl = document.getElementById("modelRouteCacheTtlSeconds");
+    const modelCandidateRaceLimitEl = document.getElementById("modelCandidateRaceLimit");
+    const modelCandidateRaceTimeoutSecondsEl = document.getElementById("modelCandidateRaceTimeoutSeconds");
+    const randomizeEndpointsEl = document.getElementById("randomizeEndpoints");
+    const forceUpstreamChatStreamEl = document.getElementById("forceUpstreamChatStream");
+    const enableRequestNormalizationEl = document.getElementById("enableRequestNormalization");
+    const injectZhSystemPromptEl = document.getElementById("injectZhSystemPrompt");
+    const enableModelProbeEl = document.getElementById("enableModelProbe");
+    const enableModelCandidateRaceEl = document.getElementById("enableModelCandidateRace");
+    const imageUpstreamProtocolEl = document.getElementById("imageUpstreamProtocol");
+    const imageTaskPollTimeoutSecondsEl = document.getElementById("imageTaskPollTimeoutSeconds");
+    const imageTaskPollIntervalSecondsEl = document.getElementById("imageTaskPollIntervalSeconds");
+    const proxySystemPromptZhEl = document.getElementById("proxySystemPromptZh");
+    const reloadConfigBtn = document.getElementById("reloadConfigBtn");
+    const configStatusEl = document.getElementById("configStatus");
+    const configRouteInfoEl = document.getElementById("configRouteInfo");
+    const configRouteMetaEl = document.getElementById("configRouteMeta");
+    const configPolicyInfoEl = document.getElementById("configPolicyInfo");
+    const configPolicyMetaEl = document.getElementById("configPolicyMeta");
+    const configImageInfoEl = document.getElementById("configImageInfo");
+    const configImageMetaEl = document.getElementById("configImageMeta");
+    const configModelAliasInfoEl = document.getElementById("configModelAliasInfo");
+    const configModelAliasMetaEl = document.getElementById("configModelAliasMeta");
+    const refreshNowBtn = document.getElementById("refreshNowBtn");
+    const saveConfigBtn = document.getElementById("saveConfigBtn");
+    const themeToggle = document.getElementById("themeToggle");
+    const requestTimeStartEl = document.getElementById("requestTimeStart");
+    const requestTimeEndEl = document.getElementById("requestTimeEnd");
+    const requestIdFilterEl = document.getElementById("requestIdFilter");
+    const requestModelFilterEl = document.getElementById("requestModelFilter");
+    const requestProtocolFilterEl = document.getElementById("requestProtocolFilter");
+    const requestRemoteFilterEl = document.getElementById("requestRemoteFilter");
+    const requestScopeFilterEl = document.getElementById("requestScopeFilter");
+    const applyRequestFiltersBtn = document.getElementById("applyRequestFiltersBtn");
+    const resetRequestFiltersBtn = document.getElementById("resetRequestFiltersBtn");
+
+    const navButtons = Array.from(document.querySelectorAll("[data-nav]"));
+    const views = Array.from(document.querySelectorAll("[data-view]"));
+
+    let lastState = null;
+    let configDirty = false;
+    let configSubmitting = false;
+    let poolSaveSubmitting = false;
+    let activeConfigTabKey = "routes";
+    let requestFilterState = { scope: "recent" };
+
+    function setText(el, value) {
+      if (el) el.textContent = value == null ? "" : String(value);
+    }
+
+    function setHtml(el, value) {
+      if (el) el.innerHTML = value == null ? "" : String(value);
+    }
+
+    const viewMeta = {
+      overview: ["运行总览", "OVERVIEW"],
+      requests: ["请求观测", "REQUESTS"],
+      logs: ["运行日志", "LOGS"],
+      config: ["路由与策略", "CONFIG"],
+    };
+
+    // ===== Theme =====
+    const savedTheme = localStorage.getItem("dashboard-theme") || "light";
+    document.documentElement.setAttribute("data-theme", savedTheme);
+    themeToggle.addEventListener("click", () => {
+      const current = document.documentElement.getAttribute("data-theme");
+      const next = current === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+      localStorage.setItem("dashboard-theme", next);
+    });
+
+    // ===== Helpers =====
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    function escapeAttr(value) {
+      return String(value ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function icon(name) {
+      var i = {
+        bar: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="11" width="3.5" height="7" rx="0.6" fill="currentColor" opacity="0.45"/><rect x="8" y="5" width="3.5" height="13" rx="0.6" fill="currentColor"/><rect x="14" y="8" width="3.5" height="10" rx="0.6" fill="currentColor" opacity="0.7"/></svg>',
+        check: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.4"/><path d="M6.5 10l2.5 2.5 4.5-5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+        x: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.4"/><path d="M7 7l6 6M13 7l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+        alert: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 3L2.5 17.5h15L10 3z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M10 8.5v3M10 14.5v0.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+        zap: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10.5 2L3.5 11.5h5l-1 5.5 7-8.5h-4l0.5-6.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
+        wave: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M2 13c2-3 4-3 6 0 2 3 4 3 6 0 2-3 4-3 4 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M2 9c2-3 4-3 6 0 2 3 4 3 6 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.35"/></svg>',
+        clock: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.4"/><path d="M10 5.5v5l3 2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+        server: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="2" width="16" height="5.5" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="2" y="12.5" width="16" height="5.5" rx="1" stroke="currentColor" stroke-width="1.4"/><circle cx="14.5" cy="4.75" r="1" fill="currentColor"/><circle cx="14.5" cy="15.25" r="1" fill="currentColor"/></svg>',
+        target: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.4"/><circle cx="10" cy="10" r="3" stroke="currentColor" stroke-width="1.4"/></svg>',
+        gear: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.4"/><path d="M10 1v3M10 16v3M3 10H1M19 10h-2M3.5 3.5l2 2M14.5 14.5l2 2M16.5 3.5l-2 2M5.5 14.5l-2 2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>',
+        globe: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.4"/><ellipse cx="10" cy="10" rx="3.5" ry="8" stroke="currentColor" stroke-width="1.4"/><path d="M2 10h16" stroke="currentColor" stroke-width="1.4"/></svg>',
+        list: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3.5 5h13M3.5 10h13M3.5 15h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+        doc: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2.5" y="2" width="15" height="16" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M6 7h8M6 10h6M6 13h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+      };
+      return i[name] || '';
+    }
+
+    function reqBadgeClass(entry) {
+      const s = Number(entry?.status_code || 0);
+      if (s >= 500) return "req-badge err";
+      if (s >= 400) return "req-badge warn";
+      return "req-badge";
+    }
+
+    function formatUptime(seconds) {
+      const t = Number(seconds || 0);
+      const d = Math.floor(t / 86400);
+      const h = Math.floor((t % 86400) / 3600);
+      const m = Math.floor((t % 3600) / 60);
+      const s = t % 60;
+      if (d) return d + "天 " + h + "小时";
+      if (h) return h + "小时 " + m + "分钟";
+      if (m) return m + "分钟 " + s + "秒";
+      return s + "秒";
+    }
+
+    function setConfigStatus(msg, tone) {
+      if (!configStatusEl) return;
+      configStatusEl.textContent = msg || "";
+      configStatusEl.className = "status-msg " + (tone || "");
+    }
+
+    function setActiveView(viewName) {
+      const target = views.some(function(v) { return v.dataset.view === viewName; }) ? viewName : "overview";
+      navButtons.forEach(function(btn) {
+        var isActive = btn.dataset.nav === target;
+        btn.classList.toggle("is-active", isActive);
+        if (isActive) btn.setAttribute("aria-current", "page");
+        else btn.removeAttribute("aria-current");
+      });
+      views.forEach(function(v) {
+        v.classList.toggle("is-active", v.dataset.view === target);
+      });
+      var meta = viewMeta[target] || viewMeta.overview;
+      viewTitleEl.textContent = meta[0];
+      viewEyebrowEl.textContent = meta[1];
+      document.title = meta[0] + " - AI 本地代理";
+      if (window.location.hash !== "#" + target) {
+        history.replaceState(null, "", "#" + target);
+      }
+    }
+
+    // ===== Render Stats =====
+    function renderStats(stats, activeCount, streamCount) {
+      if (!statsEl) return;
+      var total = Number(stats.total_requests || 0);
+      var completed = Number(stats.completed_requests || 0);
+      var errors = Number(stats.error_requests || 0);
+      var gone = Number(stats.client_gone_requests || 0);
+      var maxVal = Math.max(total, completed, errors, gone, activeCount, streamCount, 1);
+
+      var cards = [
+        ["bar", "累计请求", total, (total / maxVal * 100).toFixed(0)],
+        ["check", "已完成", completed, (completed / maxVal * 100).toFixed(0)],
+        ["x", "错误请求", errors, (errors / maxVal * 100).toFixed(0)],
+        ["alert", "客户端断开", gone, (gone / maxVal * 100).toFixed(0)],
+        ["zap", "活跃请求", activeCount, (activeCount / maxVal * 100).toFixed(0)],
+        ["wave", "流式中", streamCount, (streamCount / maxVal * 100).toFixed(0)],
+        ["clock", "已运行", 0, 0],
+      ];
+
+      statsEl.innerHTML = cards.map(function(c, i) {
+        var val = i === 6 ? formatUptime(lastState?.runtime?.uptime_seconds || 0) : Number(c[2]).toLocaleString("zh-CN");
+        var pct = i === 6 ? 100 : c[3];
+        var isUptime = i === 6;
+        return '<article class="stat-card">' +
+          '<span class="stat-icon">' + icon(c[0]) + '</span>' +
+          '<span class="stat-label">' + escapeHtml(c[1]) + '</span>' +
+          '<span class="stat-value">' + (isUptime ? val : val) + '</span>' +
+          (isUptime ? '' : '<div class="stat-bar"><div class="stat-bar-fill" style="width:' + pct + '%"></div></div>') +
+          '</article>';
+      }).join("");
+    }
+
+    var CAP_CATEGORIES = [
+      { key: "protocols", label: "协议支持", match: /chat.completions|images.generations|messages|generateContent|streamGenerateContent|imagen.*predict|image.*generate|dashscope|qwen|wanxiang/i },
+      { key: "conversion", label: "协议转换", match: /gemini.*tools.*openai|dsml.*tool_calls|transcript.*tool_calls|schema.normalization|alias.normalization|run_in_background|chinese.system.prompt|zh.system/i },
+      { key: "routing", label: "智能路由", match: /completion.token|token.limit.learning|route.cache|candidate.race|model.route/i },
+      { key: "resilience", label: "弹性与稳定性", match: /retry.shield|multi.route.failover|client.disconnect|stream.cleanup/i },
+      { key: "operations", label: "运维与持久化", match: /config.console|sqlite|persistence/i },
+    ];
+    var activeCapabilityTabKey = "";
+
+    function renderCapabilities(runtime) {
+      if (!capTabsEl || !capPanelsEl) return;
+      var caps = Array.isArray(runtime?.capabilities) ? runtime.capabilities : [];
+      if (!caps.length) {
+        activeCapabilityTabKey = "";
+        capTabsEl.innerHTML = "";
+        capPanelsEl.innerHTML = '<div class="empty-state">当前没有可展示的代理能力信息。</div>';
+        return;
+      }
+      var buckets = {};
+      CAP_CATEGORIES.forEach(function(cat) { buckets[cat.key] = []; });
+      var unmatched = [];
+      caps.forEach(function(c) {
+        var found = false;
+        for (var i = 0; i < CAP_CATEGORIES.length; i++) {
+          if (CAP_CATEGORIES[i].match.test(c)) {
+            buckets[CAP_CATEGORIES[i].key].push(c);
+            found = true;
+            break;
+          }
+        }
+        if (!found) unmatched.push(c);
+      });
+      if (unmatched.length) {
+        if (!buckets["operations"]) buckets["operations"] = [];
+        buckets["operations"] = buckets["operations"].concat(unmatched);
+      }
+      var activeCat = CAP_CATEGORIES.filter(function(cat) { return buckets[cat.key].length > 0; });
+      if (!activeCat.length) {
+        activeCapabilityTabKey = "";
+        capTabsEl.innerHTML = "";
+        capPanelsEl.innerHTML = '<div class="empty-state">当前没有可展示的代理能力信息。</div>';
+        return;
+      }
+      var availableKeys = activeCat.map(function(cat) { return cat.key; });
+      if (!activeCapabilityTabKey || availableKeys.indexOf(activeCapabilityTabKey) === -1) {
+        activeCapabilityTabKey = availableKeys[0];
+      }
+      // Tabs
+      capTabsEl.innerHTML = activeCat.map(function(cat) {
+        var isActive = cat.key === activeCapabilityTabKey;
+        return '<button class="cap-tab' + (isActive ? ' active' : '') + '" data-cap-tab="' + cat.key + '" aria-selected="' + (isActive ? 'true' : 'false') + '">' +
+          escapeHtml(cat.label) + '<span class="cap-tab-count">' + buckets[cat.key].length + '</span></button>';
+      }).join("");
+      // Panels
+      capPanelsEl.innerHTML = activeCat.map(function(cat) {
+        return '<div class="cap-panel' + (cat.key === activeCapabilityTabKey ? ' active' : '') + '" data-cap-panel="' + cat.key + '">' +
+          buckets[cat.key].map(function(c) {
+            return '<article class="capability-card"><span class="cap-dot"></span><span>' + escapeHtml(c) + '</span></article>';
+          }).join("") + '</div>';
+      }).join("");
+    }
+
+    function switchCapTab(key) {
+      if (!capTabsEl || !capPanelsEl) return;
+      activeCapabilityTabKey = key || "";
+      capTabsEl.querySelectorAll(".cap-tab").forEach(function(btn) {
+        var isActive = btn.dataset.capTab === key;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-selected", isActive ? "true" : "false");
+      });
+      capPanelsEl.querySelectorAll(".cap-panel").forEach(function(p) { p.classList.toggle("active", p.dataset.capPanel === key); });
+    }
+
+    if (capTabsEl) {
+      capTabsEl.addEventListener("click", function(e) {
+        var btn = e.target.closest("[data-cap-tab]");
+        if (btn) switchCapTab(btn.dataset.capTab);
+      });
+    }
+
+    function switchConfigTab(key) {
+      activeConfigTabKey = key || "routes";
+      if (configTabsEl) {
+        configTabsEl.querySelectorAll("[data-config-tab]").forEach(function(btn) {
+          btn.classList.toggle("active", btn.dataset.configTab === activeConfigTabKey);
+        });
+      }
+      configTabPanels.forEach(function(panel) {
+        panel.classList.toggle("active", panel.dataset.configPanel === activeConfigTabKey);
+      });
+    }
+
+    if (configTabsEl) {
+      configTabsEl.addEventListener("click", function(e) {
+        var btn = e.target.closest("[data-config-tab]");
+        if (btn) switchConfigTab(btn.dataset.configTab);
+      });
+    }
+
+    function renderSparkline() {
+      if (requestSparklineEl) requestSparklineEl.innerHTML = "";
+    }
+
+    function renderConfigSummary(data) {
+      var runtime = data.runtime || {};
+      var config = data.config || {};
+      var retry = runtime.retry_config || {};
+      var image = runtime.image_generation || {};
+      var poolsCount = Number(data.pools_count || config.pools_count || 0);
+      var enabledPools = Number(data.pools_enabled_count || config.pools_enabled_count || 0);
+      var upstreamCount = Number(data.upstream_url_count || (config.upstream_urls || []).length || 0);
+      var aliasCount = Number(runtime.model_alias_count || config.model_alias_count || 0);
+      var capabilityCount = Number(runtime.model_capability_count || config.model_capability_count || 0);
+      var probeOn = !!(runtime.model_routing && runtime.model_routing.probe_enabled);
+      var raceOn = !!(runtime.model_routing && runtime.model_routing.candidate_race_enabled);
+      var cacheStats = (runtime.model_routing && runtime.model_routing.cache_stats) || {};
+      var promptHits = Number(cacheStats.prompt_cache_hits || 0);
+      var promptWrites = Number(cacheStats.prompt_cache_writes || 0);
+
+      setText(configRouteInfoEl, poolsCount ? (enabledPools + " / " + poolsCount + " 池启用") : (upstreamCount + " 条直连"));
+      setText(configRouteMetaEl, upstreamCount + " 条链路 · 冷却 " + Number(retry.cooled_routes || 0));
+
+      setText(configPolicyInfoEl, "重试 " + Number(retry.max_retries || config.max_retries || 0) + " 次 · 缓存 " + promptHits);
+      setText(
+        configPolicyMetaEl,
+        "探测" + (probeOn ? "开" : "关") + " · 竞速" + (raceOn ? "开" : "关") + " · 轮换" + (retry.randomize_endpoints ? "开" : "关") + " · 写入 " + promptWrites
+      );
+
+      setText(configImageInfoEl, image.upstream_protocol || config.image_upstream_protocol || "auto");
+      setText(
+        configImageMetaEl,
+        "等待 " + Number(image.task_poll_timeout_seconds || config.image_task_poll_timeout_seconds || 0) + "s · 间隔 " +
+        Number(image.task_poll_interval_seconds || config.image_task_poll_interval_seconds || 0) + "s"
+      );
+
+      setText(configModelAliasInfoEl, aliasCount + " 个别名");
+      setText(configModelAliasMetaEl, capabilityCount + " 条能力 · 路由命中 " + Number((runtime.model_routing && runtime.model_routing.cache_stats && runtime.model_routing.cache_stats.model_route_hits) || 0));
+    }
+
+    function renderRuntimeOverview(data) {
+      var runtime = data.runtime || {};
+      var config = data.config || {};
+      var retry = runtime.retry_config || {};
+      var mr = runtime.model_routing || {};
+
+      setText(primaryUpstreamEl, data.upstream_url || "未配置");
+
+      var keyOk = runtime.upstream_api_key_configured;
+      setText(heroAuthEl, keyOk ? "已配置" : "未配置");
+      if (heroAuthEl) heroAuthEl.className = keyOk ? "tag ok" : "tag warn";
+      setText(overviewAuthEl, keyOk ? "已配置" : "未配置");
+
+      setText(heroRoutesEl, (data.pools_count || 0) + " 池 · " + Number(data.upstream_url_count || 0) + " 链路");
+      if (heroRoutesEl) heroRoutesEl.className = (data.pools_count || 0) > 0 ? "tag accent" : "tag";
+      setText(overviewRoutesEl, (data.pools_count || 0) + " 池 · " + Number(data.upstream_url_count || 0) + " 链路");
+
+      setText(heroModelInfoEl, (runtime.model_alias_count || config.model_alias_count || 0) + " 别名 / " + (runtime.model_capability_count || config.model_capability_count || 0) + " 能力");
+      setText(heroUptimeEl, formatUptime(runtime.uptime_seconds || 0));
+
+      setText(heroEndpointEl, "http://127.0.0.1:" + ((runtime.port || config.port) || "8000") + "/v1");
+      setText(overviewEndpointEl, "http://127.0.0.1:" + ((runtime.port || config.port) || "8000") + "/v1");
+
+      setHtml(routeChipsEl, (data.upstream_urls || []).map(function(url) {
+        return '<span class="channel-badge">' + escapeHtml(url) + '</span>';
+      }).join(""));
+
+      setText(sidebarStatusEl, "运行中 · " + formatUptime(runtime.uptime_seconds || 0));
+      setText(sidebarStatusAltEl, "PID " + (runtime.pid || "-") + " · 端口 " + (runtime.port || config.port || "8000"));
+
+      renderCapabilities(runtime);
+      renderSparkline();
+      renderConfigSummary(data);
+    }
+
+    function renderConfig(config, force) {
+      if (!config || (configDirty && !force)) return;
+      modelAliasesTextEl.value = config.model_aliases_text || "";
+      modelCapabilitiesTextEl.value = config.model_capabilities_text || "";
+      requestTimeoutEl.value = config.request_timeout ?? 600;
+      maxCompletionTokensEl.value = config.max_completion_tokens ?? 0;
+      maxRetriesEl.value = config.max_retries ?? 0;
+      retryBackoffMsEl.value = config.retry_backoff_ms ?? 0;
+      retryMaxBackoffMsEl.value = config.retry_max_backoff_ms ?? 0;
+      routeSwitchWindowSecondsEl.value = config.route_switch_window_seconds ?? 60;
+      modelProbeTimeoutSecondsEl.value = config.model_probe_timeout_seconds ?? 4;
+      modelProbeTtlSecondsEl.value = config.model_probe_ttl_seconds ?? 300;
+      modelRouteCacheTtlSecondsEl.value = config.model_route_cache_ttl_seconds ?? 86400;
+      modelCandidateRaceLimitEl.value = config.model_candidate_race_limit ?? 3;
+      modelCandidateRaceTimeoutSecondsEl.value = config.model_candidate_race_timeout_seconds ?? 8;
+      randomizeEndpointsEl.checked = !!config.randomize_endpoints;
+      forceUpstreamChatStreamEl.checked = !!config.force_upstream_chat_stream;
+      enableRequestNormalizationEl.checked = !!config.enable_request_normalization;
+      injectZhSystemPromptEl.checked = !!config.inject_zh_system_prompt;
+      enableModelProbeEl.checked = !!config.enable_model_probe;
+      enableModelCandidateRaceEl.checked = !!config.enable_model_candidate_race;
+      imageUpstreamProtocolEl.value = config.image_upstream_protocol || "auto";
+      imageTaskPollTimeoutSecondsEl.value = config.image_task_poll_timeout_seconds ?? 90;
+      imageTaskPollIntervalSecondsEl.value = config.image_task_poll_interval_seconds ?? 2;
+      proxySystemPromptZhEl.value = config.proxy_system_prompt_zh || "";
+      poolData = (config.pools || []).slice();
+      setText(poolSummaryText, poolSummary(poolData));
+      renderPoolOverview(poolData);
+      if (lastState) {
+        renderConfigSummary(lastState);
+      }
+      configDirty = false;
+      if (!configSubmitting) setConfigStatus("");
+    }
+
+    function collectRequestRows(data) {
+      var recent = Array.isArray(data.recent_requests) ? data.recent_requests.slice() : [];
+      var active = Array.isArray(data.active_requests) ? data.active_requests.slice() : [];
+      if (requestFilterState.scope === "active") return active;
+      if (requestFilterState.scope === "all") return active.concat(recent);
+      return recent;
+    }
+
+    function syncRequestFilterState() {
+      requestFilterState = {
+        scope: requestScopeFilterEl ? requestScopeFilterEl.value : "recent",
+        start: requestTimeStartEl ? requestTimeStartEl.value : "",
+        end: requestTimeEndEl ? requestTimeEndEl.value : "",
+        requestId: (requestIdFilterEl && requestIdFilterEl.value || "").trim().toLowerCase(),
+        model: (requestModelFilterEl && requestModelFilterEl.value || "").trim().toLowerCase(),
+        protocol: (requestProtocolFilterEl && requestProtocolFilterEl.value || "").trim().toLowerCase(),
+        remote: (requestRemoteFilterEl && requestRemoteFilterEl.value || "").trim().toLowerCase(),
+      };
+    }
+
+    function applyRequestFilters(items) {
+      var start = requestFilterState.start ? new Date(requestFilterState.start).getTime() : 0;
+      var end = requestFilterState.end ? new Date(requestFilterState.end).getTime() : 0;
+      return (items || []).filter(function(entry) {
+        var started = String(entry.started_at || "");
+        var epoch = started ? Date.parse(started.replace(" ", "T")) : 0;
+        if (start && (!epoch || epoch < start)) return false;
+        if (end && (!epoch || epoch > end)) return false;
+        if (requestFilterState.requestId && String(entry.request_id || "").toLowerCase().indexOf(requestFilterState.requestId) === -1) return false;
+        if (requestFilterState.model) {
+          var hay = [entry.upstream_url, entry.upstream_attempt_chain, entry.response_preview, entry.error].join(" ").toLowerCase();
+          if (hay.indexOf(requestFilterState.model) === -1) return false;
+        }
+        if (requestFilterState.protocol && String(entry.protocol || "").toLowerCase().indexOf(requestFilterState.protocol) === -1) return false;
+        if (requestFilterState.remote && String(entry.remote || "").toLowerCase().indexOf(requestFilterState.remote) === -1) return false;
+        return true;
+      });
+    }
+
+    function renderRequestTable(data) {
+      if (!requestTableBodyEl) return;
+      var items = applyRequestFilters(collectRequestRows(data || {}));
+      if (!items.length) {
+        requestTableBodyEl.innerHTML = '<tr><td colspan="9"><div class="request-empty">当前筛选条件下没有请求记录。</div></td></tr>';
+        return;
+      }
+      requestTableBodyEl.innerHTML = items.map(function(entry) {
+        var statusTone = entry.error || (Number(entry.status_code || 0) >= 400) ? "err" : "ok";
+        var poolName = entry.pool_name || "-";
+        var keyIndex = entry.api_key_index == null ? "-" : ("Key " + (Number(entry.api_key_index) + 1));
+        var logicalModel = entry.logical_model || "-";
+        var resolvedModel = entry.resolved_model || logicalModel || "-";
+        var inputBytes = Number(entry.input_bytes || 0);
+        var outputBytes = Number(entry.bytes_sent || 0);
+        var cacheReadBytes = Number(entry.cache_read_bytes || 0);
+        var cacheStatus = String(entry.cache_status || (entry.cache_hit ? "hit" : "miss"));
+        var cacheNote = String(entry.cache_note || "");
+        var cacheSummary = "缓存读 " + cacheReadBytes + " B";
+        if (entry.cache_hit) {
+          cacheSummary += " · 命中";
+          if (entry.cache_source) cacheSummary += " · " + entry.cache_source;
+        } else if (cacheStatus === "bypass_stream" || cacheStatus === "bypass_tools" || cacheStatus === "bypass_format" || cacheStatus === "bypass_policy" || cacheStatus === "bypass_payload") {
+          cacheSummary += " · 跳过";
+          if (cacheNote) cacheSummary += " · " + cacheNote;
+        } else {
+          cacheSummary += " · 未命中";
+        }
+        return '<tr>' +
+          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(entry.started_at || "-") + '</div><div class="request-cell-sub request-mono">' + escapeHtml(entry.request_id || "-") + '</div></div></td>' +
+          '<td><div class="request-chip-row"><span class="request-chip accent">' + escapeHtml(entry.protocol || "auto") + '</span>' + (entry.stream ? '<span class="request-chip warn">流</span>' : '<span class="request-chip">非流</span>') + '</div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(entry.remote || "-") + '</div><div class="request-cell-sub">重试 ' + escapeHtml(entry.retry_count || 0) + ' · 线路 ' + escapeHtml(entry.route_pool_size || 1) + '</div></div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml((entry.method || "REQ") + " " + (entry.path || "")) + '</div><div class="request-cell-sub">' + (entry.client_gone ? '客户端断开' : '请求完成') + '</div></div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-title request-ellipsis">' + escapeHtml(logicalModel) + '</div><div class="request-cell-sub request-ellipsis">' + escapeHtml(resolvedModel) + '</div><div class="request-cell-sub">' + escapeHtml(poolName) + ' · ' + escapeHtml(keyIndex) + '</div></div></td>' +
+          '<td><div class="request-chip-row"><span class="request-chip ok">' + escapeHtml(entry.duration_ms || "-") + ' ms</span><span class="request-chip">' + escapeHtml(inputBytes) + ' IN</span><span class="request-chip">' + escapeHtml(outputBytes) + ' OUT</span></div><div class="request-cell-sub">' + escapeHtml(cacheSummary) + '</div></td>' +
+          '<td><div class="request-cell-sub">请求 ' + escapeHtml(entry.request_repairs || 0) + ' · DSML ' + escapeHtml(entry.sanitized_markers || 0) + ' · 工具 ' + escapeHtml(entry.repaired_tool_args || 0) + '</div></td>' +
+          '<td><div class="request-chip-row"><span class="request-chip ' + statusTone + '">状态 ' + escapeHtml(entry.status_code || "-") + '</span>' + (entry.error ? '<span class="request-chip err">异常</span>' : '') + '</div></td>' +
+          '<td><div class="request-stack">' + (entry.response_preview ? '<div class="request-cell-sub request-mono request-ellipsis">' + escapeHtml(entry.response_preview).slice(0, 220) + '</div>' : '<div class="request-cell-sub">无预览</div>') + (entry.upstream_attempt_chain ? '<div class="request-cell-sub request-ellipsis">链路 ' + escapeHtml(entry.upstream_attempt_chain).slice(0, 160) + '</div>' : '') + (entry.error ? '<div class="request-cell-sub request-ellipsis" style="color:var(--error);">' + escapeHtml(entry.error) + '</div>' : '') + '</div></td>' +
+        '</tr>';
+      }).join("");
+    }
+
+    function renderLogTable(lines) {
+      if (!logTableBodyEl) return;
+      var items = Array.isArray(lines) ? lines.slice().reverse() : [];
+      if (!items.length) {
+        logTableBodyEl.innerHTML = '<tr><td colspan="7"><div class="request-empty">暂无日志。</div></td></tr>';
+        return;
+      }
+      logTableBodyEl.innerHTML = items.map(function(line) {
+        var text = String(line || "");
+        var timeMatch = text.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})/);
+        var levelMatch = text.match(/\[(INFO|WARNING|ERROR|DEBUG)\]/);
+        var requestIdMatch = text.match(/request_id=([a-zA-Z0-9_-]+)/);
+        var routeMatch = text.match(/线路=([^\s]+)/);
+        var upstreamMatch = text.match(/上游=([^\s]+)/);
+        var poolMatch = text.match(/连接池=([^\s]+)/);
+        var keySwitchMatch = text.match(/([a-f0-9]{8,12})->([a-f0-9]{8,12})/i);
+        var logicalModelMatch = text.match(/逻辑模型=([^\s]+)/);
+        var modelMatch = text.match(/模型=([^\s]+)/);
+        var statusMatch = text.match(/状态=([^\s]+)/);
+        var eventTitle = "运行日志";
+        if (text.indexOf("入站请求") !== -1) eventTitle = "入站请求";
+        else if (text.indexOf("模型候选") !== -1) eventTitle = "模型候选";
+        else if (text.indexOf("切换Key") !== -1) eventTitle = "切换 Key";
+        else if (text.indexOf("上游尝试摘要") !== -1) eventTitle = "尝试摘要";
+        else if (text.indexOf("上游=") !== -1) eventTitle = "上游响应";
+        var level = levelMatch ? levelMatch[1] : "INFO";
+        var levelTone = level === "ERROR" ? "error" : (level === "WARNING" ? "warn" : (level === "DEBUG" ? "debug" : "info"));
+        var message = text
+          .replace(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s*/, "")
+          .replace(/\[(INFO|WARNING|ERROR|DEBUG)\]\s*/, "")
+          .trim();
+        var routeText = (routeMatch && routeMatch[1]) || (upstreamMatch && upstreamMatch[1]) || "-";
+        var modelText = (logicalModelMatch && logicalModelMatch[1]) || (modelMatch && modelMatch[1]) || "-";
+        var poolText = (poolMatch && poolMatch[1]) || "-";
+        var keyText = keySwitchMatch ? (keySwitchMatch[1] + " -> " + keySwitchMatch[2]) : "-";
+        var statusText = (statusMatch && statusMatch[1]) || "-";
+        return '<tr>' +
+          '<td><div class="request-cell-title">' + escapeHtml(timeMatch ? timeMatch[1] : "-") + '</div></td>' +
+          '<td><span class="request-chip log-level-chip ' + levelTone + '">' + escapeHtml(level) + '</span></td>' +
+          '<td><div class="request-cell-sub request-mono">' + escapeHtml(requestIdMatch ? requestIdMatch[1] : "-") + '</div></td>' +
+          '<td><div class="log-event"><div class="log-event-title">' + escapeHtml(eventTitle) + '</div><div class="log-subtle">状态 ' + escapeHtml(statusText) + '</div></div></td>' +
+          '<td><div class="log-event"><div class="log-event-title">' + escapeHtml(poolText) + '</div><div class="log-route">' + escapeHtml(keyText) + '</div></div></td>' +
+          '<td><div class="log-event"><div class="log-event-title">' + escapeHtml(modelText) + '</div><div class="log-route">' + escapeHtml(routeText) + '</div></div></td>' +
+          '<td><div class="log-message">' + escapeHtml(message || text) + '</div></td>' +
+        '</tr>';
+      }).join("");
+    }
+
+    function buildConfigPayload() {
+      var payload = {
+        upstream_urls_text: config_pools_urls_text(poolData),
+        pools: poolData,
+        model_aliases_text: modelAliasesTextEl.value,
+        model_capabilities_text: modelCapabilitiesTextEl.value,
+        request_timeout: Number(requestTimeoutEl.value || 0),
+        max_completion_tokens: Number(maxCompletionTokensEl.value || 0),
+        max_retries: Number(maxRetriesEl.value || 0),
+        retry_backoff_ms: Number(retryBackoffMsEl.value || 0),
+        retry_max_backoff_ms: Number(retryMaxBackoffMsEl.value || 0),
+        route_switch_window_seconds: Number(routeSwitchWindowSecondsEl.value || 0),
+        model_probe_timeout_seconds: Number(modelProbeTimeoutSecondsEl.value || 0),
+        model_probe_ttl_seconds: Number(modelProbeTtlSecondsEl.value || 0),
+        model_route_cache_ttl_seconds: Number(modelRouteCacheTtlSecondsEl.value || 0),
+        model_candidate_race_limit: Number(modelCandidateRaceLimitEl.value || 0),
+        model_candidate_race_timeout_seconds: Number(modelCandidateRaceTimeoutSecondsEl.value || 0),
+        randomize_endpoints: randomizeEndpointsEl.checked,
+        force_upstream_chat_stream: forceUpstreamChatStreamEl.checked,
+        enable_request_normalization: enableRequestNormalizationEl.checked,
+        inject_zh_system_prompt: injectZhSystemPromptEl.checked,
+        enable_model_probe: enableModelProbeEl.checked,
+        enable_model_candidate_race: enableModelCandidateRaceEl.checked,
+        image_upstream_protocol: imageUpstreamProtocolEl.value,
+        image_task_poll_timeout_seconds: Number(imageTaskPollTimeoutSecondsEl.value || 0),
+        image_task_poll_interval_seconds: Number(imageTaskPollIntervalSecondsEl.value || 0),
+        proxy_system_prompt_zh: proxySystemPromptZhEl.value,
+      };
+      return payload;
+    }
+
+    function config_pools_urls_text(pools) {
+      var urls = [];
+      (pools || []).forEach(function(p) {
+        if (p.enabled === false) return;
+        (p.urls || []).forEach(function(u) {
+          if (u && u.trim()) urls.push(u.trim());
+        });
+      });
+      return urls.length ? urls.join("\n") : "";
+    }
+
+    async function saveConfig(event) {
+      if (event) event.preventDefault();
+      configSubmitting = true;
+      configForm.setAttribute("aria-busy", "true");
+      saveConfigBtn.disabled = true;
+      saveConfigBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.4"/><path d="M10 5v5l3 2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg> 正在保存';
+      setConfigStatus("正在保存并应用配置...", "warn");
+      try {
+        var resp = await fetch("/debug/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(buildConfigPayload()),
+        });
+        var data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.message || "保存失败（HTTP " + resp.status + "）");
+        lastState = Object.assign({}, lastState || {}, {
+          config: data.config,
+          runtime: data.runtime,
+          upstream_url: data.upstream_url,
+          upstream_urls: data.upstream_urls,
+          upstream_url_count: data.upstream_url_count,
+        });
+        renderConfig(data.config, true);
+        renderRuntimeOverview(lastState);
+        setConfigStatus("配置已保存并立即生效。", "ok");
+        await refreshState();
+      } catch (err) {
+        setConfigStatus("保存失败：" + err, "err");
+        throw err;
+      } finally {
+        configSubmitting = false;
+        configForm.removeAttribute("aria-busy");
+        saveConfigBtn.disabled = false;
+        saveConfigBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;"><path d="M6.5 10l2.5 2.5 4.5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> 保存并生效';
+      }
+    }
+
+    async function refreshState() {
+      try {
+        var resp = await fetch("/debug/state", { cache: "no-store" });
+        var data = await resp.json();
+        lastState = data;
+        var activeCount = (data.active_requests || []).length;
+        var streamCount = (data.active_requests || []).filter(function(r) { return r.stream; }).length;
+
+        renderRuntimeOverview(data);
+        renderConfig(data.config || {}, false);
+        renderStats(data.stats || {}, activeCount, streamCount);
+        renderRequestTable(data);
+        renderLogTable(data.recent_logs || []);
+        setText(lastUpdatedEl, "更新 " + (data.generated_at || ""));
+        setText(logPathEl, data.log_path || "");
+      } catch (err) {
+        renderLogTable(["监控面板拉取失败: " + err]);
+      }
+    }
+
+
+
+    // ===== Connection Pool Manager =====
+    var poolData = [];
+    var poolCollapseState = {};
+    var poolTestResults = {};
+    var currentPoolEditIndex = -1;
+    var poolOverviewListEl = document.getElementById("poolOverviewList");
+    var poolEditorBody = document.getElementById("poolEditorBody");
+    var poolModalOverlay = document.getElementById("poolModalOverlay");
+    var poolModalTitle = document.getElementById("poolModalTitle");
+    var closePoolModalBtn = document.getElementById("closePoolModalBtn");
+    var addPoolBtn = document.getElementById("addPoolBtn");
+    var importPoolsBtn = document.getElementById("importPoolsBtn");
+    var importPoolsFile = document.getElementById("importPoolsFile");
+    var savePoolBtn = document.getElementById("savePoolBtn");
+    var cancelPoolBtn = document.getElementById("cancelPoolBtn");
+    var poolSummaryText = document.getElementById("poolSummaryText");
+    var poolTestResultEl = document.getElementById("poolTestResult");
+    var poolTestSubmitting = false;
+
+    function poolSummary(pools) {
+      var count = (pools || []).length;
+      if (!count) return "未配置连接池";
+      var enabled = 0, urls = 0;
+      pools.forEach(function(p) {
+        if (p.enabled !== false) enabled++;
+        urls += (p.urls || []).filter(function(u) { return u && u.trim(); }).length;
+      });
+      return count + " 个连接池 · " + enabled + " 个启用 · " + urls + " 条地址";
+    }
+
+    function normalizePoolDraft(pool) {
+      pool = pool || {};
+      var urls = Array.isArray(pool.urls) ? pool.urls.filter(function(u) { return u && String(u).trim(); }) : [];
+      var keys = Array.isArray(pool.keys) ? pool.keys.map(function(k) {
+        return typeof k === "string" ? { key: k } : { key: (k && k.key) || "" };
+      }).filter(function(k) { return k.key && String(k.key).trim(); }) : [];
+      var priority = Number(pool.priority);
+      if (!Number.isFinite(priority)) priority = 100;
+      var routePolicy = pool.route_policy || {};
+      return {
+        name: String(pool.name || "").trim(),
+        enabled: pool.enabled !== false,
+        priority: priority,
+        urls: urls,
+        keys: keys,
+        route_policy: {
+          reasoning_effort: String(routePolicy.reasoning_effort || "medium"),
+          prompt_cache_mode: String(routePolicy.prompt_cache_mode || "exact"),
+          compression_mode: String(routePolicy.compression_mode || "balanced"),
+          max_history_messages: Number(routePolicy.max_history_messages || 24),
+          max_tool_chars: Number(routePolicy.max_tool_chars || 24000),
+          max_input_chars: Number(routePolicy.max_input_chars || 180000),
+          max_output_tokens: Number(routePolicy.max_output_tokens || 0),
+        },
+      };
+    }
+
+    function urlRowsHtml(urls, poolIdx) {
+      var h = '';
+      (urls || []).forEach(function(u, ui) {
+        h += '<div class="pool-entry-row"><input value="' + escapeAttr(u || "") + '" placeholder="https://..." data-field="url" data-pool-idx="' + poolIdx + '" data-url-idx="' + ui + '">';
+        if ((urls || []).length > 1) {
+          h += '<button class="btn-icon" data-action="del-url" data-pool-idx="' + poolIdx + '" data-url-idx="' + ui + '" title="移除">−</button>';
+        }
+        h += '</div>';
+      });
+      h += '<div class="pool-entry-row"><button class="btn-icon add" data-action="add-url" data-pool-idx="' + poolIdx + '" title="添加地址">+</button><span style="font-size:11px;color:var(--muted-soft);">添加地址</span></div>';
+      return h;
+    }
+
+    function keyRowsHtml(keys, poolIdx) {
+      var h = '';
+      (keys || []).forEach(function(k, ki) {
+        var val = (k && k.key) ? k.key : "";
+        h += '<div class="pool-entry-row"><input type="password" value="' + escapeAttr(val) + '" placeholder="sk-..." data-field="key" data-pool-idx="' + poolIdx + '" data-key-idx="' + ki + '">';
+        if ((keys || []).length > 1) {
+          h += '<button class="btn-icon" data-action="del-key" data-pool-idx="' + poolIdx + '" data-key-idx="' + ki + '" title="移除">−</button>';
+        }
+        h += '</div>';
+      });
+      h += '<div class="pool-entry-row"><button class="btn-icon add" data-action="add-key" data-pool-idx="' + poolIdx + '" title="添加 Key">+</button><span style="font-size:11px;color:var(--muted-soft);">添加 Key</span></div>';
+      return h;
+    }
+
+    function renderPoolOverview(pools) {
+      if (!poolOverviewListEl) return;
+      if (!pools || !pools.length) {
+        poolOverviewListEl.innerHTML = '<div style="color:var(--muted);font-size:12.5px;padding:10px 2px;">暂无连接池。先新增一条，再分别管理每个连接池。</div>';
+        return;
+      }
+      poolOverviewListEl.innerHTML = pools.map(function(rawPool, index) {
+        var pool = normalizePoolDraft(rawPool);
+        var collapsed = !!poolCollapseState[String(index)];
+        var title = escapeHtml(pool.name || ("连接池 " + (index + 1)));
+        var enabledText = pool.enabled ? "启用中" : "已停用";
+        var html = '<div class="pool-overview-card' + (collapsed ? ' is-collapsed' : '') + '" data-pool-idx="' + index + '">';
+        html += '<div class="pool-overview-head">';
+        html += '<button type="button" class="pool-collapse-btn" data-action="toggle-pool" data-pool-idx="' + index + '" aria-label="折叠">';
+        html += '<svg width="14" height="14" viewBox="0 0 20 20" fill="none"><path d="M5 8l5 5 5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        html += '</button>';
+        html += '<div class="pool-overview-main">';
+        html += '<div class="pool-overview-title-row"><span class="pool-overview-title">' + title + '</span><span class="pool-badge ' + (pool.enabled ? 'ok' : 'off') + '">' + enabledText + '</span><span class="pool-badge">优先级 ' + escapeHtml(pool.priority) + '</span></div>';
+        html += '<div class="pool-overview-meta">' + pool.urls.length + ' 条地址 · ' + pool.keys.length + ' 个 Key</div>';
+        html += '</div>';
+        html += '<div class="pool-overview-actions">';
+        html += '<button type="button" class="pool-inline-btn primary" data-action="test-pool" data-pool-idx="' + index + '">测试连接</button>';
+        html += '<button type="button" class="pool-inline-btn" data-action="move-up" data-pool-idx="' + index + '"' + (index === 0 ? ' disabled' : '') + '>上移</button>';
+        html += '<button type="button" class="pool-inline-btn" data-action="move-down" data-pool-idx="' + index + '"' + (index === pools.length - 1 ? ' disabled' : '') + '>下移</button>';
+        html += '<button type="button" class="pool-inline-btn" data-action="manage-pool" data-pool-idx="' + index + '">管理</button>';
+        html += '<button type="button" class="pool-inline-btn danger" data-action="del-pool" data-pool-idx="' + index + '">删除</button>';
+        html += '</div>';
+        html += '</div>';
+        html += '<div class="pool-overview-body"><div class="pool-inline-grid">';
+        html += '<div class="pool-inline-block"><label>上游地址</label>';
+        html += pool.urls.length ? pool.urls.map(function(url) { return '<div class="pool-inline-item">' + escapeHtml(url) + '</div>'; }).join("") : '<div class="pool-inline-empty">未配置地址</div>';
+        html += '</div>';
+        html += '<div class="pool-inline-block"><label>API Keys</label>';
+        html += pool.keys.length ? pool.keys.map(function(key) {
+          var value = String((key && key.key) || "");
+          return '<div class="pool-inline-item">' + escapeHtml(value ? (value.slice(0, 6) + "..." + value.slice(-4)) : "") + '</div>';
+        }).join("") : '<div class="pool-inline-empty">未配置 Key</div>';
+        html += '</div>';
+        html += '<div class="pool-inline-block"><label>线路策略</label>';
+        html += '<div class="pool-inline-item">' + escapeHtml("思考 " + pool.route_policy.reasoning_effort + " · 缓存 " + pool.route_policy.prompt_cache_mode + " · 压缩 " + pool.route_policy.compression_mode) + '</div>';
+        html += '</div>';
+        var testData = poolTestResults[String(index)];
+        html += '<div class="pool-inline-block" style="grid-column:1 / -1;">';
+        html += renderPoolInlineTest(testData);
+        html += '</div>';
+        html += '</div></div></div>';
+        return html;
+      }).join("");
+    }
+
+    function renderPoolInlineTest(data) {
+      if (!data) {
+        return '<div class="pool-test-inline"><div class="pool-test-inline-head"><span class="pool-test-inline-title">连接测试</span><span class="pool-inline-empty">尚未测试</span></div></div>';
+      }
+      var routes = Array.isArray(data.results) ? data.results : [];
+      var summaryCls = data.summary_ok ? "pool-test-status-ok" : "pool-test-status-err";
+      var summaryText = data.summary_ok ? "可用" : "异常";
+      var html = '<div class="pool-test-inline">';
+      html += '<div class="pool-test-inline-head"><span class="pool-test-inline-title">连接测试</span><span class="' + summaryCls + '">' + summaryText + ' · ' + escapeHtml(data.tested_at || "") + '</span></div>';
+      routes.forEach(function(route) {
+        html += '<div class="pool-test-inline-route">';
+        html += '<div class="pool-test-inline-route-head"><span class="pool-test-inline-route-url">' + escapeHtml(route.url || "") + '</span><span style="font-size:11px;color:var(--muted);">' + escapeHtml(route.models_url || "") + '</span></div>';
+        (route.keys || []).forEach(function(item) {
+          var cls = item.ok ? "pool-test-status-ok" : "pool-test-status-err";
+          var statusText = item.ok ? "成功" : (item.status_code ? ("HTTP " + item.status_code) : "失败");
+          html += '<div class="pool-test-inline-key">';
+          html += '<strong>' + escapeHtml(item.key_preview || "未配置 Key") + '</strong>';
+          html += '<span class="' + cls + '">' + escapeHtml(statusText) + '</span>';
+          html += '<span>' + escapeHtml((item.latency_ms || 0) + " ms · " + (item.message || "")) + '</span>';
+          html += '</div>';
+        });
+        html += '</div>';
+      });
+      html += '</div>';
+      return html;
+    }
+
+    function renderPoolEditor(pool) {
+      if (!poolEditorBody) return;
+      pool = normalizePoolDraft(pool || { name: "", enabled: true, priority: 100, urls: [""], keys: [{ key: "" }] });
+      var urls = (pool.urls && pool.urls.length) ? pool.urls : [""];
+      var keys = (pool.keys && pool.keys.length) ? pool.keys : [{ key: "" }];
+      var html = '<div class="pool-card">';
+      html += '<div class="pool-card-header">';
+      html += '<input class="pool-name" value="' + escapeAttr(pool.name || "") + '" placeholder="连接池名称" data-field="name">';
+      html += '<label class="pool-toggle"><input type="checkbox"' + (pool.enabled !== false ? ' checked' : '') + ' data-field="enabled"> 启用</label>';
+      html += '</div>';
+      html += '<div class="pool-card-body">';
+      html += '<div class="field"><label>优先级</label><input type="number" value="' + escapeAttr(pool.priority == null ? 100 : pool.priority) + '" min="0" step="1" data-field="priority"></div>';
+      html += '<div class="pool-urls"><label>上游地址</label>' + urlRowsHtml(urls, 0) + '</div>';
+      html += '<div class="pool-keys"><label>API Keys</label>' + keyRowsHtml(keys, 0) + '</div>';
+      html += '<div class="field"><label>思考强度</label><select data-field="reasoning_effort"><option value="low"' + (pool.route_policy.reasoning_effort === "low" ? " selected" : "") + '>低</option><option value="medium"' + (pool.route_policy.reasoning_effort === "medium" ? " selected" : "") + '>中</option><option value="high"' + (pool.route_policy.reasoning_effort === "high" ? " selected" : "") + '>高</option></select></div>';
+      html += '<div class="field"><label>缓存模式</label><select data-field="prompt_cache_mode"><option value="off"' + (pool.route_policy.prompt_cache_mode === "off" ? " selected" : "") + '>关闭</option><option value="exact"' + (pool.route_policy.prompt_cache_mode === "exact" ? " selected" : "") + '>精确命中</option></select></div>';
+      html += '<div class="field"><label>压缩模式</label><select data-field="compression_mode"><option value="off"' + (pool.route_policy.compression_mode === "off" ? " selected" : "") + '>关闭</option><option value="light"' + (pool.route_policy.compression_mode === "light" ? " selected" : "") + '>轻度</option><option value="balanced"' + (pool.route_policy.compression_mode === "balanced" ? " selected" : "") + '>平衡</option><option value="aggressive"' + (pool.route_policy.compression_mode === "aggressive" ? " selected" : "") + '>激进</option></select></div>';
+      html += '<div class="field"><label>历史消息上限</label><input type="number" value="' + escapeAttr(pool.route_policy.max_history_messages) + '" min="2" max="200" step="1" data-field="max_history_messages"></div>';
+      html += '<div class="field"><label>工具内容上限</label><input type="number" value="' + escapeAttr(pool.route_policy.max_tool_chars) + '" min="1000" max="500000" step="1000" data-field="max_tool_chars"></div>';
+      html += '<div class="field"><label>总输入字符上限</label><input type="number" value="' + escapeAttr(pool.route_policy.max_input_chars) + '" min="2000" max="2000000" step="1000" data-field="max_input_chars"></div>';
+      html += '<div class="field"><label>该线路输出上限</label><input type="number" value="' + escapeAttr(pool.route_policy.max_output_tokens) + '" min="0" max="10000000" step="1" data-field="max_output_tokens"></div>';
+      html += '</div></div>';
+      poolEditorBody.innerHTML = html;
+    }
+
+    function collectPoolEditorData() {
+      if (!poolEditorBody) return { name: "", enabled: true, priority: 100, urls: [], keys: [] };
+      var root = poolEditorBody.querySelector(".pool-card");
+      if (!root) return { name: "", enabled: true, priority: 100, urls: [], keys: [] };
+      var nameEl = root.querySelector('[data-field="name"]');
+      var enabledEl = root.querySelector('[data-field="enabled"]');
+      var priorityEl = root.querySelector('[data-field="priority"]');
+      var reasoningEl = root.querySelector('[data-field="reasoning_effort"]');
+      var cacheModeEl = root.querySelector('[data-field="prompt_cache_mode"]');
+      var compressionEl = root.querySelector('[data-field="compression_mode"]');
+      var maxHistoryEl = root.querySelector('[data-field="max_history_messages"]');
+      var maxToolCharsEl = root.querySelector('[data-field="max_tool_chars"]');
+      var maxInputCharsEl = root.querySelector('[data-field="max_input_chars"]');
+      var maxOutputTokensEl = root.querySelector('[data-field="max_output_tokens"]');
+      var urlInputs = root.querySelectorAll('[data-field="url"]');
+      var keyInputs = root.querySelectorAll('[data-field="key"]');
+      var urls = [];
+      var keys = [];
+      urlInputs.forEach(function(inp) { var v = inp.value.trim(); if (v) urls.push(v); });
+      keyInputs.forEach(function(inp) { var v = inp.value.trim(); if (v) keys.push({ key: v }); });
+      var priority = priorityEl ? Number(priorityEl.value || 100) : 100;
+      if (!Number.isFinite(priority)) priority = 100;
+      return {
+        name: nameEl ? nameEl.value.trim() : "",
+        enabled: enabledEl ? enabledEl.checked : true,
+        priority: priority,
+        urls: urls,
+        keys: keys,
+        route_policy: {
+          reasoning_effort: reasoningEl ? reasoningEl.value : "medium",
+          prompt_cache_mode: cacheModeEl ? cacheModeEl.value : "exact",
+          compression_mode: compressionEl ? compressionEl.value : "balanced",
+          max_history_messages: Number(maxHistoryEl ? maxHistoryEl.value : 24) || 24,
+          max_tool_chars: Number(maxToolCharsEl ? maxToolCharsEl.value : 24000) || 24000,
+          max_input_chars: Number(maxInputCharsEl ? maxInputCharsEl.value : 180000) || 180000,
+          max_output_tokens: Number(maxOutputTokensEl ? maxOutputTokensEl.value : 0) || 0,
+        }
+      };
+    }
+
+    function openPoolModal(index) {
+      if (!poolModalOverlay) return;
+      currentPoolEditIndex = typeof index === "number" ? index : -1;
+      var current = currentPoolEditIndex >= 0 ? normalizePoolDraft(poolData[currentPoolEditIndex]) : { name: "", enabled: true, priority: 100, urls: [""], keys: [{ key: "" }] };
+      if (poolModalTitle) {
+        poolModalTitle.innerHTML = '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" style="vertical-align:-4px;margin-right:6px;"><rect x="2" y="2" width="16" height="5.5" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="2" y="12.5" width="16" height="5.5" rx="1" stroke="currentColor" stroke-width="1.4"/><circle cx="14.5" cy="4.75" r="1" fill="currentColor"/><circle cx="14.5" cy="15.25" r="1" fill="currentColor"/></svg>' + (currentPoolEditIndex >= 0 ? '管理连接池' : '新增连接池');
+      }
+      renderPoolEditor(current);
+      poolModalOverlay.classList.add("open");
+      document.body.style.overflow = "hidden";
+    }
+
+    function closePoolModal() {
+      if (!poolModalOverlay) return;
+      poolModalOverlay.classList.remove("open");
+      document.body.style.overflow = "";
+      if (poolTestResultEl) {
+        poolTestResultEl.style.display = "none";
+        poolTestResultEl.innerHTML = "";
+      }
+    }
+
+    function renderPoolTestResult(data) {
+      if (!poolTestResultEl) return;
+      var routes = data && Array.isArray(data.results) ? data.results : [];
+      var summaryCls = data && data.summary_ok ? "pool-test-status-ok" : "pool-test-status-err";
+      var summaryText = data && data.summary_ok ? "可用" : "异常";
+      var html = '<div class="pool-test-result">';
+      html += '<div class="pool-test-route-head"><strong>' + escapeHtml((data && data.pool_name) || "连接池测试") + '</strong><span class="' + summaryCls + '">' + summaryText + '</span></div>';
+      html += '<div style="font-size:12px;color:var(--muted);">测试时间：' + escapeHtml((data && data.tested_at) || "") + '</div>';
+      routes.forEach(function(route) {
+        html += '<div class="pool-test-route">';
+        html += '<div class="pool-test-route-head"><strong>' + escapeHtml(route.url || "") + '</strong><span style="color:var(--muted);font-size:11.5px;">' + escapeHtml(route.models_url || "") + '</span></div>';
+        html += '<div class="pool-test-key-list">';
+        (route.keys || []).forEach(function(item) {
+          var cls = item.ok ? "pool-test-status-ok" : "pool-test-status-err";
+          var statusText = item.ok ? "OK" : (item.status_code ? ("HTTP " + item.status_code) : "失败");
+          html += '<div class="pool-test-key">';
+          html += '<strong>' + escapeHtml(item.key_preview || "未配置 Key") + '</strong>';
+          html += '<span class="' + cls + '">' + escapeHtml(statusText) + '</span>';
+          html += '<span>' + escapeHtml((item.latency_ms || 0) + " ms · " + (item.message || "")) + '</span>';
+          html += '</div>';
+        });
+        html += '</div></div>';
+      });
+      html += '</div>';
+      poolTestResultEl.innerHTML = html;
+      poolTestResultEl.style.display = "block";
+    }
+
+    async function testPool(index) {
+      if (poolTestSubmitting) return;
+      var pool = normalizePoolDraft(poolData[index] || {});
+      if (!pool.name) {
+        alert("未找到要测试的连接池。");
+        return;
+      }
+      poolTestSubmitting = true;
+      setConfigStatus("正在测试连接池「" + pool.name + "」...", "warn");
+      poolTestResults[String(index)] = {
+        summary_ok: false,
+        tested_at: "测试中...",
+        results: [],
+      };
+      renderPoolOverview(poolData);
+      try {
+        var resp = await fetch("/debug/pools/test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pool_index: index, pool_name: pool.name }),
+        });
+        var data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.message || ("测试失败（HTTP " + resp.status + "）"));
+        poolTestResults[String(index)] = data;
+        renderPoolOverview(poolData);
+        setConfigStatus("连接池测试已完成。", data.summary_ok ? "ok" : "err");
+      } catch (err) {
+        poolTestResults[String(index)] = {
+          summary_ok: false,
+          tested_at: "测试失败",
+          results: [
+            {
+              url: pool.urls[0] || "",
+              models_url: "",
+              keys: [
+                {
+                  key_preview: "",
+                  ok: false,
+                  status_code: null,
+                  latency_ms: 0,
+                  message: String(err),
+                },
+              ],
+            },
+          ],
+        };
+        renderPoolOverview(poolData);
+        setConfigStatus("连接池测试失败：" + err, "err");
+      } finally {
+        poolTestSubmitting = false;
+      }
+    }
+
+    function addPool() {
+      openPoolModal(-1);
+    }
+
+    async function saveCurrentPool() {
+      if (poolSaveSubmitting) return;
+      var draft = normalizePoolDraft(collectPoolEditorData());
+      if (!draft.name) { alert("请先填写连接池名称。"); return; }
+      if (!draft.urls.length) { alert("至少需要配置一条上游地址。"); return; }
+      var nextPools = poolData.slice();
+      if (currentPoolEditIndex >= 0) nextPools[currentPoolEditIndex] = draft;
+      else nextPools.push(draft);
+      var prevPools = poolData.slice();
+      poolData = nextPools;
+      if (poolSummaryText) poolSummaryText.textContent = poolSummary(poolData);
+      renderPoolOverview(poolData);
+      poolSaveSubmitting = true;
+      if (savePoolBtn) {
+        savePoolBtn.disabled = true;
+        savePoolBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.4"/><path d="M10 5v5l3 2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg> 正在保存';
+      }
+      setConfigStatus("正在保存连接池配置...", "warn");
+      try {
+        await saveConfig();
+        configDirty = false;
+        closePoolModal();
+        setConfigStatus("连接池已保存并持久化。", "ok");
+      } catch (err) {
+        poolData = prevPools;
+        if (poolSummaryText) poolSummaryText.textContent = poolSummary(poolData);
+        renderPoolOverview(poolData);
+        setConfigStatus("连接池保存失败：" + err, "err");
+      } finally {
+        poolSaveSubmitting = false;
+        if (savePoolBtn) {
+          savePoolBtn.disabled = false;
+          savePoolBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;"><path d="M6.5 10l2.5 2.5 4.5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> 保存该连接池';
+        }
+      }
+    }
+
+    function importPoolsFromJSON(jsonText) {
+      var data;
+      try { data = JSON.parse(jsonText); } catch (e) { alert("JSON 解析失败：" + e.message); return; }
+      var pools = Array.isArray(data) ? data : (data.pools || []);
+      if (!pools.length) { alert("未找到有效的连接池数据（期望数组或包含 pools 字段的对象）。"); return; }
+      poolData = pools.map(normalizePoolDraft);
+      if (poolSummaryText) poolSummaryText.textContent = poolSummary(poolData);
+      renderPoolOverview(poolData);
+      poolDirty();
+    }
+
+    function poolDirty() {
+      configDirty = true;
+      setConfigStatus("连接池草稿已更新，点击 [保存并生效] 才会真正写入代理。", "warn");
+    }
+
+    if (poolEditorBody) {
+      poolEditorBody.addEventListener("click", function(e) {
+        var btn = e.target.closest("[data-action]");
+        if (!btn) return;
+        var action = btn.dataset.action;
+        var draft = collectPoolEditorData();
+        draft.urls = draft.urls.length ? draft.urls.slice() : [""];
+        draft.keys = draft.keys.length ? draft.keys.slice() : [{ key: "" }];
+        if (action === "del-url") {
+          var urlIdx = parseInt(btn.dataset.urlIdx, 10);
+          if (draft.urls.length > 1) {
+            draft.urls.splice(urlIdx, 1);
+            renderPoolEditor(draft);
+          }
+        } else if (action === "add-url") {
+          draft.urls.push("");
+          renderPoolEditor(draft);
+        } else if (action === "del-key") {
+          var keyIdx = parseInt(btn.dataset.keyIdx, 10);
+          if (draft.keys.length > 1) {
+            draft.keys.splice(keyIdx, 1);
+            renderPoolEditor(draft);
+          }
+        } else if (action === "add-key") {
+          draft.keys.push({ key: "" });
+          renderPoolEditor(draft);
+        }
+      });
+    }
+
+    if (poolOverviewListEl) {
+      poolOverviewListEl.addEventListener("click", function(e) {
+        var btn = e.target.closest("[data-action]");
+        if (!btn) return;
+        var action = btn.dataset.action;
+        var poolIdx = parseInt(btn.dataset.poolIdx, 10);
+        if (action === "toggle-pool") {
+          var key = String(poolIdx);
+          poolCollapseState[key] = !poolCollapseState[key];
+          renderPoolOverview(poolData);
+        } else if (action === "move-up" && poolIdx > 0) {
+          var movedUp = poolData.slice();
+          var tmpUp = movedUp[poolIdx - 1];
+          movedUp[poolIdx - 1] = movedUp[poolIdx];
+          movedUp[poolIdx] = tmpUp;
+          poolData = movedUp;
+          renderPoolOverview(poolData);
+          poolDirty();
+        } else if (action === "move-down" && poolIdx < poolData.length - 1) {
+          var movedDown = poolData.slice();
+          var tmpDown = movedDown[poolIdx + 1];
+          movedDown[poolIdx + 1] = movedDown[poolIdx];
+          movedDown[poolIdx] = tmpDown;
+          poolData = movedDown;
+          renderPoolOverview(poolData);
+          poolDirty();
+        } else if (action === "manage-pool") {
+          openPoolModal(poolIdx);
+        } else if (action === "test-pool") {
+          testPool(poolIdx);
+        } else if (action === "del-pool") {
+          var poolName = poolData[poolIdx] && poolData[poolIdx].name ? poolData[poolIdx].name : "未命名";
+          if (!confirm("确认删除连接池「" + poolName + "」？")) return;
+          poolData.splice(poolIdx, 1);
+          if (poolSummaryText) poolSummaryText.textContent = poolSummary(poolData);
+          renderPoolOverview(poolData);
+          poolDirty();
+        }
+      });
+    }
+
+    // ===== Safe event binder =====
+    function safeOn(el, evt, fn) {
+      if (el) el.addEventListener(evt, fn);
+    }
+
+    safeOn(addPoolBtn, "click", addPool);
+    safeOn(savePoolBtn, "click", saveCurrentPool);
+    safeOn(cancelPoolBtn, "click", closePoolModal);
+    safeOn(closePoolModalBtn, "click", closePoolModal);
+    safeOn(poolModalOverlay, "click", function(e) {
+      if (e.target === poolModalOverlay) closePoolModal();
+    });
+    safeOn(importPoolsBtn, "click", function() {
+      if (importPoolsFile) importPoolsFile.click();
+    });
+    safeOn(importPoolsFile, "change", function() {
+      var file = this.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function() { importPoolsFromJSON(reader.result); };
+      reader.readAsText(file);
+      this.value = "";
+    });
+
+    // ===== Event bindings =====
+    navButtons.forEach(function(btn) {
+      btn.addEventListener("click", function(e) {
+        e.preventDefault();
+        setActiveView(btn.dataset.nav);
+      });
+    });
+    window.addEventListener("hashchange", function() {
+      var nextView = (window.location.hash || "#overview").replace(/^#/, "") || "overview";
+      setActiveView(nextView);
+    });
+
+    if (refreshNowBtn) refreshNowBtn.addEventListener("click", refreshState);
+    if (configForm) {
+      configForm.addEventListener("submit", saveConfig);
+      configForm.addEventListener("input", function() {
+        if (!configSubmitting) { configDirty = true; setConfigStatus("配置已修改，点击 [保存并生效] 应用到代理。", "warn"); }
+      });
+      configForm.addEventListener("change", function() {
+        if (!configSubmitting) { configDirty = true; setConfigStatus("配置已修改，点击 [保存并生效] 应用到代理。", "warn"); }
+      });
+    }
+    if (reloadConfigBtn) {
+      reloadConfigBtn.addEventListener("click", function() {
+        if (lastState?.config) { renderConfig(lastState.config, true); setConfigStatus("已恢复到当前正在生效的配置。", "ok"); }
+      });
+    }
+    if (applyRequestFiltersBtn) {
+      applyRequestFiltersBtn.addEventListener("click", function() {
+        syncRequestFilterState();
+        renderRequestTable(lastState || {});
+      });
+    }
+    if (resetRequestFiltersBtn) {
+      resetRequestFiltersBtn.addEventListener("click", function() {
+        if (requestTimeStartEl) requestTimeStartEl.value = "";
+        if (requestTimeEndEl) requestTimeEndEl.value = "";
+        if (requestIdFilterEl) requestIdFilterEl.value = "";
+        if (requestModelFilterEl) requestModelFilterEl.value = "";
+        if (requestProtocolFilterEl) requestProtocolFilterEl.value = "";
+        if (requestRemoteFilterEl) requestRemoteFilterEl.value = "";
+        if (requestScopeFilterEl) requestScopeFilterEl.value = "recent";
+        syncRequestFilterState();
+        renderRequestTable(lastState || {});
+      });
+    }
+
+    // Init
+    var initialView = (window.location.hash || "#overview").replace(/^#/, "") || "overview";
+    setActiveView(initialView);
+    switchConfigTab(activeConfigTabKey);
+    refreshState();
+    setInterval(refreshState, 1200);
+  </script>
+
+</body>
+</html>
