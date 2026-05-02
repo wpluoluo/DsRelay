@@ -11,6 +11,38 @@ from local_proxy.upstream.retry import race_model_candidate_requests
 
 
 ROUTE_FAILOVER_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504, 524}
+DETERMINISTIC_ROUTE_FAILURE_STATUS_CODES = {401, 402, 403}
+DETERMINISTIC_FAILURE_MARKERS = (
+    "auth",
+    "unauthorized",
+    "invalid_api_key",
+    "authentication",
+    "permission_denied",
+    "quota",
+    "balance",
+    "payment required",
+    "billing",
+    "account disabled",
+    "account suspended",
+    "service disabled",
+    "service unavailable for account",
+    "channel disabled",
+    "channel unavailable",
+    "欠费",
+    "余额不足",
+    "停机",
+    "停服",
+    "服务停用",
+    "账号停用",
+    "渠道停用",
+)
+
+
+def _is_deterministic_upstream_failure(status_code: int, reason: str, preview: str) -> bool:
+    searchable = f"{reason or ''} {preview or ''}".lower()
+    return status_code in DETERMINISTIC_ROUTE_FAILURE_STATUS_CODES or any(
+        marker in searchable for marker in DETERMINISTIC_FAILURE_MARKERS
+    )
 
 
 def request_upstream_with_retries(
@@ -217,7 +249,6 @@ def request_upstream_with_retries(
             response = request_sender(**current_request_kwargs)
         except requests.RequestException as exc:
             last_exception = exc
-            mark_route_failure(attempt_url, "exception")
             attempts.append(
                 {
                     "attempt": current_attempt_number,
@@ -232,15 +263,7 @@ def request_upstream_with_retries(
                     "error": str(exc),
                 }
             )
-            mark_api_key_failure(attempt_url, key_choice, "exception")
-            current_failed_keys = route_key_failures.setdefault(attempt_url, set())
-            if key_choice.get("from_pool"):
-                current_failed_keys.add(str(key_choice.get("key") or ""))
-            if (
-                len(candidate_urls) - len(blocked_urls) > 1
-                and len(current_failed_keys) >= len(available_keys_for_route)
-                and len(available_keys_for_route) > 0
-            ):
+            if len(candidate_urls) - len(blocked_urls) > 1:
                 blocked_urls.add(attempt_url)
                 logger.warning(
                     "request_id=%s 切换线路 次数=%s 线路=%s 原因=请求异常 剩余线路=%s 错误=%s",
@@ -313,35 +336,21 @@ def request_upstream_with_retries(
                 model_candidate=model_candidate,
                 success=True,
             )
-        elif not client_gone_response and not model_unavailable_response and not token_limit_adjustable:
+        deterministic_failure = _is_deterministic_upstream_failure(
+            response.status_code,
+            reason,
+            preview,
+        )
+        if deterministic_failure:
             mark_route_failure(attempt_url, reason)
 
-        key_retry_reason = (
-            response.status_code in {401, 402, 403, 408, 429, 502, 504, 524}
-            or any(
-                marker in (reason or "")
-                for marker in (
-                    "route_switch_",
-                    "client_gone_",
-                    "status_408",
-                    "status_429",
-                    "status_502",
-                    "status_504",
-                    "status_524",
-                    "upstream_canceled_",
-                )
-            )
-            or "quota" in preview.lower()
-            or "balance" in preview.lower()
-            or "auth" in preview.lower()
-            or "unauthorized" in preview.lower()
-        )
-        if response.status_code >= 400 and key_retry_reason:
+        key_retry_reason = deterministic_failure
+        if response.status_code >= 400 and deterministic_failure:
             mark_api_key_failure(
                 attempt_url,
                 key_choice,
                 reason,
-                force_cooldown=response.status_code in {401, 402, 403},
+                force_cooldown=True,
             )
 
         if token_limit_adjustable and retry_allowed and len(attempts) < max_attempts:
