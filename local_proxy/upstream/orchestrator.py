@@ -314,7 +314,7 @@ def request_upstream_with_retries(
             mark_route_failure(attempt_url, reason)
 
         key_retry_reason = (
-            response.status_code in {401, 402, 403, 408, 429, 504, 524}
+            response.status_code in {401, 402, 403, 408, 429, 502, 504, 524}
             or any(
                 marker in (reason or "")
                 for marker in (
@@ -322,6 +322,7 @@ def request_upstream_with_retries(
                     "client_gone_",
                     "status_408",
                     "status_429",
+                    "status_502",
                     "status_504",
                     "status_524",
                     "upstream_canceled_",

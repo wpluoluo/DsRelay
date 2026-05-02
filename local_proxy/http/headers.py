@@ -9,6 +9,9 @@ SENSITIVE_QUERY_KEYS = {
     "apikey",
     "access_token",
     "token",
+    "authorization",
+    "proxy-authorization",
+    "x-forwarded-authorization",
     "x-api-key",
     "x-goog-api-key",
 }
@@ -35,6 +38,10 @@ REQUEST_HEADER_BLOCKLIST = {
     "content-length",
     "accept-encoding",
     "connection",
+    "authorization",
+    "proxy-authorization",
+    "x-forwarded-authorization",
+    "cookie",
     "x-api-key",
     "x-goog-api-key",
     "anthropic-version",
@@ -82,16 +89,8 @@ def build_upstream_headers(*, upstream_api_key: str) -> dict:
     if "Content-Type" not in headers:
         headers["Content-Type"] = "application/json"
 
-    auth_header = headers.get("Authorization")
-    if not auth_header:
-        x_api_key = request.headers.get("x-api-key") or request.headers.get("x-goog-api-key")
-        if not x_api_key:
-            x_api_key = request.args.get("key") or request.args.get("api_key") or request.args.get("apikey")
-        if x_api_key:
-            headers["Authorization"] = f"Bearer {x_api_key}"
-            auth_header = headers["Authorization"]
-
-    if not auth_header and upstream_api_key:
+    headers.pop("Authorization", None)
+    if upstream_api_key:
         if upstream_api_key.lower().startswith("bearer "):
             headers["Authorization"] = upstream_api_key
         else:

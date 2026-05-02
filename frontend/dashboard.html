@@ -702,6 +702,13 @@
     .log-level-chip.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
     .log-level-chip.error { background: var(--error-soft); color: var(--error); border-color: transparent; }
     .log-level-chip.debug { background: var(--surface-alt); color: var(--muted); }
+
+    /* Token table */
+    .data-table { width: 100%; border-collapse: collapse; table-layout: auto; }
+    .data-table thead th { text-align: left; padding: 10px 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); border-bottom: 2px solid var(--border); }
+    .data-table tbody td { padding: 10px 10px; font-size: 13px; border-bottom: 1px solid var(--border-light); vertical-align: middle; }
+    .data-table tbody tr:hover { background: rgba(13, 148, 136, 0.03); }
+    .data-table code { background: var(--surface-alt); padding: 3px 8px; border-radius: 4px; font-size: 12px; }
     .log-message {
       font-family: "Cascadia Code", "JetBrains Mono", "Consolas", "SF Mono", monospace;
       font-size: 11px;
@@ -1044,7 +1051,7 @@
         <h1 id="viewTitle">运行总览</h1>
       </div>
       <div class="topbar-right">
-        <span class="endpoint-tag" id="heroEndpoint">http://127.0.0.1:8000/v1</span>
+        <span class="endpoint-tag" id="heroEndpoint">http://127.0.0.1:18765/v1</span>
         <span class="pill ok" id="heroAuth">鉴权读取中</span>
         <span class="pill accent" id="heroRoutes">链路读取中</span>
         <span class="pill" id="lastUpdated" style="background:var(--surface-alt);color:var(--muted);border:1px solid var(--border);">等待刷新...</span>
@@ -1064,7 +1071,7 @@
           <div class="panel">
             <div class="panel-head"><h3><svg width="18" height="18" viewBox="0 0 20 20" fill="none" style="vertical-align:-4px;margin-right:6px;"><rect x="2" y="2" width="16" height="5.5" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="2" y="12.5" width="16" height="5.5" rx="1" stroke="currentColor" stroke-width="1.4"/><circle cx="14.5" cy="4.75" r="1" fill="currentColor"/><circle cx="14.5" cy="15.25" r="1" fill="currentColor"/></svg>链路与入口</h3></div>
             <div style="padding:0;display:grid;gap:12px;">
-              <div><span style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px;">代理入口</span><code style="font-size:13px;" id="overviewEndpoint">http://127.0.0.1:8000/v1</code></div>
+              <div><span style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px;">代理入口</span><code style="font-size:13px;" id="overviewEndpoint">http://127.0.0.1:18765/v1</code></div>
               <div><span style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px;">主上游</span><code style="font-size:12px;" id="primaryUpstream">读取中...</code></div>
               <div><span style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px;">链路列表</span><div id="routeChips" style="display:flex;flex-wrap:wrap;gap:4px;"></div></div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
@@ -1220,6 +1227,9 @@
                   <div class="field"><label for="modelProbeTimeoutSeconds">模型探测超时（秒）</label><input id="modelProbeTimeoutSeconds" type="number" min="1" max="30" step="1"></div>
                   <div class="field"><label for="modelProbeTtlSeconds">模型列表缓存（秒）</label><input id="modelProbeTtlSeconds" type="number" min="10" max="3600" step="10"></div>
                   <div class="field"><label for="modelRouteCacheTtlSeconds">路由记忆（秒）</label><input id="modelRouteCacheTtlSeconds" type="number" min="60" max="604800" step="60"></div>
+                  <div class="field"><label for="interruptionResumeTtlSeconds">中断续接（秒）</label><input id="interruptionResumeTtlSeconds" type="number" min="60" max="604800" step="60"></div>
+                  <div class="field"><label for="interruptionResumeMaxChars">续接片段上限</label><input id="interruptionResumeMaxChars" type="number" min="500" max="200000" step="500"></div>
+                  <div class="field"><label for="interruptionResumeMinChars">续接最小长度</label><input id="interruptionResumeMinChars" type="number" min="1" max="10000" step="1"></div>
                   <div class="field"><label for="modelCandidateRaceLimit">候选并发数</label><input id="modelCandidateRaceLimit" type="number" min="1" max="6" step="1"></div>
                   <div class="field"><label for="modelCandidateRaceTimeoutSeconds">候选竞速超时（秒）</label><input id="modelCandidateRaceTimeoutSeconds" type="number" min="1" max="60" step="1"></div>
                 </div>
@@ -1233,6 +1243,7 @@
                   <label class="check-card"><input id="injectZhSystemPrompt" type="checkbox"><span><strong>注入中文规则</strong><span class="subtle">默认注入中文思考和结构化输出约束。</span></span></label>
                   <label class="check-card"><input id="enableModelProbe" type="checkbox"><span><strong>探测模型列表</strong><span class="subtle">首轮短探测 /models 优先命中实际模型名。</span></span></label>
                   <label class="check-card"><input id="enableModelCandidateRace" type="checkbox"><span><strong>候选名竞速</strong><span class="subtle">无记忆且探测不明确时竞速试模型名。</span></span></label>
+                  <label class="check-card"><input id="enableInterruptionResume" type="checkbox"><span><strong>中断续接缓存</strong><span class="subtle">客户端断流后保留已输出片段，下次同任务自动续接。</span></span></label>
                 </div>
               </div>
               <div class="config-section">
@@ -1294,11 +1305,17 @@
                   <div class="ic-value" id="configModelAliasInfo">读取中...</div>
                   <div class="ic-sub" id="configModelAliasMeta">同步中...</div>
                 </div>
+                <div class="info-card">
+                  <div class="ic-label">中断续接</div>
+                  <div class="ic-value" id="configResumeInfo">读取中...</div>
+                  <div class="ic-sub" id="configResumeMeta">同步中...</div>
+                </div>
               </div>
             </div>
           </div>
         </div>
       </section>
+
     </div>
   </div>
 
@@ -1359,6 +1376,9 @@
     const modelProbeTimeoutSecondsEl = document.getElementById("modelProbeTimeoutSeconds");
     const modelProbeTtlSecondsEl = document.getElementById("modelProbeTtlSeconds");
     const modelRouteCacheTtlSecondsEl = document.getElementById("modelRouteCacheTtlSeconds");
+    const interruptionResumeTtlSecondsEl = document.getElementById("interruptionResumeTtlSeconds");
+    const interruptionResumeMaxCharsEl = document.getElementById("interruptionResumeMaxChars");
+    const interruptionResumeMinCharsEl = document.getElementById("interruptionResumeMinChars");
     const modelCandidateRaceLimitEl = document.getElementById("modelCandidateRaceLimit");
     const modelCandidateRaceTimeoutSecondsEl = document.getElementById("modelCandidateRaceTimeoutSeconds");
     const randomizeEndpointsEl = document.getElementById("randomizeEndpoints");
@@ -1367,6 +1387,7 @@
     const injectZhSystemPromptEl = document.getElementById("injectZhSystemPrompt");
     const enableModelProbeEl = document.getElementById("enableModelProbe");
     const enableModelCandidateRaceEl = document.getElementById("enableModelCandidateRace");
+    const enableInterruptionResumeEl = document.getElementById("enableInterruptionResume");
     const imageUpstreamProtocolEl = document.getElementById("imageUpstreamProtocol");
     const imageTaskPollTimeoutSecondsEl = document.getElementById("imageTaskPollTimeoutSeconds");
     const imageTaskPollIntervalSecondsEl = document.getElementById("imageTaskPollIntervalSeconds");
@@ -1381,6 +1402,8 @@
     const configImageMetaEl = document.getElementById("configImageMeta");
     const configModelAliasInfoEl = document.getElementById("configModelAliasInfo");
     const configModelAliasMetaEl = document.getElementById("configModelAliasMeta");
+    const configResumeInfoEl = document.getElementById("configResumeInfo");
+    const configResumeMetaEl = document.getElementById("configResumeMeta");
     const refreshNowBtn = document.getElementById("refreshNowBtn");
     const saveConfigBtn = document.getElementById("saveConfigBtn");
     const themeToggle = document.getElementById("themeToggle");
@@ -1654,6 +1677,11 @@
       var cacheStats = (runtime.model_routing && runtime.model_routing.cache_stats) || {};
       var promptHits = Number(cacheStats.prompt_cache_hits || 0);
       var promptWrites = Number(cacheStats.prompt_cache_writes || 0);
+      var resumeEnabled = !!config.enable_interruption_resume;
+      var resumeInjected = Number(cacheStats.interruption_resume_injected || 0);
+      var resumeSaved = Number(cacheStats.interruption_resume_saved || 0);
+      var resumeCleared = Number(cacheStats.interruption_resume_cleared || 0);
+      var interruptedEntries = Number((runtime.model_routing && runtime.model_routing.interrupted_response_entries) || 0);
 
       setText(configRouteInfoEl, poolsCount ? (enabledPools + " / " + poolsCount + " 池启用") : (upstreamCount + " 条直连"));
       setText(configRouteMetaEl, upstreamCount + " 条链路 · 冷却 " + Number(retry.cooled_routes || 0));
@@ -1673,6 +1701,8 @@
 
       setText(configModelAliasInfoEl, aliasCount + " 个别名");
       setText(configModelAliasMetaEl, capabilityCount + " 条能力 · 路由命中 " + Number((runtime.model_routing && runtime.model_routing.cache_stats && runtime.model_routing.cache_stats.model_route_hits) || 0));
+      setText(configResumeInfoEl, resumeEnabled ? "已启用" : "已关闭");
+      setText(configResumeMetaEl, "注入 " + resumeInjected + " · 保存 " + resumeSaved + " · 清理 " + resumeCleared + " · 条目 " + interruptedEntries);
     }
 
     function renderRuntimeOverview(data) {
@@ -1695,15 +1725,15 @@
       setText(heroModelInfoEl, (runtime.model_alias_count || config.model_alias_count || 0) + " 别名 / " + (runtime.model_capability_count || config.model_capability_count || 0) + " 能力");
       setText(heroUptimeEl, formatUptime(runtime.uptime_seconds || 0));
 
-      setText(heroEndpointEl, "http://127.0.0.1:" + ((runtime.port || config.port) || "8000") + "/v1");
-      setText(overviewEndpointEl, "http://127.0.0.1:" + ((runtime.port || config.port) || "8000") + "/v1");
+      setText(heroEndpointEl, "http://127.0.0.1:" + ((runtime.port || config.port) || "18765") + "/v1");
+      setText(overviewEndpointEl, "http://127.0.0.1:" + ((runtime.port || config.port) || "18765") + "/v1");
 
       setHtml(routeChipsEl, (data.upstream_urls || []).map(function(url) {
         return '<span class="channel-badge">' + escapeHtml(url) + '</span>';
       }).join(""));
 
       setText(sidebarStatusEl, "运行中 · " + formatUptime(runtime.uptime_seconds || 0));
-      setText(sidebarStatusAltEl, "PID " + (runtime.pid || "-") + " · 端口 " + (runtime.port || config.port || "8000"));
+      setText(sidebarStatusAltEl, "PID " + (runtime.pid || "-") + " · 端口 " + (runtime.port || config.port || "18765"));
 
       renderCapabilities(runtime);
       renderSparkline();
@@ -1723,6 +1753,9 @@
       modelProbeTimeoutSecondsEl.value = config.model_probe_timeout_seconds ?? 4;
       modelProbeTtlSecondsEl.value = config.model_probe_ttl_seconds ?? 300;
       modelRouteCacheTtlSecondsEl.value = config.model_route_cache_ttl_seconds ?? 86400;
+      interruptionResumeTtlSecondsEl.value = config.interruption_resume_ttl_seconds ?? 3600;
+      interruptionResumeMaxCharsEl.value = config.interruption_resume_max_chars ?? 12000;
+      interruptionResumeMinCharsEl.value = config.interruption_resume_min_chars ?? 40;
       modelCandidateRaceLimitEl.value = config.model_candidate_race_limit ?? 3;
       modelCandidateRaceTimeoutSecondsEl.value = config.model_candidate_race_timeout_seconds ?? 8;
       randomizeEndpointsEl.checked = !!config.randomize_endpoints;
@@ -1731,6 +1764,7 @@
       injectZhSystemPromptEl.checked = !!config.inject_zh_system_prompt;
       enableModelProbeEl.checked = !!config.enable_model_probe;
       enableModelCandidateRaceEl.checked = !!config.enable_model_candidate_race;
+      enableInterruptionResumeEl.checked = config.enable_interruption_resume !== false;
       imageUpstreamProtocolEl.value = config.image_upstream_protocol || "auto";
       imageTaskPollTimeoutSecondsEl.value = config.image_task_poll_timeout_seconds ?? 90;
       imageTaskPollIntervalSecondsEl.value = config.image_task_poll_interval_seconds ?? 2;
@@ -1802,6 +1836,16 @@
         var cacheReadBytes = Number(entry.cache_read_bytes || 0);
         var cacheStatus = String(entry.cache_status || (entry.cache_hit ? "hit" : "miss"));
         var cacheNote = String(entry.cache_note || "");
+        var originalMessages = Number(entry.original_message_count || 0);
+        var sentMessages = Number(entry.sent_message_count || 0);
+        var droppedMessages = Number(entry.dropped_message_count || 0);
+        var trimmedContent = Number(entry.trimmed_content_count || 0);
+        var compressionMode = String(entry.compression_mode || "");
+        var policySummary = originalMessages || sentMessages
+          ? ("历史 " + originalMessages + "→" + sentMessages + " · 丢弃 " + droppedMessages)
+          : "历史 -";
+        if (compressionMode) policySummary += " · " + compressionMode;
+        if (trimmedContent) policySummary += " · 截短 " + trimmedContent;
         var cacheSummary = "缓存读 " + cacheReadBytes + " B";
         if (entry.cache_hit) {
           cacheSummary += " · 命中";
@@ -1819,7 +1863,7 @@
           '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml((entry.method || "REQ") + " " + (entry.path || "")) + '</div><div class="request-cell-sub">' + (entry.client_gone ? '客户端断开' : '请求完成') + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-cell-title request-ellipsis">' + escapeHtml(logicalModel) + '</div><div class="request-cell-sub request-ellipsis">' + escapeHtml(resolvedModel) + '</div><div class="request-cell-sub">' + escapeHtml(poolName) + ' · ' + escapeHtml(keyIndex) + '</div></div></td>' +
           '<td><div class="request-chip-row"><span class="request-chip ok">' + escapeHtml(entry.duration_ms || "-") + ' ms</span><span class="request-chip">' + escapeHtml(inputBytes) + ' IN</span><span class="request-chip">' + escapeHtml(outputBytes) + ' OUT</span></div><div class="request-cell-sub">' + escapeHtml(cacheSummary) + '</div></td>' +
-          '<td><div class="request-cell-sub">请求 ' + escapeHtml(entry.request_repairs || 0) + ' · DSML ' + escapeHtml(entry.sanitized_markers || 0) + ' · 工具 ' + escapeHtml(entry.repaired_tool_args || 0) + '</div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-sub">请求 ' + escapeHtml(entry.request_repairs || 0) + ' · DSML ' + escapeHtml(entry.sanitized_markers || 0) + ' · 工具 ' + escapeHtml(entry.repaired_tool_args || 0) + '</div><div class="request-cell-sub">' + escapeHtml(policySummary) + '</div></div></td>' +
           '<td><div class="request-chip-row"><span class="request-chip ' + statusTone + '">状态 ' + escapeHtml(entry.status_code || "-") + '</span>' + (entry.error ? '<span class="request-chip err">异常</span>' : '') + '</div></td>' +
           '<td><div class="request-stack">' + (entry.response_preview ? '<div class="request-cell-sub request-mono request-ellipsis">' + escapeHtml(entry.response_preview).slice(0, 220) + '</div>' : '<div class="request-cell-sub">无预览</div>') + (entry.upstream_attempt_chain ? '<div class="request-cell-sub request-ellipsis">链路 ' + escapeHtml(entry.upstream_attempt_chain).slice(0, 160) + '</div>' : '') + (entry.error ? '<div class="request-cell-sub request-ellipsis" style="color:var(--error);">' + escapeHtml(entry.error) + '</div>' : '') + '</div></td>' +
         '</tr>';
@@ -1889,6 +1933,9 @@
         model_probe_timeout_seconds: Number(modelProbeTimeoutSecondsEl.value || 0),
         model_probe_ttl_seconds: Number(modelProbeTtlSecondsEl.value || 0),
         model_route_cache_ttl_seconds: Number(modelRouteCacheTtlSecondsEl.value || 0),
+        interruption_resume_ttl_seconds: Number(interruptionResumeTtlSecondsEl.value || 0),
+        interruption_resume_max_chars: Number(interruptionResumeMaxCharsEl.value || 0),
+        interruption_resume_min_chars: Number(interruptionResumeMinCharsEl.value || 0),
         model_candidate_race_limit: Number(modelCandidateRaceLimitEl.value || 0),
         model_candidate_race_timeout_seconds: Number(modelCandidateRaceTimeoutSecondsEl.value || 0),
         randomize_endpoints: randomizeEndpointsEl.checked,
@@ -1897,6 +1944,7 @@
         inject_zh_system_prompt: injectZhSystemPromptEl.checked,
         enable_model_probe: enableModelProbeEl.checked,
         enable_model_candidate_race: enableModelCandidateRaceEl.checked,
+        enable_interruption_resume: enableInterruptionResumeEl.checked,
         image_upstream_protocol: imageUpstreamProtocolEl.value,
         image_task_poll_timeout_seconds: Number(imageTaskPollTimeoutSecondsEl.value || 0),
         image_task_poll_interval_seconds: Number(imageTaskPollIntervalSecondsEl.value || 0),
@@ -2023,8 +2071,8 @@
         route_policy: {
           reasoning_effort: String(routePolicy.reasoning_effort || "medium"),
           prompt_cache_mode: String(routePolicy.prompt_cache_mode || "exact"),
-          compression_mode: String(routePolicy.compression_mode || "balanced"),
-          max_history_messages: Number(routePolicy.max_history_messages || 24),
+          compression_mode: String(routePolicy.compression_mode || "light"),
+          max_history_messages: Number(routePolicy.max_history_messages || 80),
           max_tool_chars: Number(routePolicy.max_tool_chars || 24000),
           max_input_chars: Number(routePolicy.max_input_chars || 180000),
           max_output_tokens: Number(routePolicy.max_output_tokens || 0),
@@ -2192,8 +2240,8 @@
         route_policy: {
           reasoning_effort: reasoningEl ? reasoningEl.value : "medium",
           prompt_cache_mode: cacheModeEl ? cacheModeEl.value : "exact",
-          compression_mode: compressionEl ? compressionEl.value : "balanced",
-          max_history_messages: Number(maxHistoryEl ? maxHistoryEl.value : 24) || 24,
+          compression_mode: compressionEl ? compressionEl.value : "light",
+          max_history_messages: Number(maxHistoryEl ? maxHistoryEl.value : 80) || 80,
           max_tool_chars: Number(maxToolCharsEl ? maxToolCharsEl.value : 24000) || 24000,
           max_input_chars: Number(maxInputCharsEl ? maxInputCharsEl.value : 180000) || 180000,
           max_output_tokens: Number(maxOutputTokensEl ? maxOutputTokensEl.value : 0) || 0,

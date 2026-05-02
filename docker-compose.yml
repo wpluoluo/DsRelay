@@ -1,0 +1,29 @@
+services:
+  local-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: local-proxy
+    restart: always
+    ports:
+      - "${PORT:-18765}:${PORT:-18765}"
+    env_file:
+      - .env
+    environment:
+      - PORT=${PORT:-18765}
+      - PYTHONUNBUFFERED=1
+      - RUNNING_IN_DOCKER=1
+    volumes:
+      - ./var/logs:/app/var/logs
+      - ./var/cache:/app/var/cache
+      - ./var/run:/app/var/run
+      - ./config:/app/config
+    networks:
+      - proxy-net
+      - 1panel-network
+
+networks:
+  proxy-net:
+    driver: bridge
+  1panel-network:
+    external: true

@@ -6,8 +6,8 @@ from copy import deepcopy
 DEFAULT_ROUTE_POLICY = {
     "reasoning_effort": "medium",
     "prompt_cache_mode": "exact",
-    "compression_mode": "balanced",
-    "max_history_messages": 24,
+    "compression_mode": "light",
+    "max_history_messages": 80,
     "max_tool_chars": 24000,
     "max_input_chars": 180000,
     "max_output_tokens": 0,

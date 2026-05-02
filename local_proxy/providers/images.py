@@ -422,8 +422,6 @@ def append_path(base_url: str, path: str) -> str:
         return path
     if base.endswith(path):
         return base
-    if base.endswith("/api/v1") and path.startswith("/api/v1/"):
-        return f"{base}{path[len('/api/v1'):]}"
     return f"{base}{path if path.startswith('/') else '/' + path}"
 
 
@@ -469,26 +467,25 @@ def mask_bearer(value: str | None) -> str | None:
 def prepare_image_headers(headers: dict, provider: str, api_key: str | None) -> dict:
     prepared = dict(headers or {})
     prepared["Content-Type"] = "application/json"
-    explicit_key = (
-        prepared.get("x-api-key")
-        or prepared.get("X-API-Key")
-        or prepared.get("x-goog-api-key")
-        or prepared.get("X-Goog-API-Key")
-        or api_key
-    )
+    explicit_key = api_key
 
     if provider == "google":
-        if explicit_key and not (prepared.get("x-goog-api-key") or prepared.get("X-Goog-API-Key")):
-            prepared["x-goog-api-key"] = explicit_key
-        if prepared.get("x-goog-api-key") or prepared.get("X-Goog-API-Key"):
-            prepared.pop("Authorization", None)
-        return prepared
-
-    if explicit_key and not prepared.get("Authorization"):
-        prepared["Authorization"] = mask_bearer(explicit_key)
-    if provider == "dashscope":
+        prepared.pop("Authorization", None)
+        prepared.pop("x-api-key", None)
+        prepared.pop("X-API-Key", None)
         prepared.pop("x-goog-api-key", None)
         prepared.pop("X-Goog-API-Key", None)
+        if explicit_key:
+            prepared["x-goog-api-key"] = explicit_key
+        return prepared
+
+    prepared.pop("x-api-key", None)
+    prepared.pop("X-API-Key", None)
+    prepared.pop("x-goog-api-key", None)
+    prepared.pop("X-Goog-API-Key", None)
+    prepared.pop("Authorization", None)
+    if explicit_key:
+        prepared["Authorization"] = mask_bearer(explicit_key)
     return prepared
 
 

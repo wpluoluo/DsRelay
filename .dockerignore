@@ -1,0 +1,22 @@
+# Git
+.git
+.gitignore
+.gitattributes
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+
+# 环境文件（容器内通过 -e 传入）
+.env
+
+# 运行时数据（挂载卷覆盖）
+var/
+config/proxy-config.json
+
+# 本地开发 & 文档
+.agentdocs/
+.learnings/
+tmp/
+__served_dashboard.html
+current_dashboard_response.html

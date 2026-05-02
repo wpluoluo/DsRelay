@@ -129,6 +129,28 @@ def normalize_runtime_config_payload(
         minimum=60,
         maximum=604800,
     )
+    next_enable_interruption_resume = parse_bool(
+        config_payload.get("enable_interruption_resume", current["ENABLE_INTERRUPTION_RESUME"]),
+        current["ENABLE_INTERRUPTION_RESUME"],
+    )
+    next_interruption_resume_ttl_seconds = parse_int(
+        config_payload.get("interruption_resume_ttl_seconds", current["INTERRUPTION_RESUME_TTL_SECONDS"]),
+        current["INTERRUPTION_RESUME_TTL_SECONDS"],
+        minimum=60,
+        maximum=604800,
+    )
+    next_interruption_resume_max_chars = parse_int(
+        config_payload.get("interruption_resume_max_chars", current["INTERRUPTION_RESUME_MAX_CHARS"]),
+        current["INTERRUPTION_RESUME_MAX_CHARS"],
+        minimum=500,
+        maximum=200000,
+    )
+    next_interruption_resume_min_chars = parse_int(
+        config_payload.get("interruption_resume_min_chars", current["INTERRUPTION_RESUME_MIN_CHARS"]),
+        current["INTERRUPTION_RESUME_MIN_CHARS"],
+        minimum=1,
+        maximum=10000,
+    )
     next_enable_model_candidate_race = parse_bool(
         config_payload.get("enable_model_candidate_race", current["ENABLE_MODEL_CANDIDATE_RACE"]),
         current["ENABLE_MODEL_CANDIDATE_RACE"],
@@ -175,6 +197,10 @@ def normalize_runtime_config_payload(
         "model_probe_timeout_seconds": next_model_probe_timeout_seconds,
         "model_probe_ttl_seconds": next_model_probe_ttl_seconds,
         "model_route_cache_ttl_seconds": next_model_route_cache_ttl_seconds,
+        "enable_interruption_resume": next_enable_interruption_resume,
+        "interruption_resume_ttl_seconds": next_interruption_resume_ttl_seconds,
+        "interruption_resume_max_chars": next_interruption_resume_max_chars,
+        "interruption_resume_min_chars": next_interruption_resume_min_chars,
         "enable_model_candidate_race": next_enable_model_candidate_race,
         "model_candidate_race_limit": next_model_candidate_race_limit,
         "model_candidate_race_timeout_seconds": next_model_candidate_race_timeout_seconds,
@@ -223,6 +249,10 @@ def apply_runtime_globals(target_globals: dict, normalized_config: dict) -> None
     target_globals["MODEL_PROBE_TIMEOUT_SECONDS"] = normalized_config["model_probe_timeout_seconds"]
     target_globals["MODEL_PROBE_TTL_SECONDS"] = normalized_config["model_probe_ttl_seconds"]
     target_globals["MODEL_ROUTE_CACHE_TTL_SECONDS"] = normalized_config["model_route_cache_ttl_seconds"]
+    target_globals["ENABLE_INTERRUPTION_RESUME"] = normalized_config["enable_interruption_resume"]
+    target_globals["INTERRUPTION_RESUME_TTL_SECONDS"] = normalized_config["interruption_resume_ttl_seconds"]
+    target_globals["INTERRUPTION_RESUME_MAX_CHARS"] = normalized_config["interruption_resume_max_chars"]
+    target_globals["INTERRUPTION_RESUME_MIN_CHARS"] = normalized_config["interruption_resume_min_chars"]
     target_globals["ENABLE_MODEL_CANDIDATE_RACE"] = normalized_config["enable_model_candidate_race"]
     target_globals["MODEL_CANDIDATE_RACE_LIMIT"] = normalized_config["model_candidate_race_limit"]
     target_globals["MODEL_CANDIDATE_RACE_TIMEOUT_SECONDS"] = normalized_config["model_candidate_race_timeout_seconds"]

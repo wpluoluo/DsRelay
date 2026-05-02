@@ -1,5 +1,7 @@
 import json
+import logging
 import re
+import sys
 import time
 import uuid
 
@@ -1009,15 +1011,23 @@ def extract_tool_schemas(request_payload: dict | None) -> dict:
 
     schemas = {}
     for tool in request_payload.get("tools") or []:
-        if not isinstance(tool, dict) or tool.get("type") != "function":
+        if not isinstance(tool, dict):
             continue
 
         function_meta = tool.get("function") or {}
-        tool_name = function_meta.get("name")
-        if not tool_name:
+        tool_name = function_meta.get("name") or tool.get("name")
+
+        if tool.get("type") == "function" and isinstance(function_meta, dict) and tool_name:
+            parameters = function_meta.get("parameters") or {}
+        elif tool_name:
+            # Anthropic / non-standard format: name + parameters/input_schema at top level
+            parameters = tool.get("parameters") or tool.get("input_schema") or {}
+        else:
             continue
 
-        parameters = function_meta.get("parameters") or {}
+        if not tool_name or tool_name in schemas:
+            continue
+
         schemas[tool_name] = {
             "required": list(parameters.get("required") or []),
             "properties": list((parameters.get("properties") or {}).keys()),
@@ -1208,6 +1218,8 @@ def drop_unexpected_keys_by_schema(normalized: dict, tool_name: str | None, tool
     modified = False
     for existing_key in list(normalized.keys()):
         if existing_key in schema_fields:
+            continue
+        if field_is_run_in_background(existing_key):
             continue
         normalized.pop(existing_key, None)
         modified = True
@@ -1483,7 +1495,21 @@ def infer_run_in_background_value(tool_name: str | None, payload: dict) -> bool:
 def ensure_run_in_background_argument(tool_name: str | None, normalized: dict, tool_schemas: dict) -> bool:
     schema = tool_schemas.get(tool_name or "", {})
     field_name = schema_supports_run_in_background(schema)
+
     if not field_name:
+        resolved = resolve_tool_name(tool_name, tool_schemas) or tool_name or ""
+        if any(
+            canonicalize_name(marker) in canonicalize_name(resolved)
+            for marker in TASK_LIKE_TOOL_NAME_MARKERS
+        ):
+            for existing_key in list(normalized):
+                if field_is_run_in_background(existing_key):
+                    if existing_key != "run_in_background":
+                        normalized["run_in_background"] = normalized.pop(existing_key)
+                        return True
+                    return False
+            normalized["run_in_background"] = infer_run_in_background_value(tool_name, normalized)
+            return True
         return False
 
     for existing_key in list(normalized):
@@ -1938,12 +1964,13 @@ def should_suppress_empty_tool_call(tool_name: str | None, payload, tool_schemas
 
 def normalize_tool_arguments_payload(tool_name: str | None, payload, tool_schemas: dict) -> tuple[object, bool]:
     modified = False
-    schema = tool_schemas.get(tool_name or "", {})
+    resolved_name = resolve_tool_name(tool_name, tool_schemas) or tool_name
+    schema = tool_schemas.get(resolved_name or "", {})
     required = list(schema.get("required") or [])
     properties = list(schema.get("properties") or [])
-    bash_like = (tool_name or "").lower() in BASH_LIKE_TOOL_NAMES
+    bash_like = (resolved_name or "").lower() in BASH_LIKE_TOOL_NAMES
 
-    payload, unwrapped = unwrap_nested_arguments_container(payload, tool_name, tool_schemas)
+    payload, unwrapped = unwrap_nested_arguments_container(payload, resolved_name, tool_schemas)
     modified = unwrapped or modified
 
     if isinstance(payload, str):
@@ -1954,7 +1981,7 @@ def normalize_tool_arguments_payload(tool_name: str | None, payload, tool_schema
             except json.JSONDecodeError:
                 reparsed = None
             if reparsed is not None:
-                normalized_payload, _ = normalize_tool_arguments_payload(tool_name, reparsed, tool_schemas)
+                normalized_payload, _ = normalize_tool_arguments_payload(resolved_name, reparsed, tool_schemas)
                 return normalized_payload, True
         if bash_like:
             command_value, command_modified = normalize_bash_command_text(payload)
@@ -1969,7 +1996,7 @@ def normalize_tool_arguments_payload(tool_name: str | None, payload, tool_schema
     normalized = dict(payload)
     modified = apply_common_field_aliases(normalized, properties, required) or modified
     modified = drop_alias_keys_outside_schema(normalized, properties, required) or modified
-    modified = drop_unexpected_keys_by_schema(normalized, tool_name, tool_schemas) or modified
+    modified = drop_unexpected_keys_by_schema(normalized, resolved_name, tool_schemas) or modified
     target_field = None
     if bash_like or "command" in required or "command" in properties:
         target_field = "command"
@@ -2003,11 +2030,27 @@ def normalize_tool_arguments_payload(tool_name: str | None, payload, tool_schema
         normalized["command"], command_modified = normalize_bash_command_text(normalized.get("command"))
         modified = command_modified or modified
 
-    modified = coerce_payload_values_by_schema(normalized, tool_name, tool_schemas) or modified
-    modified = fill_missing_required_fields(tool_name, normalized, tool_schemas) or modified
+    modified = coerce_payload_values_by_schema(normalized, resolved_name, tool_schemas) or modified
+    modified = fill_missing_required_fields(resolved_name, normalized, tool_schemas) or modified
     modified = drop_alias_keys_outside_schema(normalized, properties, required) or modified
-    modified = drop_unexpected_keys_by_schema(normalized, tool_name, tool_schemas) or modified
-    modified = coerce_payload_values_by_schema(normalized, tool_name, tool_schemas) or modified
+    modified = drop_unexpected_keys_by_schema(normalized, resolved_name, tool_schemas) or modified
+    modified = coerce_payload_values_by_schema(normalized, resolved_name, tool_schemas) or modified
+
+    resolved_check = resolve_tool_name(resolved_name or tool_name, tool_schemas) or resolved_name or tool_name or ""
+    if any(
+        canonicalize_name(marker) in canonicalize_name(resolved_check)
+        for marker in TASK_LIKE_TOOL_NAME_MARKERS
+    ):
+        rb_present = any(field_is_run_in_background(k) for k in normalized)
+        logging.getLogger("local_proxy").info(
+            "[DIAG-FINAL] tool=%s rb_present=%s rb_val=%s modified=%s args=%s",
+            resolved_check,
+            rb_present,
+            normalized.get("run_in_background"),
+            modified,
+            json.dumps(normalized, ensure_ascii=False)[:300],
+        )
+
     return normalized, modified
 
 
@@ -2250,7 +2293,10 @@ def normalize_chat_completion_text_tool_calls(response_body: dict, tool_schemas:
             tool_schemas,
         )
         if normalized_content != content:
-            message["content"] = normalized_content
+            if normalized_content is None and message.get("reasoning"):
+                message["content"] = ""
+            else:
+                message["content"] = normalized_content
         if synthetic_tool_calls:
             existing_tool_calls = list(message.get("tool_calls") or [])
             existing_tool_calls.extend(synthetic_tool_calls)
@@ -2758,7 +2804,12 @@ def canonicalize_dsml_marker_fragment(text: str) -> str:
 
 def looks_like_dsml_marker_prefix(text: str) -> bool:
     canonical_fragment = canonicalize_dsml_marker_fragment(text)
-    return bool(canonical_fragment) and any(
+    if not canonical_fragment:
+        return False
+    # Require at least 3 characters to avoid false positives on bare "<" or "<d"
+    if len(canonical_fragment) < 3:
+        return False
+    return any(
         marker.startswith(canonical_fragment)
         for marker in CANONICAL_DSML_MARKER_VARIANTS
     )
@@ -3171,8 +3222,8 @@ def normalize_stream_choice(choice: dict, choice_states: dict, tool_schemas: dic
         delta.pop(key, None)
     has_meaningful_delta = any(
         key in delta
-        for key in ("role", "tool_calls", "content")
-    )
+        for key in ("role", "tool_calls", "content", "reasoning_content", "reasoning", "thinking", "thinking_content")
+    ) or bool(reasoning_delta_text)
     if "content" in delta and delta["content"] == "":
         delta.pop("content", None)
         has_meaningful_delta = any(key in delta for key in ("role", "tool_calls"))

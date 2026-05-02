@@ -142,6 +142,7 @@ def build_cached_execution(
     model_candidates: list[str],
     route_policy: dict,
     cache_key: str,
+    route_policy_metrics: dict | None = None,
 ) -> dict:
     cached_body = deepcopy(cached_payload.get("response_body") or {})
     return {
@@ -154,6 +155,7 @@ def build_cached_execution(
         "upstream_key_index": cached_payload.get("key_index"),
         "resolved_model": str(cached_payload.get("model_name") or ""),
         "upstream_url_pool": [],
+        "attempted_pool_names": [str(cached_payload.get("pool_name") or "")] if str(cached_payload.get("pool_name") or "") else [],
         "route_pool_size": 0,
         "tool_schemas": {},
         "upstream_payload": request_payload if isinstance(request_payload, dict) else None,
@@ -169,6 +171,7 @@ def build_cached_execution(
         "selected_pool_name": str(cached_payload.get("pool_name") or ""),
         "selected_key_index": cached_payload.get("key_index"),
         "route_policy": route_policy,
+        "route_policy_metrics": deepcopy(route_policy_metrics or {}),
         "cached_response_body": cached_body,
     }
 

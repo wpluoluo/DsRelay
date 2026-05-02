@@ -15,8 +15,8 @@
       "route_policy": {
         "reasoning_effort": "high",
         "prompt_cache_mode": "exact",
-        "compression_mode": "balanced",
-        "max_history_messages": 24,
+        "compression_mode": "light",
+        "max_history_messages": 80,
         "max_tool_chars": 24000,
         "max_input_chars": 180000,
         "max_output_tokens": 0
@@ -44,6 +44,10 @@
   "model_probe_ttl_seconds": 300,
   "model_route_cache_ttl_seconds": 86400,
   "request_cache_ttl_seconds": 900,
+  "enable_interruption_resume": true,
+  "interruption_resume_ttl_seconds": 3600,
+  "interruption_resume_max_chars": 12000,
+  "interruption_resume_min_chars": 40,
   "enable_model_candidate_race": true,
   "model_candidate_race_limit": 3,
   "model_candidate_race_timeout_seconds": 8

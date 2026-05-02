@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 
-def save_runtime_config(payload: dict, *, config_path: Path, storage, storage_key: str, logger, sqlite_path: Path) -> None:
+def save_runtime_config(payload: dict, *, config_path: Path, storage, storage_key: str, logger, db_label: str) -> None:
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
@@ -12,16 +12,16 @@ def save_runtime_config(payload: dict, *, config_path: Path, storage, storage_ke
         try:
             storage.save_app_config(payload, storage_key)
         except Exception as exc:  # pragma: no cover
-            logger.warning("save_runtime_config_sqlite_failed path=%s error=%s", sqlite_path, str(exc))
+            logger.warning("save_runtime_config_db_failed label=%s error=%s", db_label, str(exc))
 
 
-def load_runtime_config_from_sqlite(*, storage, storage_key: str, logger, sqlite_path: Path):
+def load_runtime_config_from_db(*, storage, storage_key: str, logger, db_label: str):
     if storage is None:
         return None
     try:
         payload = storage.load_app_config(storage_key)
     except Exception as exc:  # pragma: no cover
-        logger.warning("load_runtime_config_sqlite_failed path=%s error=%s", sqlite_path, str(exc))
+        logger.warning("load_runtime_config_db_failed label=%s error=%s", db_label, str(exc))
         return None
     return payload if isinstance(payload, dict) and payload else None
 

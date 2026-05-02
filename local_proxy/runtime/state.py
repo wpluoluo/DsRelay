@@ -84,7 +84,13 @@ class RequestRecorder:
             request_meta["response_preview"] = response_preview
             request_meta["repaired_tool_args"] = repaired_tool_args
             if isinstance(extra_meta, dict):
-                request_meta.update(extra_meta)
+                request_meta.update(
+                    {
+                        key: value
+                        for key, value in extra_meta.items()
+                        if not str(key).startswith("_")
+                    }
+                )
 
             self.request_stats["completed_requests"] += 1
             if client_gone:

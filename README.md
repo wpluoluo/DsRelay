@@ -1,185 +1,308 @@
-# 本地转发代理
+# Local Proxy — AI API 统一代理网关
 
-这是一个基于 Flask 的本地模型转发代理，默认监听 `http://127.0.0.1:18765`，可同时兼容 OpenAI Chat Completions、OpenAI Images、Anthropic Messages（原生）、Gemini GenerateContent（原生）和 Google Imagen/DashScope 图像生成。
+> 一个轻量、高性能的本地 AI API 代理网关，支持多协议转换、智能模型路由、自动重试与链路切换，为 AI 开发工具链提供统一的 API 接入层。
 
-## 项目结构
+---
 
-```text
-.
-├── app.py                      # 服务启动入口
-├── start.bat                   # Windows 一键启动入口
-├── frontend/
-│   └── dashboard.html          # 本地监控控制台（纯 HTML/CSS/JS 单页）
-├── config/
-│   └── proxy-config.json       # 运行时渠道配置（固定放在规范目录）
-├── var/
-│   ├── cache/                  # SQLite、模型路由等运行缓存
-│   ├── logs/                   # 代理日志和启动日志
-│   └── run/                    # 当前启动 PID 信息
-├── local_proxy/
-│   ├── server.py               # Flask 入口和协议处理编排
-│   ├── dashboard.py            # Dashboard 模板加载
-│   ├── storage.py              # SQLite 持久化封装
-│   ├── http/
-│   │   └── routes.py           # HTTP 路由注册
-│   ├── runtime/
-│   │   └── state.py            # 请求状态、最近请求和计数器
-│   ├── upstream/
-│   │   ├── retry.py            # 上游重试辅助、模型候选竞速
-│   │   └── models.py           # 模型别名、候选名生成、模型列表匹配
-│   ├── compat/
-│   │   ├── protocols.py        # Gemini / Anthropic / OpenAI 协议转换
-│   │   └── tools.py            # DSML、tool_calls、工具参数归一化
-│   └── providers/
-│       └── images.py           # 图像生成供应商适配器
-└── requirements.txt
+## 目录
+
+- [项目简介](#项目简介)
+- [核心特性](#核心特性)
+- [架构概览](#架构概览)
+- [快速开始](#快速开始)
+  - [环境要求](#环境要求)
+  - [首次初始化](#首次初始化)
+  - [日常启动](#日常启动)
+- [配置说明](#配置说明)
+  - [环境变量](#环境变量)
+  - [渠道配置](#渠道配置)
+- [客户端接入](#客户端接入)
+  - [OpenAI Chat Completions](#openai-chat-completions)
+  - [Anthropic Messages](#anthropic-messages)
+  - [Gemini GenerateContent](#gemini-generatecontent)
+  - [图像生成](#图像生成)
+- [模型路由机制](#模型路由机制)
+- [监控面板](#监控面板)
+- [项目结构](#项目结构)
+- [常见问题](#常见问题)
+- [许可证](#许可证)
+
+---
+
+## 项目简介
+
+**Local Proxy** 是一个部署在本地开发环境中的 AI API 代理网关。推荐拓扑为 `客户端 -> NEWAPI -> 代理 -> 上游模型`：NEWAPI 负责客户端认证，代理负责协议转换、路由和上游认证。
+
+- **协议统一**：客户端只需使用 OpenAI 兼容协议，代理自动转换为 Anthropic、Gemini 等原生协议
+- **智能路由**：支持多上游链路、模型别名映射、自动探测与竞速选择
+- **高可用**：请求失败自动重试、链路切换、退避策略，确保服务连续性
+- **请求修复**：自动修正常见客户端请求格式问题、工具调用参数问题
+- **监控运维**：提供 Web 监控面板，实时查看请求状态、路由缓存、链路健康
+
+---
+
+## 核心特性
+
+### 协议兼容
+
+| 协议 | 客户端入口 | 说明 |
+|------|-----------|------|
+| OpenAI Chat Completions | `POST /v1/chat/completions` | 原生支持，也是内部统一协议 |
+| OpenAI Images | `POST /v1/images/generations` | 图像生成 |
+| Anthropic Messages | `POST /v1/messages` | 自动转换为 OpenAI 格式转发 |
+| Gemini GenerateContent | `POST /v1beta/models/{model}:generateContent` | 自动转换为 OpenAI 格式转发 |
+| Gemini 流式生成 | `POST /v1beta/models/{model}:streamGenerateContent?alt=sse` | 流式支持 |
+| Google Imagen | `POST /v1beta/models/{model}:predict` | 图像生成 |
+| DashScope 图像生成 | 自动识别 | 支持同步/异步任务轮询 |
+| Gemini OpenAI 兼容入口 | `POST /v1beta/openai/chat/completions` | 自动重写到 OpenAI 转发路径 |
+
+### 智能路由
+
+- **模型别名映射**：客户端使用短模型名，代理自动改写为上游真实模型名
+- **模型探测**：短超时探测上游 `/models` 接口，发现同语义模型名
+- **候选竞速**：首次请求时并发尝试多个候选模型名，取最快成功者
+- **路由记忆**：成功路由持久化到 SQLite，后续请求直接命中
+- **多链路支持**：配置多条上游链路，随机切换避免单点故障
+
+### 请求修复与归一化
+
+- 自动修正 `tool_choice`、简写工具 schema、`max_output_tokens` 等常见格式差异
+- 清理 DSML（DeepSeek Markup Language）标记
+- 自动将 DSML `invoke` 伪工具调用转换为标准 `tool_calls` / `tool_use`
+- 修正工具参数缺失问题（如 `bash` 缺少 `command`、`web_search` 缺少 `explanation`）
+- 自动补正 `run_in_background` 等智能体工具调用语义
+- 注入中文系统提示，约束模型优先中文回复和标准工具调用
+
+### 高可用机制
+
+- 请求超时控制（默认 600 秒）
+- 上游重试策略：对 `500/502/503/504/429` 状态码自动重试（默认最多 12 次）
+- 指数退避 + 最大退避上限
+- 链路切换窗口：60 秒内随机切换不同上游链路
+- SSE 心跳保活：上游长时间无数据时发送心跳，防止客户端断开
+- 客户端断开检测：及时关闭上游流式连接，减少资源浪费
+
+### 安全特性
+
+- 敏感参数脱敏：日志中自动隐藏 `key`、`api_key`、`token` 等字段
+- 认证隔离：客户端凭据由 NEWAPI 校验，代理不会向上游透传客户端 `Authorization`、`x-api-key`、`x-goog-api-key` 或敏感查询参数
+- 上游认证：代理仅使用自身连接池配置的上游 API Key 调用模型服务
+- 环境隔离：启动脚本确保使用项目虚拟环境，拒绝外部 Python 环境
+
+---
+
+## 架构概览
+
+```
+┌─────────────────┐     ┌─────────────────────────────────────┐     ┌──────────────────┐
+│                 │     │          Local Proxy                 │     │                  │
+│   AI 客户端      │────▶│   NEWAPI     │────▶│  ┌──────────┐  ┌────────────────┐  │────▶│  上游 AI 服务     │
+│   (IDE/脚本)     │     │  (认证入口)   │     │  │ 协议转换  │  │ 模型路由/重试   │  │     │  (OpenAI/Anthropic│
+│                 │     │  │ (compat/) │  │ (upstream/)    │  │     │   /Gemini 等)    │
+└─────────────────┘     │  ├──────────┤  ├────────────────┤  │     └──────────────────┘
+                        │  │ 请求修复  │  │ 缓存系统       │  │
+                        │  │ (tools.py)│  │ (SQLite/JSON)  │  │
+                        │  ├──────────┤  ├────────────────┤  │
+                        │  │ 图像生成  │  │ 监控面板       │  │
+                        │  │ (images) │  │ (dashboard)    │  │
+                        │  └──────────┘  └────────────────┘  │
+                        └─────────────────────────────────────┘
 ```
 
-## 前端形态
+### 模块说明
 
-当前控制台是一个内嵌 CSS/JavaScript 的单页 `frontend/dashboard.html`，由 Flask 在 `/v1` 直接渲染，并通过 `/debug/state`、`/debug/config`、`/debug/pools/test` 等接口刷新状态和保存配置。
+| 模块 | 路径 | 职责 |
+|------|------|------|
+| 服务入口 | `app.py` | 启动入口，校验虚拟环境 |
+| 核心服务 | `local_proxy/server.py` | Flask 应用，请求处理编排 |
+| 协议兼容 | `local_proxy/compat/` | OpenAI / Anthropic / Gemini 协议互转 |
+| 工具兼容 | `local_proxy/compat/tools.py` | DSML 清洗、工具参数归一化 |
+| HTTP 处理 | `local_proxy/http/` | 路由、流式响应、请求头、验证 |
+| 图像生成 | `local_proxy/providers/images.py` | 多供应商图像生成适配 |
+| 运行时 | `local_proxy/runtime/` | 状态管理、配置、缓存、连接池 |
+| 上游通信 | `local_proxy/upstream/` | 模型路由、重试、能力探测 |
+| 持久化 | `local_proxy/storage.py` | SQLite 封装 |
+| 监控面板 | `frontend/dashboard.html` | 单页 Web 控制台 |
+| 启动脚本 | `scripts/start-proxy.ps1` | Windows PowerShell 启动管理 |
 
-这个项目的前端主要是本地运维控制台，不需要 SEO、复杂路由、组件生态或构建产物；纯 HTML 够用，也降低了启动复杂度。只有在后续出现多页面权限体系、复杂表格/图表、可复用组件库或多人协作 UI 开发时，才建议升级到 Vue/React/Vite。
+---
 
-## 已实现
+## 快速开始
 
-- 转发所有 `/v1/*` 请求到上游
-- 自动识别请求协议，兼容 `POST /v1/chat/completions` 与 `POST /v1/messages`
-- 兼容 Gemini 原生 `POST /v1beta/models/{model}:generateContent`
-- 兼容 Gemini 原生 `POST /v1beta/models/{model}:streamGenerateContent?alt=sse`
-- 兼容 OpenAI 图像生成 `POST /v1/images/generations`
-- 兼容 Google Imagen `POST /v1beta/models/{model}:predict`
-- 兼容 Gemini 图像生成 `POST /v1beta/models/{model}:generateContent` + `responseModalities=["IMAGE"]`
-- 兼容 DashScope 千问/万相图像生成，支持同步结果归一化；异步 `task_id` 会短轮询后尽量返回同步图片结果
-- 支持 `GET /v1beta/models` / `GET /v1beta/models/{model}`，会把 OpenAI 模型列表转换为 Gemini 模型列表格式
-- 支持 Gemini OpenAI 兼容入口 `/v1beta/openai/chat/completions`，自动重写到内部 OpenAI 转发路径
-- 支持 Gemini `contents`、`systemInstruction`、`generationConfig`、`tools.functionDeclarations`、`toolConfig.functionCallingConfig` 到 OpenAI Chat 的转换
-- 支持 Gemini 文本、图片 inline data / file data、函数调用、函数返回等常见边界内容归一化
-- 支持 `x-goog-api-key`、`x-api-key` 和 `?key=` 形式的 Gemini 鉴权输入，并避免把 key 透传为上游 query 参数
-- 监控日志会脱敏 `key/api_key/token` 等敏感 query 参数
-- `POST /v1/chat/completions` 响应中清洗 DSML 标记
-- 对 DeepSeek 工具调用做兼容处理，移除碎片化 DSML 标记
-- 支持把 DeepSeek 返回的 DSML `invoke` 伪工具调用自动转换成标准 `tool_calls` / `tool_use`
-- 修正 DeepSeek 工具调用里常见的非标准 `tool_calls` / `tool_use` 结束语义
-- 修正常见工具参数问题，例如 `bash` 缺少 `command`、`web_search` 缺少 `explanation`、`todo_write` 把数组误传成字符串时自动补正
-- 修正智能体工具调用缺少 `run_in_background` 的问题；常规委托默认 `false`，识别并行探索/后台运行语义时自动补 `true`，并兼容 `runInBackground/background/parallel/async/concurrent` 等别名
-- 支持模型别名映射，客户端可继续调用短模型名，代理转发前自动改写成上游真实模型名
-- 支持自动拆开错误的 `arguments/input/parameters` 包裹层，例如把 `{"arguments":{"command":"ls"}}` 修成标准工具参数
-- 支持请求侧归一化：自动修正 `tool_choice`、简写工具 schema、`max_output_tokens`、`input -> messages`、`developer -> system`
-- 支持把助手正文里的伪工具轨迹尽量转成标准 `tool_calls`，减少 `Bash / Read / Update Todos` 这类文本式误调用
-- 支持把 `Read taskActions.ts`、`Glob: *.ts` 这类文本工具轨迹自动识别并补成标准参数
-- 支持注入中文系统提示：强制模型优先中文回复、优先标准工具调用、避免继续输出 DSML 文本
-- 当客户端请求 `stream=false` 时，代理仍会对上游使用流式并聚合回标准 JSON
-- 支持流式返回
-- 支持 CORS，方便本地前端直连
-- 支持环境变量和 `.env` 配置
-- 支持多上游链路池、1 分钟内随机换路由重试，不会长期卡死在单一路径
+### 环境要求
 
-## 启动
+- Python 3.10 或更高版本
+- Windows 操作系统（启动脚本基于 PowerShell）
+- 有效的上游 AI 服务 API Key
 
 ### 首次初始化
 
 ```powershell
+# 1. 创建虚拟环境
 python -m venv .venv
+
+# 2. 激活虚拟环境
 .\.venv\Scripts\Activate.ps1
+
+# 3. 安装依赖
 pip install -r requirements.txt
+
+# 4. 复制配置文件
 Copy-Item .env.example .env
 Copy-Item config\proxy-config.example.json config\proxy-config.json
 ```
 
-编辑 `.env` 和 `config/proxy-config.json`，至少填入你的上游地址和 API Key。真实配置文件会被 Git 忽略，避免把密钥提交到仓库。
+### 配置上游服务
+
+编辑 `.env` 文件，至少配置以下参数：
+
+```ini
+# 上游 API 地址
+UPSTREAM_URL=https://your-upstream-service.example/v1
+
+# 上游 API 密钥
+UPSTREAM_API_KEY=sk-your-upstream-key
+```
+
+编辑 `config/proxy-config.json`，配置渠道池和模型映射。
+
+> **注意**：`.env` 和 `config/proxy-config.json` 已被 Git 忽略，避免密钥泄露。
 
 ### 日常启动
 
-双击 `start.bat` 一键启动，或在终端中：
+**方式一：双击启动（推荐）**
+
+直接双击 `start.bat`，启动脚本会自动完成以下操作：
+
+1. 创建必要的运行目录（`var/logs/`、`var/cache/`、`var/run/`）
+2. 停止已有的本项目代理进程
+3. 检查 18765 端口是否被占用
+4. 使用项目虚拟环境启动代理服务
+5. 等待健康检查通过（最长 25 秒）
+6. 将 PID 信息写入 `var/run/proxy.pid.json`
+
+**方式二：命令行启动**
 
 ```powershell
 .\.venv\Scripts\python.exe app.py
 ```
 
-`start.bat` 会检查 `.env`、只停止本项目已有代理进程、确认 18765 端口没有被其它程序占用，然后用项目虚拟环境启动代理服务。它不会再强制杀掉任意占用 18765 端口的外部进程；如果端口被非本项目进程占用，会在 `var/logs/server.bootstrap.log` 中报错。
+### 验证启动
 
-启动脚本会把运行文件固定写入规范目录：
-
-- 渠道配置：`config/proxy-config.json`
-- 日志文件：`var/logs/`
-- 运行缓存：`var/cache/`
-
-## 关键配置
-
-```env
-UPSTREAM_URL=https://open.juece.cloud/v1
-# UPSTREAM_URLS=https://open.juece.cloud/v1;https://your-second-endpoint.example/v1
-UPSTREAM_API_KEY=sk-your-upstream-key
-MODEL_ALIASES=deepseek-v4-flash=deepseek-ai/deepseek-v4-flash;deepseek-v4-pro=deepseek-ai/deepseek-v4-pro
-ENABLE_MODEL_PROBE=1
-MODEL_PROBE_TIMEOUT_SECONDS=4
-MODEL_PROBE_TTL_SECONDS=300
-MODEL_ROUTE_CACHE_TTL_SECONDS=86400
-ENABLE_MODEL_CANDIDATE_RACE=1
-MODEL_CANDIDATE_RACE_LIMIT=3
-MODEL_CANDIDATE_RACE_TIMEOUT_SECONDS=8
-PROXY_CONFIG_PATH=config/proxy-config.json
-PROXY_LOG_PATH=var/logs/proxy.log
-SQLITE_DB_PATH=var/cache/proxy-cache.sqlite3
-MODEL_ROUTE_CACHE_PATH=var/cache/model-route-cache.json
-PORT=18765
-REQUEST_TIMEOUT=600
-SSE_HEARTBEAT_SECONDS=12
-MAX_COMPLETION_TOKENS=0
-MODEL_CAPABILITIES=deepseek-v4-flash=1048576,393216;deepseek-v4-pro=1048576,393216;gpt-5.5=1000000,128000;gpt-5.4=1000000,128000;claude-opus-4-7=1000000,128000;claude-opus-4-6=1000000,128000
-FORCE_UPSTREAM_CHAT_STREAM=1
-ENABLE_REQUEST_NORMALIZATION=1
-INJECT_ZH_SYSTEM_PROMPT=1
-# PROXY_SYSTEM_PROMPT_ZH=自定义中文系统提示
-UPSTREAM_MAX_RETRIES=12
-UPSTREAM_RETRY_BACKOFF_MS=1200
-UPSTREAM_RETRY_MAX_BACKOFF_MS=6000
-UPSTREAM_ROUTE_SWITCH_WINDOW_SECONDS=60
-UPSTREAM_RANDOMIZE_ENDPOINTS=1
-IMAGE_UPSTREAM_PROTOCOL=auto
-IMAGE_TASK_POLL_TIMEOUT_SECONDS=90
-IMAGE_TASK_POLL_INTERVAL_SECONDS=2
+```powershell
+# 健康检查
+Invoke-RestMethod -Uri "http://127.0.0.1:18765/health"
 ```
 
-## 调用方式
+成功响应示例：
 
-把客户端的 Base URL 指到：
+```json
+{
+  "status": "ok",
+  "pid": 26548,
+  "uptime": "0:05:23",
+  "port": 18765,
+  "runtime": { ... }
+}
+```
+
+---
+
+## 配置说明
+
+### 环境变量
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `UPSTREAM_URL` | — | 上游 API 基础地址 |
+| `UPSTREAM_URLS` | — | 多条上游链路，支持逗号/分号/换行分隔 |
+| `UPSTREAM_API_KEY` | — | 上游 API 密钥 |
+| `PORT` | `18765` | 代理监听端口 |
+| `REQUEST_TIMEOUT` | `600` | 请求超时时间（秒） |
+| `SSE_HEARTBEAT_SECONDS` | `12` | SSE 心跳间隔（秒） |
+| `MAX_COMPLETION_TOKENS` | `0` | 全局输出 Token 上限（0 表示关闭） |
+| `FORCE_UPSTREAM_CHAT_STREAM` | `1` | 强制以流式调用上游 |
+| `ENABLE_REQUEST_NORMALIZATION` | `1` | 启用请求格式自动修复 |
+| `INJECT_ZH_SYSTEM_PROMPT` | `1` | 注入中文系统提示 |
+| `UPSTREAM_MAX_RETRIES` | `12` | 上游最大重试次数 |
+| `UPSTREAM_RETRY_BACKOFF_MS` | `1200` | 重试初始退避时间（毫秒） |
+| `UPSTREAM_RETRY_MAX_BACKOFF_MS` | `6000` | 重试最大退避时间（毫秒） |
+| `UPSTREAM_ROUTE_SWITCH_WINDOW_SECONDS` | `60` | 链路切换窗口（秒） |
+| `UPSTREAM_RANDOMIZE_ENDPOINTS` | `1` | 随机化端点选择 |
+| `ENABLE_MODEL_PROBE` | `1` | 启用模型探测 |
+| `MODEL_PROBE_TIMEOUT_SECONDS` | `4` | 模型探测超时（秒） |
+| `MODEL_PROBE_TTL_SECONDS` | `300` | 模型探测结果缓存时间（秒） |
+| `MODEL_ROUTE_CACHE_TTL_SECONDS` | `86400` | 路由缓存 TTL（秒） |
+| `ENABLE_MODEL_CANDIDATE_RACE` | `1` | 启用模型候选竞速 |
+| `MODEL_CANDIDATE_RACE_LIMIT` | `3` | 竞速并发候选数 |
+| `MODEL_CANDIDATE_RACE_TIMEOUT_SECONDS` | `8` | 竞速超时（秒） |
+| `IMAGE_UPSTREAM_PROTOCOL` | `auto` | 图像生成协议（auto/openai/google/dashscope） |
+| `IMAGE_TASK_POLL_TIMEOUT_SECONDS` | `90` | 图像异步任务轮询超时（秒） |
+| `IMAGE_TASK_POLL_INTERVAL_SECONDS` | `2` | 图像异步任务轮询间隔（秒） |
+| `MODEL_ALIASES` | — | 模型别名映射（格式：`客户端名=上游名;...`） |
+| `MODEL_CAPABILITIES` | — | 模型能力表（格式：`模型名=上下文Token,最大输出Token`） |
+| `PROXY_CONFIG_PATH` | `config/proxy-config.json` | 渠道配置文件路径 |
+| `PROXY_LOG_PATH` | `var/logs/proxy.log` | 代理日志路径 |
+| `SQLITE_DB_PATH` | `var/cache/proxy-cache.sqlite3` | SQLite 数据库路径 |
+
+### 渠道配置
+
+渠道配置文件 `config/proxy-config.json` 支持配置多个上游连接池，每个池可独立配置 URL、密钥和路由策略。
+
+```json
+{
+  "pools": [
+    {
+      "name": "primary",
+      "enabled": true,
+      "priority": 100,
+      "urls": ["https://your-upstream.example/v1"],
+      "keys": [{"key": "sk-your-upstream-key"}],
+      "route_policy": {
+        "reasoning_effort": "high",
+        "prompt_cache_mode": "exact",
+        "compression_mode": "light",
+        "max_history_messages": 80,
+        "max_tool_chars": 24000,
+        "max_input_chars": 180000,
+        "max_output_tokens": 0
+      }
+    }
+  ]
+}
+```
+
+**路由策略参数说明：**
+
+| 参数 | 说明 |
+|------|------|
+| `reasoning_effort` | 推理努力程度（low / medium / high） |
+| `prompt_cache_mode` | 提示缓存模式 |
+| `compression_mode` | 历史消息压缩模式（light / medium / heavy） |
+| `max_history_messages` | 历史消息上限 |
+| `max_tool_chars` | 工具调用字符上限 |
+| `max_input_chars` | 输入字符上限 |
+| `max_output_tokens` | 输出 Token 上限（0 表示不限制） |
+
+---
+
+## 客户端接入
+
+代理默认监听 `http://127.0.0.1:18765`。推荐部署拓扑为 `客户端 -> NEWAPI -> 代理 -> 上游模型`：NEWAPI 负责客户端认证，代理只负责协议转换、路由和上游认证。
+
+### OpenAI Chat Completions
+
+将客户端 Base URL 指向代理地址：
 
 ```text
 http://127.0.0.1:18765/v1
 ```
 
-模型别名可以在控制台“模型别名映射”里配置，也可以用环境变量配置。格式是：
-
-```text
-客户端模型名=上游模型名
-```
-
-例如客户端仍然请求 `deepseek-v4-flash`，代理实际转发为：
-
-```text
-deepseek-v4-flash=deepseek-ai/deepseek-v4-flash
-deepseek-v4-pro=deepseek-ai/deepseek-v4-pro
-```
-
-模型路由不是简单“永远改写”。代理会先保留客户端原始模型名并按下面顺序决策：
-
-1. 命中 SQLite / JSON 模型路由记忆时，直接使用上次在该上游链路成功的实际模型名。
-2. 只有没有可用记忆或记忆过期时，才短超时探测上游 `/models`，如果发现同语义模型名，例如 `deepseek-ai/deepseek-v4-flash`、`deepseek-ai/deepseek-v4-flash:free`，会优先使用实际可用名。
-3. 如果 `/models` 不能给出明确答案，并且开启 `ENABLE_MODEL_CANDIDATE_RACE=1`，第一次请求会受控并发尝试前 `MODEL_CANDIDATE_RACE_LIMIT` 个候选名；谁先被上游接受，就立即关闭其它候选连接并记住成功名称。
-4. 只有上游返回 `model_not_found` / `unsupported_model` / `no available channel for model` 这类模型不可用错误时，才按候选名继续尝试，并把成功或失败写入路由记忆。
-
-这能兼顾两种情况：如果上游本身支持 `deepseek-v4-flash`，就原样透传；如果某条链路只支持 `deepseek-ai/deepseek-v4-flash`，代理会学习并记住这条链路的实际模型名。
-
-请求历史、模型路由记忆、模型列表缓存默认会持久化到 `var/cache/proxy-cache.sqlite3`。控制台会显示路由记忆命中、模型列表缓存命中、候选竞速命中和客户端断开计数。`var/cache/model-route-cache.json` 会同步写入，方便手工查看。
-
-例如：
+**PowerShell 示例：**
 
 ```powershell
 $headers = @{
   "Content-Type" = "application/json"
-  "Authorization" = "Bearer local-or-upstream-key"
 }
 
 $body = @{
@@ -197,19 +320,25 @@ Invoke-RestMethod `
   -Body $body
 ```
 
-Anthropic Messages（原生）客户端把 Base URL 也指向同一个地址即可，客户端会请求：
+### Anthropic Messages
+
+将客户端 Base URL 指向同一地址，客户端请求 `/v1/messages`：
 
 ```text
 http://127.0.0.1:18765/v1/messages
 ```
 
-Gemini GenerateContent（原生）客户端可把 Base URL 指到：
+代理会自动识别 Anthropic 协议请求，转换为 OpenAI 格式转发到上游，再将响应转换回 Anthropic 格式返回。
+
+### Gemini GenerateContent
+
+将客户端 Base URL 指向：
 
 ```text
 http://127.0.0.1:18765/v1beta
 ```
 
-例如：
+**PowerShell 示例：**
 
 ```powershell
 $body = @{
@@ -226,11 +355,17 @@ $body = @{
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://127.0.0.1:18765/v1beta/models/gemini-2.5-flash:generateContent" `
-  -Headers @{ "Content-Type" = "application/json"; "x-goog-api-key" = "local-or-upstream-key" } `
+  -Headers @{
+    "Content-Type" = "application/json"
+  } `
   -Body $body
 ```
 
-OpenAI Images 客户端可直接请求：
+代理会移除入站请求中的客户端认证字段，并使用连接池中配置的上游 Key 调用对应模型服务。
+
+### 图像生成
+
+**OpenAI Images（标准格式）：**
 
 ```powershell
 $body = @{
@@ -243,11 +378,13 @@ $body = @{
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://127.0.0.1:18765/v1/images/generations" `
-  -Headers @{ "Content-Type" = "application/json"; "Authorization" = "Bearer local-or-upstream-key" } `
+  -Headers @{
+    "Content-Type" = "application/json"
+  } `
   -Body $body
 ```
 
-Google Imagen 原生客户端可请求：
+**Google Imagen（原生格式）：**
 
 ```powershell
 $body = @{
@@ -258,32 +395,200 @@ $body = @{
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://127.0.0.1:18765/v1beta/models/imagen-4.0-generate-001:predict" `
-  -Headers @{ "Content-Type" = "application/json"; "x-goog-api-key" = "local-or-upstream-key" } `
+  -Headers @{
+    "Content-Type" = "application/json"
+  } `
   -Body $body
 ```
 
-## 说明
+图像生成协议自动识别规则：
+- 根据下游请求路径自动识别 OpenAI / Google Imagen / Gemini 图像 / DashScope 形态
+- 根据上游 URL 自动选择 OpenAI 兼容、Google 或 DashScope 协议
+- 可通过 `IMAGE_UPSTREAM_PROTOCOL` 强制指定协议
 
-- 如果请求里带了 `Authorization`，会优先透传给上游
-- 如果请求里没带 `Authorization`，会自动使用 `UPSTREAM_API_KEY`
-- `GET /health` 可用于检查代理是否启动成功
-- `GET /health` 会返回当前进程、运行时长、重试配置和能力列表
-- 浏览器打开 `http://127.0.0.1:18765/v1` 会看到实时监控面板
-- 监控面板会显示检测到的协议、请求修复次数、DSML 清洗次数、工具参数修复次数、重试次数、链路尝试顺序和最近日志
-- Gemini 原生请求会被转换成内部 OpenAI Chat Completions 请求，因此可以复用代理已有的请求修复、工具参数修复、DSML 清洗、上游重试和多链路切换能力
-- 图像生成会根据下游请求路径识别 OpenAI / Google Imagen / Gemini 图像 / DashScope 形态，并根据上游 URL 自动选择 OpenAI 兼容、Google 或 DashScope 协议。必要时可用 `IMAGE_UPSTREAM_PROTOCOL=openai|google|dashscope` 强制指定
-- DashScope 图像异步任务默认最多轮询 90 秒，可通过 `IMAGE_TASK_POLL_TIMEOUT_SECONDS` 和 `IMAGE_TASK_POLL_INTERVAL_SECONDS` 调整
-- `FORCE_UPSTREAM_CHAT_STREAM=1` 时，`/v1/chat/completions` 会强制以流式调用上游，再按客户端需要返回流式或普通 JSON
-- `SSE_HEARTBEAT_SECONDS=12` 会在上游长时间没有流式片段时给客户端发送 SSE 注释心跳，减少客户端等待首包或中途空窗时断开
-- `ENABLE_REQUEST_NORMALIZATION=1` 时，代理会在转发前尽量修正常见客户端请求格式差异
-- `MAX_COMPLETION_TOKENS=0` 表示关闭全局输出硬上限；代理会优先按 `MODEL_CAPABILITIES` 的模型能力表精确钳制 `max_completion_tokens` / `max_tokens`
-- `MODEL_CAPABILITIES` 支持 `模型名=上下文Token,最大输出Token`，例如 `deepseek-v4-flash=1048576,393216`；如果上游返回 `supports at most ... completion tokens`，代理会学习这条链路的真实上限并重试
-- `INJECT_ZH_SYSTEM_PROMPT=1` 时，代理会自动注入中文系统提示，约束模型尽量不要再输出 `<｜DSML｜tool_calls>` 文本并显式补齐必填参数
-- `UPSTREAM_URLS` 可配置多条上游链路，支持逗号、分号或换行分隔
-- `UPSTREAM_MAX_RETRIES` / `UPSTREAM_RETRY_BACKOFF_MS` / `UPSTREAM_RETRY_MAX_BACKOFF_MS` 可控制代理层重试，默认会对 `500/502/503/504/429` 最多重试 12 次
-- `UPSTREAM_ROUTE_SWITCH_WINDOW_SECONDS=60` 时，单次请求会在最多 60 秒窗口内随机切换不同上游链路，优先避免在单一路由上死磕
-- 当客户端中途断开导致 `client_gone` / `context canceled` 时，代理会尽快关闭上游流式连接，记录为“客户端断开”而不是普通代理错误；这不能阻止客户端主动断开，但能减少上游继续输出造成的浪费
-- `ENABLE_MODEL_CANDIDATE_RACE=1` 只在没有路由记忆且模型探测不明确时触发，适合上游网关会随机映射模型名的链路；如果特别在意首轮重复请求成本，可以在控制台关闭
-- 如果检测到 `model_not_found`、鉴权失败、余额不足、渠道不可用这类路由级永久错误，代理会立即放弃当前链路并切换其它候选链路；只有所有链路都失败或窗口耗尽，才把错误返回客户端
-- `context_length_exceeded`、`invalid_request_error` 这类请求本身有问题的错误，不会无意义地跨链路重试
-- 代理层可以缓解协议格式问题、工具参数格式问题、上游临时性故障，但无法替代客户端本身的业务逻辑判断
+---
+
+## 模型路由机制
+
+模型路由是代理的核心能力之一，决策流程如下：
+
+```
+客户端请求（携带原始模型名）
+        │
+        ▼
+┌─────────────────────────────────┐
+│ 1. 检查 SQLite 路由记忆          │
+│    └─ 命中 → 使用上次成功模型名   │
+│    └─ 未命中 → 继续              │
+└─────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────┐
+│ 2. 模型探测（短超时查询 /models） │
+│    └─ 发现同语义模型名 → 使用     │
+│    └─ 未发现 → 继续              │
+└─────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────┐
+│ 3. 候选竞速（ENABLE_MODEL_RACE） │
+│    └─ 并发尝试 N 个候选模型名     │
+│    └─ 取最快被上游接受者          │
+│    └─ 关闭其他候选连接            │
+└─────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────┐
+│ 4. 错误重试                      │
+│    └─ model_not_found 等错误     │
+│    └─ 切换候选名继续尝试          │
+│    └─ 写入路由记忆                │
+└─────────────────────────────────┘
+```
+
+### 模型别名配置
+
+在控制台"模型别名映射"或环境变量中配置：
+
+```text
+# 格式：客户端模型名=上游模型名
+deepseek-v4-flash=deepseek-ai/deepseek-v4-flash
+deepseek-v4-pro=deepseek-ai/deepseek-v4-pro
+```
+
+### 模型能力表
+
+```text
+# 格式：模型名=上下文Token,最大输出Token
+deepseek-v4-flash=1048576,393216
+deepseek-v4-pro=1048576,393216
+gpt-5.5=1000000,128000
+```
+
+---
+
+## 监控面板
+
+浏览器打开 `http://127.0.0.1:18765/v1` 即可访问实时监控面板。
+
+### 面板功能
+
+| 功能 | 说明 |
+|------|------|
+| 实时请求状态 | 查看当前正在处理的请求列表 |
+| 请求历史 | 最近请求的详细记录，包括耗时、协议类型 |
+| 路由缓存 | 模型路由记忆命中、模型列表缓存命中、候选竞速命中 |
+| 链路测试 | 测试各上游链路的连通性 |
+| 配置管理 | 在线修改渠道配置和模型映射 |
+| 连接池策略 | 调整压缩模式、历史消息上限等策略参数 |
+| 客户端断开计数 | 记录客户端主动断开连接的情况 |
+| 最近日志 | 实时滚动显示代理运行日志 |
+
+### 调试接口
+
+| 接口 | 说明 |
+|------|------|
+| `GET /health` | 健康检查，返回进程、运行时长、配置等信息 |
+| `GET /debug/state` | 当前运行时状态 |
+| `GET /debug/config` | 当前配置信息 |
+| `GET /debug/pools/test` | 链路池连通性测试 |
+
+---
+
+## 项目结构
+
+```
+.
+├── app.py                          # 服务启动入口
+├── start.bat                       # Windows 一键启动脚本
+├── requirements.txt                # Python 依赖清单
+├── .env.example                    # 环境变量模板
+├── config/
+│   ├── proxy-config.example.json   # 渠道配置模板
+│   └── proxy-config.json           # 运行时渠道配置（已忽略）
+├── frontend/
+│   └── dashboard.html              # Web 监控控制台（单页应用）
+├── scripts/
+│   └── start-proxy.ps1             # PowerShell 启动管理脚本
+├── var/                            # 运行时数据目录（自动创建）
+│   ├── cache/                      # SQLite 缓存、模型路由缓存
+│   ├── logs/                       # 代理日志和启动日志
+│   └── run/                        # 运行 PID 信息
+└── local_proxy/
+    ├── __init__.py
+    ├── server.py                   # Flask 应用主逻辑
+    ├── dashboard.py                # 监控面板模板加载
+    ├── storage.py                  # SQLite 持久化封装
+    ├── compat/                     # 协议兼容层
+    │   ├── protocols.py            # Gemini / Anthropic / OpenAI 协议转换
+    │   └── tools.py                # DSML 清洗、工具调用归一化
+    ├── http/                       # HTTP 处理层
+    │   ├── routes.py               # 路由注册
+    │   ├── streaming.py            # SSE 流式响应
+    │   ├── headers.py              # 请求/响应头处理
+    │   ├── validation.py           # 响应验证
+    │   └── async_execution.py      # 后台异步执行
+    ├── providers/                  # 供应商适配器
+    │   └── images.py               # 图像生成（OpenAI / Google / DashScope）
+    ├── runtime/                    # 运行时
+    │   ├── state.py                # 请求状态管理
+    │   ├── config_runtime.py       # 运行时配置
+    │   ├── config_payloads.py      # 配置负载
+    │   ├── config_storage.py       # 配置持久化
+    │   ├── pools.py                # 连接池管理
+    │   ├── policies.py             # 路由策略
+    │   ├── request_cache.py        # 请求缓存
+    │   ├── snapshots.py            # 状态快照
+    │   └── helpers.py              # 辅助函数
+    └── upstream/                   # 上游通信层
+        ├── orchestrator.py         # 请求编排
+        ├── router.py               # 模型路由
+        ├── retry.py                # 重试机制
+        ├── models.py               # 模型别名与候选
+        ├── capabilities.py         # 能力探测
+        └── logging_utils.py        # 日志工具
+```
+
+---
+
+## 常见问题
+
+### 启动失败：端口被占用
+
+启动脚本会检测 18765 端口占用情况：
+- 如果是本项目已有进程，会自动停止
+- 如果是其他程序占用，会在日志中报错，需手动释放端口
+
+### 请求返回 401 / 认证失败
+
+- 客户端侧 401：检查 NEWAPI 中配置的客户端 Key、渠道和目标地址
+- 上游侧 401：检查代理控制台连接池中配置的上游 API Key
+- 代理会剥离客户端认证字段，不会把客户端 Key 透传给上游
+
+### 模型返回 "model not found"
+
+- 检查模型别名映射是否正确配置
+- 检查上游服务是否支持该模型
+- 代理会自动尝试候选模型名并记住成功路由
+
+### 流式响应中断
+
+- `SSE_HEARTBEAT_SECONDS` 控制心跳间隔，默认 12 秒
+- 如果上游长时间无数据，代理会发送 SSE 注释心跳保持连接
+- 可适当降低心跳间隔值
+
+### 请求超时
+
+- `REQUEST_TIMEOUT` 默认 600 秒，可根据需要调整
+- 对于长思考模型，建议适当增大超时时间
+- `UPSTREAM_MAX_RETRIES` 控制重试次数，过多重试可能累积超时
+
+---
+
+## 许可证
+
+本项目仅供学习和个人使用。请遵守上游 AI 服务提供商的使用条款和相关法律法规。
+
+---
+
+> **提示**：英文版文档请参阅 [README.en.md](README.en.md)。

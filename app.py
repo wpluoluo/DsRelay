@@ -3,6 +3,9 @@ import sys
 from pathlib import Path
 
 def ensure_project_venv_python() -> None:
+    if os.environ.get("RUNNING_IN_DOCKER") == "1":
+        return
+
     project_root = Path(__file__).resolve().parent
     spoofed_python = os.environ.get("PYTHONEXECUTABLE")
     if spoofed_python:

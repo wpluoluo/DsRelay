@@ -1,5 +1,6 @@
 import json
 import os
+import hashlib
 import itertools
 import random
 import re
@@ -45,6 +46,7 @@ from local_proxy.compat.protocols import (
     payload_looks_anthropic,
 )
 from local_proxy.dashboard import load_dashboard_template
+from local_proxy.auth import init_auth, login_page, login_required, logout, is_authenticated
 from local_proxy.http.headers import (
     apply_sse_response_headers,
     build_response_headers,
@@ -87,7 +89,7 @@ from local_proxy.runtime.config_payloads import (
 )
 from local_proxy.runtime.config_storage import (
     load_runtime_config_from_file,
-    load_runtime_config_from_sqlite,
+    load_runtime_config_from_db,
     save_runtime_config,
 )
 from local_proxy.runtime.config_runtime import (
@@ -173,6 +175,7 @@ if load_dotenv:
 
 
 app = Flask(__name__)
+init_auth(app)
 APP_STARTED_AT_EPOCH = time.time()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
@@ -352,10 +355,37 @@ MODEL_CANDIDATE_RACE_TIMEOUT_SECONDS = max(1, int(os.getenv("MODEL_CANDIDATE_RAC
 MODEL_ROUTE_CACHE_PATH = resolve_project_path(
     os.getenv("MODEL_ROUTE_CACHE_PATH", str(CACHE_DIR / "model-route-cache.json"))
 )
-SQLITE_DB_PATH = resolve_project_path(
-    os.getenv("SQLITE_DB_PATH", str(CACHE_DIR / "proxy-cache.sqlite3"))
+_storage_db_host = os.getenv("STORAGE_DB_HOST", "").strip()
+_storage_db_port = int(os.getenv("STORAGE_DB_PORT", "3306"))
+_storage_db_user = os.getenv("STORAGE_DB_USER", "")
+_storage_db_password = os.getenv("STORAGE_DB_PASSWORD", "")
+_storage_db_name = os.getenv("STORAGE_DB_NAME", "")
+
+if _storage_db_host:
+    _storage_db_config = {
+        "host": _storage_db_host,
+        "port": _storage_db_port,
+        "user": _storage_db_user,
+        "password": _storage_db_password,
+        "database": _storage_db_name,
+    }
+    try:
+        storage = ProxyStorage(_storage_db_config)
+    except Exception:
+        storage = None
+else:
+    _storage_db_config = None
+    storage = None
+STORAGE_DB_LABEL = (
+    f"mysql://{_storage_db_host}:{_storage_db_port}/{_storage_db_name}"
+    if _storage_db_host
+    else "none"
 )
 REQUEST_CACHE_TTL_SECONDS = max(60, int(os.getenv("REQUEST_CACHE_TTL_SECONDS", str(DEFAULT_REQUEST_CACHE_TTL_SECONDS))))
+ENABLE_INTERRUPTION_RESUME = os.getenv("ENABLE_INTERRUPTION_RESUME", "1") == "1"
+INTERRUPTION_RESUME_TTL_SECONDS = max(60, int(os.getenv("INTERRUPTION_RESUME_TTL_SECONDS", "3600")))
+INTERRUPTION_RESUME_MAX_CHARS = max(500, int(os.getenv("INTERRUPTION_RESUME_MAX_CHARS", "12000")))
+INTERRUPTION_RESUME_MIN_CHARS = max(1, int(os.getenv("INTERRUPTION_RESUME_MIN_CHARS", "40")))
 SSE_HEARTBEAT_SECONDS = max(0, int(os.getenv("SSE_HEARTBEAT_SECONDS", "6")))
 WAITING_STREAM_HEARTBEAT_SECONDS = max(1, int(os.getenv("WAITING_STREAM_HEARTBEAT_SECONDS", "5")))
 STREAM_CONNECT_TIMEOUT_SECONDS = max(5, int(os.getenv("STREAM_CONNECT_TIMEOUT_SECONDS", "20")))
@@ -431,11 +461,6 @@ if not proxy_logger.handlers:
 
 state_lock = Lock()
 config_lock = Lock()
-try:
-    storage = ProxyStorage(SQLITE_DB_PATH)
-except Exception as exc:  # pragma: no cover
-    storage = None
-    proxy_logger.warning("sqlite_storage_init_failed path=%s error=%s", SQLITE_DB_PATH, str(exc))
 
 request_recorder = RequestRecorder(MAX_RECENT_REQUESTS, storage=storage, logger=proxy_logger)
 connection_pool_state = ConnectionPoolState(
@@ -456,6 +481,9 @@ cache_stats = CounterStore(
         "prompt_cache_hits": 0,
         "prompt_cache_misses": 0,
         "prompt_cache_writes": 0,
+        "interruption_resume_injected": 0,
+        "interruption_resume_saved": 0,
+        "interruption_resume_cleared": 0,
     }
 )
 route_health = {}
@@ -554,7 +582,7 @@ def load_model_route_cache_from_disk() -> None:
         try:
             merge_model_route_cache(loaded_cache, storage.load_model_route_cache())
         except Exception as exc:  # pragma: no cover
-            proxy_logger.warning("load_model_route_cache_sqlite_failed path=%s error=%s", SQLITE_DB_PATH, str(exc))
+            proxy_logger.warning("load_model_route_cache_db_failed label=%s error=%s", STORAGE_DB_LABEL, str(exc))
 
     if MODEL_ROUTE_CACHE_PATH.exists():
         try:
@@ -576,7 +604,7 @@ def save_model_route_cache_to_disk() -> None:
         try:
             storage.save_model_route_cache(model_route_cache)
         except Exception as exc:  # pragma: no cover
-            proxy_logger.warning("save_model_route_cache_sqlite_failed path=%s error=%s", SQLITE_DB_PATH, str(exc))
+            proxy_logger.warning("save_model_route_cache_db_failed label=%s error=%s", STORAGE_DB_LABEL, str(exc))
     try:
         MODEL_ROUTE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         MODEL_ROUTE_CACHE_PATH.write_text(
@@ -599,6 +627,16 @@ def count_model_route_cache_entries() -> int:
             if isinstance(route_entries, dict):
                 total += len(route_entries)
     return total
+
+
+def count_interrupted_response_entries() -> int:
+    if storage is None:
+        return 0
+    try:
+        return int(storage.count_interrupted_responses())
+    except Exception as exc:  # pragma: no cover
+        proxy_logger.warning("count_interrupted_responses_failed error=%s", str(exc))
+        return 0
 
 
 def bump_cache_stat(name: str, amount: int = 1) -> None:
@@ -848,7 +886,7 @@ def load_pool_runtime_state_from_storage() -> None:
     try:
         connection_pool_state.load_state(storage.load_pool_runtime_state(POOL_RUNTIME_STATE_KEY))
     except Exception as exc:  # pragma: no cover
-        proxy_logger.warning("load_pool_runtime_state_failed path=%s error=%s", SQLITE_DB_PATH, str(exc))
+        proxy_logger.warning("load_pool_runtime_state_failed label=%s error=%s", STORAGE_DB_LABEL, str(exc))
 
 
 def save_pool_runtime_state_to_storage() -> None:
@@ -857,7 +895,7 @@ def save_pool_runtime_state_to_storage() -> None:
     try:
         storage.save_pool_runtime_state(connection_pool_state.export_state(), POOL_RUNTIME_STATE_KEY)
     except Exception as exc:  # pragma: no cover
-        proxy_logger.warning("save_pool_runtime_state_failed path=%s error=%s", SQLITE_DB_PATH, str(exc))
+        proxy_logger.warning("save_pool_runtime_state_failed label=%s error=%s", STORAGE_DB_LABEL, str(exc))
 
 
 def rebuild_pool_state() -> None:
@@ -940,6 +978,11 @@ def export_runtime_config_for_storage() -> dict:
             "model_probe_ttl_seconds": MODEL_PROBE_TTL_SECONDS,
             "model_route_cache_ttl_seconds": MODEL_ROUTE_CACHE_TTL_SECONDS,
             "request_cache_ttl_seconds": REQUEST_CACHE_TTL_SECONDS,
+            "enable_interruption_resume": ENABLE_INTERRUPTION_RESUME,
+            "interruption_resume_ttl_seconds": INTERRUPTION_RESUME_TTL_SECONDS,
+            "interruption_resume_max_chars": INTERRUPTION_RESUME_MAX_CHARS,
+            "interruption_resume_min_chars": INTERRUPTION_RESUME_MIN_CHARS,
+            "interruption_resume_enabled": ENABLE_INTERRUPTION_RESUME,
             "enable_model_candidate_race": ENABLE_MODEL_CANDIDATE_RACE,
             "model_candidate_race_limit": MODEL_CANDIDATE_RACE_LIMIT,
             "model_candidate_race_timeout_seconds": MODEL_CANDIDATE_RACE_TIMEOUT_SECONDS,
@@ -977,13 +1020,18 @@ def build_runtime_config_payload() -> dict:
             "model_probe_ttl_seconds": MODEL_PROBE_TTL_SECONDS,
             "model_route_cache_ttl_seconds": MODEL_ROUTE_CACHE_TTL_SECONDS,
             "request_cache_ttl_seconds": REQUEST_CACHE_TTL_SECONDS,
+            "enable_interruption_resume": ENABLE_INTERRUPTION_RESUME,
+            "interruption_resume_ttl_seconds": INTERRUPTION_RESUME_TTL_SECONDS,
+            "interruption_resume_max_chars": INTERRUPTION_RESUME_MAX_CHARS,
+            "interruption_resume_min_chars": INTERRUPTION_RESUME_MIN_CHARS,
+            "interruption_resume_enabled": ENABLE_INTERRUPTION_RESUME,
             "enable_model_candidate_race": ENABLE_MODEL_CANDIDATE_RACE,
             "model_candidate_race_limit": MODEL_CANDIDATE_RACE_LIMIT,
             "model_candidate_race_timeout_seconds": MODEL_CANDIDATE_RACE_TIMEOUT_SECONDS,
             "config_path": PROXY_CONFIG_PATH,
             "config_file_exists": PROXY_CONFIG_PATH.exists(),
-            "sqlite_db_path": SQLITE_DB_PATH,
-            "sqlite_enabled": storage is not None,
+            "db_label": STORAGE_DB_LABEL,
+            "db_enabled": storage is not None,
         }
     )
 
@@ -996,16 +1044,16 @@ def save_runtime_config_to_disk() -> None:
         storage=storage,
         storage_key=APP_CONFIG_STATE_KEY,
         logger=proxy_logger,
-        sqlite_path=SQLITE_DB_PATH,
+        db_label=STORAGE_DB_LABEL,
     )
 
 
 def load_runtime_config_from_storage() -> bool:
-    payload = load_runtime_config_from_sqlite(
+    payload = load_runtime_config_from_db(
         storage=storage,
         storage_key=APP_CONFIG_STATE_KEY,
         logger=proxy_logger,
-        sqlite_path=SQLITE_DB_PATH,
+        db_label=STORAGE_DB_LABEL,
     )
     if not payload:
         return False
@@ -1041,6 +1089,10 @@ def apply_runtime_config(config_payload: dict | None, *, persist: bool) -> dict:
     global MODEL_PROBE_TIMEOUT_SECONDS
     global MODEL_PROBE_TTL_SECONDS
     global MODEL_ROUTE_CACHE_TTL_SECONDS
+    global ENABLE_INTERRUPTION_RESUME
+    global INTERRUPTION_RESUME_TTL_SECONDS
+    global INTERRUPTION_RESUME_MAX_CHARS
+    global INTERRUPTION_RESUME_MIN_CHARS
     global ENABLE_MODEL_CANDIDATE_RACE
     global MODEL_CANDIDATE_RACE_LIMIT
     global MODEL_CANDIDATE_RACE_TIMEOUT_SECONDS
@@ -1071,6 +1123,10 @@ def apply_runtime_config(config_payload: dict | None, *, persist: bool) -> dict:
             "MODEL_PROBE_TIMEOUT_SECONDS": MODEL_PROBE_TIMEOUT_SECONDS,
             "MODEL_PROBE_TTL_SECONDS": MODEL_PROBE_TTL_SECONDS,
             "MODEL_ROUTE_CACHE_TTL_SECONDS": MODEL_ROUTE_CACHE_TTL_SECONDS,
+            "ENABLE_INTERRUPTION_RESUME": ENABLE_INTERRUPTION_RESUME,
+            "INTERRUPTION_RESUME_TTL_SECONDS": INTERRUPTION_RESUME_TTL_SECONDS,
+            "INTERRUPTION_RESUME_MAX_CHARS": INTERRUPTION_RESUME_MAX_CHARS,
+            "INTERRUPTION_RESUME_MIN_CHARS": INTERRUPTION_RESUME_MIN_CHARS,
             "ENABLE_MODEL_CANDIDATE_RACE": ENABLE_MODEL_CANDIDATE_RACE,
             "MODEL_CANDIDATE_RACE_LIMIT": MODEL_CANDIDATE_RACE_LIMIT,
             "MODEL_CANDIDATE_RACE_TIMEOUT_SECONDS": MODEL_CANDIDATE_RACE_TIMEOUT_SECONDS,
@@ -1185,11 +1241,349 @@ def check_payload_against_model_capability(payload: dict | None) -> dict | None:
     return find_context_window_overflow(payload, capability)
 
 
-def apply_route_policy_to_payload(subpath: str, upstream_payload: dict | None, route_policy: dict) -> tuple[dict | None, int]:
+RESUME_HEADER_NAMES = (
+    "X-Proxy-Resume-Key",
+    "X-Proxy-Task-Id",
+    "X-Proxy-Conversation-Id",
+    "X-Conversation-Id",
+    "X-Session-Id",
+    "X-Thread-Id",
+)
+RESUME_HINT_PREFIX = "[ProxyResume]"
+
+
+def stable_resume_hash(payload: object, length: int = 32) -> str:
+    try:
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except Exception:
+        raw = str(payload)
+    return hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()[:length]
+
+
+def extract_text_for_resume(value: object, *, limit: int = 4000) -> str:
+    parts: list[str] = []
+
+    def add(text: object) -> None:
+        if not isinstance(text, str) or not text:
+            return
+        if sum(len(part) for part in parts) >= limit:
+            return
+        parts.append(text)
+
+    if isinstance(value, str):
+        add(value)
+    elif isinstance(value, list):
+        for part in value:
+            if isinstance(part, str):
+                add(part)
+            elif isinstance(part, dict):
+                for key in ("text", "content", "input"):
+                    add(part.get(key))
+    elif isinstance(value, dict):
+        for key in ("text", "content", "input"):
+            add(value.get(key))
+
+    text = "\n".join(parts)
+    if len(text) > limit:
+        text = text[-limit:]
+    return text.strip()
+
+
+def extract_last_user_text(payload: dict | None) -> str:
+    messages = payload.get("messages") if isinstance(payload, dict) else None
+    if not isinstance(messages, list):
+        return ""
+    for item in reversed(messages):
+        if isinstance(item, dict) and item.get("role") == "user":
+            return extract_text_for_resume(item.get("content"), limit=4000)
+    return ""
+
+
+def extract_first_instruction_text(payload: dict | None) -> str:
+    messages = payload.get("messages") if isinstance(payload, dict) else None
+    if not isinstance(messages, list):
+        return ""
+    for item in messages:
+        if isinstance(item, dict) and item.get("role") in {"system", "developer"}:
+            return extract_text_for_resume(item.get("content"), limit=2000)
+    return ""
+
+
+def extract_tool_names_for_resume(payload: dict | None) -> list[str]:
+    tools = payload.get("tools") if isinstance(payload, dict) else None
+    names: list[str] = []
+    for item in (tools if isinstance(tools, list) else []):
+        if not isinstance(item, dict):
+            continue
+        function_data = item.get("function") if isinstance(item.get("function"), dict) else {}
+        name = str(function_data.get("name") or item.get("name") or "").strip()
+        if name:
+            names.append(name)
+    return sorted(set(names))[:40]
+
+
+def get_request_header_value(names: tuple[str, ...]) -> tuple[str, str]:
+    try:
+        headers = request.headers
+    except Exception:
+        return "", ""
+    for name in names:
+        value = str(headers.get(name) or "").strip()
+        if value:
+            return name, value
+    return "", ""
+
+
+def build_interruption_resume_candidates(protocol: str, payload: dict | None) -> list[dict]:
+    if not isinstance(payload, dict):
+        return []
+
+    model = str(payload.get("model") or "").strip()
+    candidates: list[dict] = []
+    explicit_name, explicit_value = get_request_header_value(RESUME_HEADER_NAMES)
+    if explicit_value:
+        candidates.append(
+            {
+                "key": "resume:v1:explicit:" + stable_resume_hash({"header": explicit_name.lower(), "value": explicit_value}),
+                "source": "explicit",
+                "load": True,
+            }
+        )
+
+    last_user_text = extract_last_user_text(payload)
+    instruction_text = extract_first_instruction_text(payload)
+    if model or last_user_text or instruction_text:
+        candidates.append(
+            {
+                "key": "resume:v1:fingerprint:"
+                + stable_resume_hash(
+                    {
+                        "protocol": protocol,
+                        "model": model,
+                        "last_user": re.sub(r"\s+", " ", last_user_text).strip()[-2000:],
+                        "instruction": re.sub(r"\s+", " ", instruction_text).strip()[:1200],
+                        "tools": extract_tool_names_for_resume(payload),
+                    }
+                ),
+                "source": "fingerprint",
+                "load": True,
+            }
+        )
+
+    deduped: list[dict] = []
+    seen: set[str] = set()
+    for item in candidates:
+        key = str(item.get("key") or "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def build_resume_hint_message(record: dict) -> dict:
+    partial_text = str(record.get("partial_text") or "").strip()
+    return {
+        "role": "system",
+        "content": (
+            f"{RESUME_HINT_PREFIX} 上一次同任务流式响应在客户端断开时中断。"
+            "以下是代理保存的已输出片段末尾，仅用于续接当前任务。"
+            "请基于当前请求继续完成未完成内容，避免重复已经完成的部分；"
+            "如果当前请求明确要求重新开始，请忽略该片段。\n\n"
+            "已输出片段末尾：\n"
+            f"{partial_text}"
+        ),
+    }
+
+
+def payload_has_resume_hint(payload: dict | None) -> bool:
+    messages = payload.get("messages") if isinstance(payload, dict) else None
+    if not isinstance(messages, list):
+        return False
+    for item in messages:
+        if isinstance(item, dict) and RESUME_HINT_PREFIX in str(item.get("content") or ""):
+            return True
+    return False
+
+
+def apply_interruption_resume_to_payload(protocol: str, payload: dict | None) -> tuple[dict | None, int, dict]:
+    candidates = build_interruption_resume_candidates(protocol, payload)
+    metrics = {
+        "resume_enabled": ENABLE_INTERRUPTION_RESUME,
+        "resume_candidates": len(candidates),
+        "resume_key_source": "",
+        "resume_injected": False,
+        "resume_available": False,
+        "resume_partial_chars": 0,
+        "resume_record_age_seconds": 0,
+        "_resume_save_keys": [str(item.get("key") or "") for item in candidates if item.get("key")],
+        "_resume_cleanup_keys": [],
+    }
+    if (
+        not ENABLE_INTERRUPTION_RESUME
+        or storage is None
+        or not isinstance(payload, dict)
+        or not isinstance(payload.get("messages"), list)
+        or payload_has_resume_hint(payload)
+    ):
+        return payload, 0, metrics
+
+    record = {}
+    matched = {}
+    for candidate in candidates:
+        if not candidate.get("load"):
+            continue
+        try:
+            record = storage.load_interrupted_response(str(candidate.get("key") or ""))
+        except Exception as exc:  # pragma: no cover
+            proxy_logger.warning("load_interrupted_resume_failed source=%s error=%s", candidate.get("source"), str(exc))
+            record = {}
+        if record:
+            matched = candidate
+            break
+
+    if not record:
+        return payload, 0, metrics
+
+    partial_text = str(record.get("partial_text") or "").strip()
+    if len(partial_text) < INTERRUPTION_RESUME_MIN_CHARS:
+        return payload, 0, metrics
+
+    next_payload = dict(payload)
+    messages = list(next_payload.get("messages") or [])
+    insert_at = 0
+    while insert_at < len(messages) and isinstance(messages[insert_at], dict) and messages[insert_at].get("role") in {"system", "developer"}:
+        insert_at += 1
+    messages.insert(insert_at, build_resume_hint_message(record))
+    next_payload["messages"] = messages
+
+    now = time.time()
+    metrics.update(
+        {
+            "resume_key_source": str(matched.get("source") or ""),
+            "resume_injected": True,
+            "resume_available": True,
+            "resume_partial_chars": len(partial_text),
+            "resume_record_age_seconds": max(0, int(now - float(record.get("created_at") or now))),
+            "_resume_cleanup_keys": [str(item.get("key") or "") for item in candidates if item.get("key")],
+        }
+    )
+    bump_cache_stat("interruption_resume_injected")
+    return next_payload, 1, metrics
+
+
+def append_resume_text(parts: list[str], text: object) -> None:
+    if not isinstance(text, str) or not text:
+        return
+    parts.append(text)
+    total = sum(len(part) for part in parts)
+    while parts and total > INTERRUPTION_RESUME_MAX_CHARS:
+        overflow = total - INTERRUPTION_RESUME_MAX_CHARS
+        if len(parts[0]) <= overflow:
+            removed = parts.pop(0)
+            total -= len(removed)
+            continue
+        parts[0] = parts[0][overflow:]
+        total = INTERRUPTION_RESUME_MAX_CHARS
+
+
+def build_resume_partial_text(parts: list[str], fallback: str | None = None) -> str:
+    text = "".join(part for part in parts if isinstance(part, str)).strip()
+    if not text and fallback:
+        text = str(fallback or "").strip()
+    if len(text) > INTERRUPTION_RESUME_MAX_CHARS:
+        text = text[-INTERRUPTION_RESUME_MAX_CHARS:]
+    return text
+
+
+def save_interruption_resume_snapshot(
+    *,
+    execution: dict | None,
+    protocol: str,
+    request_id: str,
+    upstream_url: str,
+    partial_text: str,
+    response_preview: str | None = None,
+    bytes_sent: int = 0,
+) -> dict:
+    if not ENABLE_INTERRUPTION_RESUME or storage is None or not isinstance(execution, dict):
+        return {"resume_saved": False}
+    text = str(partial_text or "").strip()
+    if len(text) < INTERRUPTION_RESUME_MIN_CHARS:
+        execution["resume_saved"] = False
+        execution["resume_partial_chars"] = len(text)
+        return {"resume_saved": False, "resume_partial_chars": len(text)}
+
+    resume_metrics = execution.get("interruption_resume") if isinstance(execution.get("interruption_resume"), dict) else {}
+    keys = [str(item or "") for item in resume_metrics.get("_resume_save_keys", []) if str(item or "")]
+    if not keys:
+        return {"resume_saved": False, "resume_partial_chars": len(text)}
+
+    now = time.time()
+    model = ""
+    upstream_payload = execution.get("upstream_payload")
+    if isinstance(upstream_payload, dict):
+        model = str(upstream_payload.get("model") or "")
+    saved = 0
+    for key in keys:
+        try:
+            storage.save_interrupted_response(
+                {
+                    "resume_key": key,
+                    "protocol": protocol,
+                    "model": model,
+                    "partial_text": text,
+                    "created_at": now,
+                    "expires_at": now + INTERRUPTION_RESUME_TTL_SECONDS,
+                    "meta": {
+                        "request_id": request_id,
+                        "upstream_url": upstream_url,
+                        "response_preview": response_preview or "",
+                        "bytes_sent": int(bytes_sent or 0),
+                    },
+                }
+            )
+            saved += 1
+        except Exception as exc:  # pragma: no cover
+            proxy_logger.warning("save_interrupted_resume_failed request_id=%s error=%s", request_id, str(exc))
+
+    saved_ok = saved > 0
+    if saved_ok:
+        bump_cache_stat("interruption_resume_saved")
+    execution["resume_saved"] = saved_ok
+    execution["resume_partial_chars"] = len(text)
+    execution["resume_saved_keys"] = saved
+    return {
+        "resume_saved": saved_ok,
+        "resume_partial_chars": len(text),
+        "resume_saved_keys": saved,
+    }
+
+
+def clear_interruption_resume_records(execution: dict | None) -> dict:
+    if not ENABLE_INTERRUPTION_RESUME or storage is None or not isinstance(execution, dict):
+        return {"resume_cleared": False}
+    resume_metrics = execution.get("interruption_resume") if isinstance(execution.get("interruption_resume"), dict) else {}
+    if not (bool(resume_metrics.get("resume_injected")) or bool(resume_metrics.get("resume_available"))):
+        return {"resume_cleared": False}
+    keys = [str(item or "") for item in resume_metrics.get("_resume_cleanup_keys", []) if str(item or "")]
+    if not keys:
+        return {"resume_cleared": False}
+    try:
+        storage.delete_interrupted_responses(keys)
+    except Exception as exc:  # pragma: no cover
+        proxy_logger.warning("clear_interrupted_resume_failed error=%s", str(exc))
+        return {"resume_cleared": False}
+    bump_cache_stat("interruption_resume_cleared")
+    execution["resume_cleared"] = True
+    return {"resume_cleared": True}
+
+
+def apply_route_policy_to_payload(subpath: str, upstream_payload: dict | None, route_policy: dict) -> tuple[dict | None, int, dict]:
     if not isinstance(upstream_payload, dict):
-        return upstream_payload, 0
+        return upstream_payload, 0, {}
     if subpath != "chat/completions":
-        return upstream_payload, 0
+        return upstream_payload, 0, {}
 
     payload = dict(upstream_payload)
     repairs = 0
@@ -1201,24 +1595,38 @@ def apply_route_policy_to_payload(subpath: str, upstream_payload: dict | None, r
 
     messages = payload.get("messages")
     if not isinstance(messages, list):
-        return payload, repairs
+        return payload, repairs, {}
 
     compression_mode = str(route_policy.get("compression_mode") or "off")
-    if compression_mode == "off":
-        return payload, repairs
-
     max_history_messages = int(route_policy.get("max_history_messages") or DEFAULT_ROUTE_POLICY["max_history_messages"])
     max_tool_chars = int(route_policy.get("max_tool_chars") or DEFAULT_ROUTE_POLICY["max_tool_chars"])
     max_input_chars = int(route_policy.get("max_input_chars") or DEFAULT_ROUTE_POLICY["max_input_chars"])
-    if compression_mode == "light":
-        max_history_messages = min(max_history_messages, 20)
-    elif compression_mode == "balanced":
-        max_history_messages = min(max_history_messages, 16)
-        max_tool_chars = min(max_tool_chars, 16000)
-    elif compression_mode == "aggressive":
+    if compression_mode == "aggressive":
         max_history_messages = min(max_history_messages, 10)
         max_tool_chars = min(max_tool_chars, 8000)
         max_input_chars = min(max_input_chars, 90000)
+
+    def estimate_messages_chars(items):
+        try:
+            return len(json.dumps(items or [], ensure_ascii=False))
+        except Exception:
+            return 0
+
+    metrics = {
+        "compression_mode": compression_mode,
+        "max_history_messages": max_history_messages,
+        "max_tool_chars": max_tool_chars,
+        "max_input_chars": max_input_chars,
+        "original_message_count": len(messages),
+        "sent_message_count": len(messages),
+        "dropped_message_count": 0,
+        "trimmed_content_count": 0,
+        "input_chars_before_policy": estimate_messages_chars(messages),
+        "input_chars_after_policy": estimate_messages_chars(messages),
+    }
+
+    if compression_mode == "off":
+        return payload, repairs, metrics
 
     normalized_messages = [dict(item) if isinstance(item, dict) else item for item in messages]
     if len(normalized_messages) > max_history_messages:
@@ -1250,6 +1658,7 @@ def apply_route_policy_to_payload(subpath: str, upstream_payload: dict | None, r
 
     next_messages = []
     total_chars = 0
+    trimmed_content_count = 0
     for item in normalized_messages:
         if not isinstance(item, dict):
             next_messages.append(item)
@@ -1261,6 +1670,7 @@ def apply_route_policy_to_payload(subpath: str, upstream_payload: dict | None, r
                 repairs += 1
         current_content, content_repairs = trim_content(current.get("content"))
         repairs += content_repairs
+        trimmed_content_count += content_repairs
         current["content"] = current_content
         total_chars += len(json.dumps(current_content, ensure_ascii=False)) if current_content is not None else 0
         next_messages.append(current)
@@ -1290,11 +1700,15 @@ def apply_route_policy_to_payload(subpath: str, upstream_payload: dict | None, r
         next_messages = compacted_messages
 
     payload["messages"] = next_messages
+    metrics["sent_message_count"] = len(next_messages)
+    metrics["dropped_message_count"] = max(0, len(messages) - len(next_messages))
+    metrics["trimmed_content_count"] = trimmed_content_count
+    metrics["input_chars_after_policy"] = estimate_messages_chars(next_messages)
 
     max_output_tokens = int(route_policy.get("max_output_tokens") or 0)
     if max_output_tokens > 0:
         repairs += clamp_payload_output_tokens(payload, max_output_tokens)
-    return payload, repairs
+    return payload, repairs, metrics
 
 
 def execute_upstream_request(
@@ -1331,9 +1745,17 @@ def execute_upstream_request(
         request_payload,
         request_method=request_method,
     )
+    request_protocol = "openai_chat_completions" if subpath == "chat/completions" else subpath.replace("/", "_")
     route_policy = build_route_policy(upstream_url)
-    upstream_payload, route_policy_repairs = apply_route_policy_to_payload(subpath, upstream_payload, route_policy)
+    upstream_payload, route_policy_repairs, route_policy_metrics = apply_route_policy_to_payload(subpath, upstream_payload, route_policy)
     request_repairs += route_policy_repairs
+    resume_metrics = {}
+    if subpath == "chat/completions" and isinstance(upstream_payload, dict):
+        upstream_payload, resume_repairs, resume_metrics = apply_interruption_resume_to_payload(
+            request_protocol,
+            upstream_payload,
+        )
+        request_repairs += resume_repairs
     capability_overflow = check_payload_against_model_capability(upstream_payload)
     if isinstance(capability_overflow, dict):
         logical_model_name = ""
@@ -1353,6 +1775,9 @@ def execute_upstream_request(
             "request_repairs": request_repairs,
             "model_candidates": model_candidates,
             "initial_key_choice": {},
+            "route_policy": route_policy,
+            "route_policy_metrics": route_policy_metrics,
+            "interruption_resume": resume_metrics,
             "forced_error_payload": build_context_window_exceeded_error_payload(
                 model_name=logical_model_name,
                 estimated_total_tokens=int(capability_overflow.get("estimated_total_tokens") or 0),
@@ -1364,7 +1789,6 @@ def execute_upstream_request(
         }
     tool_schemas = extract_tool_schemas(upstream_payload if isinstance(upstream_payload, dict) else request_payload)
 
-    request_protocol = "openai_chat_completions" if subpath == "chat/completions" else subpath.replace("/", "_")
     cache_key = build_cache_key(
         protocol=request_protocol,
         path=subpath,
@@ -1383,14 +1807,17 @@ def execute_upstream_request(
             cached_payload = {}
         if isinstance(cached_payload, dict) and cached_payload.get("response_body"):
             bump_cache_stat("prompt_cache_hits")
-            return build_cached_execution(
+            cached_execution = build_cached_execution(
                 cached_payload=cached_payload,
                 request_payload=upstream_payload,
                 request_repairs=request_repairs,
                 model_candidates=model_candidates,
                 route_policy=route_policy,
                 cache_key=cache_key,
+                route_policy_metrics=route_policy_metrics,
             )
+            cached_execution["interruption_resume"] = resume_metrics
+            return cached_execution
         bump_cache_stat("prompt_cache_misses")
 
     key_choice = choose_api_key_for_url(upstream_url)
@@ -1439,6 +1866,8 @@ def execute_upstream_request(
         "request_repairs": request_repairs + learned_request_repairs,
         "model_candidates": model_candidates,
         "route_policy": route_policy,
+        "route_policy_metrics": route_policy_metrics,
+        "interruption_resume": resume_metrics,
         "cache_hit": False,
         "cache_key": cache_key,
         "initial_key_choice": {
@@ -1457,6 +1886,9 @@ def execute_upstream_request(
             (str(attempt.get("pool_name") or "") for attempt in reversed(attempts) if str(attempt.get("pool_name") or "").strip()),
             str(key_choice.get("pool_name") or ""),
         ),
+        "attempted_pool_names": list(dict.fromkeys(
+            str(attempt.get("pool_name") or "") for attempt in attempts if str(attempt.get("pool_name") or "").strip()
+        )),
         "selected_key_index": next(
             (attempt.get("api_key_index") for attempt in reversed(attempts) if attempt.get("api_key_index") is not None),
             key_choice.get("key_index"),
@@ -1585,7 +2017,7 @@ def classify_upstream_response(response: requests.Response) -> tuple[str, str]:
     ):
         return "switch_route", f"route_switch_{status_code}"
 
-    if status_code in {408, 504, 524}:
+    if status_code in {408, 502, 504, 524}:
         return "switch_route", f"route_switch_{status_code}"
 
     if status_code in RETRYABLE_STATUS_CODES:
@@ -1835,9 +2267,14 @@ def record_request_cache_hit(
     body: bytes,
     started_at: float,
     requested_stream: bool,
+    execution: dict | None = None,
     extra_meta: dict | None = None,
 ) -> int:
     duration_ms = int((time.perf_counter() - started_at) * 1000)
+    merged_extra_meta = dict(extra_meta or {})
+    if isinstance(execution, dict):
+        clear_interruption_resume_records(execution)
+        merged_extra_meta.update(build_request_observability_meta(execution, execution.get("upstream_payload")))
     record_request_finished(
         request_id,
         status_code=200,
@@ -1846,7 +2283,7 @@ def record_request_cache_hit(
         stream=requested_stream,
         sanitized_markers=0,
         repaired_tool_args=0,
-        extra_meta=extra_meta or {},
+        extra_meta=merged_extra_meta,
     )
     return duration_ms
 
@@ -1866,6 +2303,7 @@ def build_cached_openai_stream_response(
         b"".join(packets),
         started_at,
         True,
+        execution=execution,
         extra_meta=build_request_observability_meta(execution, request_payload),
     )
     proxy_logger.info(
@@ -1926,6 +2364,8 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
     input_bytes = estimate_request_payload_bytes(effective_payload)
     cache_hit = bool(execution.get("cache_hit"))
     route_policy = execution.get("route_policy") if isinstance(execution.get("route_policy"), dict) else {}
+    route_policy_metrics = execution.get("route_policy_metrics") if isinstance(execution.get("route_policy_metrics"), dict) else {}
+    resume_metrics = execution.get("interruption_resume") if isinstance(execution.get("interruption_resume"), dict) else {}
     requested_stream = bool((effective_payload or {}).get("stream")) if isinstance(effective_payload, dict) else False
     cache_status = "miss"
     cache_note = ""
@@ -1957,6 +2397,7 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
         "logical_model": logical_model,
         "resolved_model": resolved_model,
         "pool_name": pool_name,
+        "attempted_pool_names": list(execution.get("attempted_pool_names") or []) or ([pool_name] if pool_name else []),
         "api_key_index": api_key_index,
         "input_bytes": input_bytes,
         "cache_read_bytes": input_bytes if cache_hit else 0,
@@ -1964,6 +2405,22 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
         "cache_source": str(execution.get("cache_source") or ""),
         "cache_status": cache_status,
         "cache_note": cache_note,
+        "compression_mode": str(route_policy_metrics.get("compression_mode") or route_policy.get("compression_mode") or ""),
+        "max_history_messages": route_policy_metrics.get("max_history_messages"),
+        "original_message_count": int(route_policy_metrics.get("original_message_count") or 0),
+        "sent_message_count": int(route_policy_metrics.get("sent_message_count") or 0),
+        "dropped_message_count": int(route_policy_metrics.get("dropped_message_count") or 0),
+        "trimmed_content_count": int(route_policy_metrics.get("trimmed_content_count") or 0),
+        "input_chars_before_policy": int(route_policy_metrics.get("input_chars_before_policy") or 0),
+        "input_chars_after_policy": int(route_policy_metrics.get("input_chars_after_policy") or 0),
+        "resume_enabled": bool(resume_metrics.get("resume_enabled", ENABLE_INTERRUPTION_RESUME)),
+        "resume_key_source": str(resume_metrics.get("resume_key_source") or ""),
+        "resume_injected": bool(resume_metrics.get("resume_injected")),
+        "resume_available": bool(resume_metrics.get("resume_available")),
+        "resume_saved": bool(execution.get("resume_saved")),
+        "resume_cleared": bool(execution.get("resume_cleared")),
+        "resume_partial_chars": int(execution.get("resume_partial_chars") or resume_metrics.get("resume_partial_chars") or 0),
+        "resume_record_age_seconds": int(resume_metrics.get("resume_record_age_seconds") or 0),
     }
 
 
@@ -2043,6 +2500,20 @@ def save_request_cache_entry(
 ) -> None:
     if storage is None or not isinstance(response_body, dict):
         return
+    choices = response_body.get("choices") or []
+    if choices:
+        has_useful_content = False
+        for choice in choices:
+            message = choice.get("message") or {}
+            if (
+                (isinstance(message.get("content"), str) and message["content"].strip())
+                or message.get("tool_calls")
+                or (isinstance(message.get("reasoning"), str) and message["reasoning"].strip())
+            ):
+                has_useful_content = True
+                break
+        if not has_useful_content:
+            return
     route_policy = execution.get("route_policy") if isinstance(execution, dict) else None
     if not is_cacheable_request(
         request_payload=request_payload,
@@ -2338,15 +2809,20 @@ def build_runtime_snapshot() -> dict:
             "model_probe_timeout_seconds": MODEL_PROBE_TIMEOUT_SECONDS,
             "model_probe_ttl_seconds": MODEL_PROBE_TTL_SECONDS,
             "model_route_cache_ttl_seconds": MODEL_ROUTE_CACHE_TTL_SECONDS,
+            "enable_interruption_resume": ENABLE_INTERRUPTION_RESUME,
+            "interruption_resume_ttl_seconds": INTERRUPTION_RESUME_TTL_SECONDS,
+            "interruption_resume_max_chars": INTERRUPTION_RESUME_MAX_CHARS,
+            "interruption_resume_min_chars": INTERRUPTION_RESUME_MIN_CHARS,
             "enable_model_candidate_race": ENABLE_MODEL_CANDIDATE_RACE,
             "model_candidate_race_limit": MODEL_CANDIDATE_RACE_LIMIT,
             "model_candidate_race_timeout_seconds": MODEL_CANDIDATE_RACE_TIMEOUT_SECONDS,
             "count_model_route_cache_entries": count_model_route_cache_entries,
+            "count_interrupted_response_entries": count_interrupted_response_entries,
             "count_learned_model_capability_entries": count_learned_model_capability_entries,
             "model_list_cache_entries": model_route_cache.get("model_lists") or {},
             "model_route_cache_path": MODEL_ROUTE_CACHE_PATH,
-            "sqlite_db_path": SQLITE_DB_PATH,
-            "sqlite_enabled": storage is not None,
+            "db_label": STORAGE_DB_LABEL,
+            "db_enabled": storage is not None,
             "cache_stats_snapshot": cache_stats.snapshot,
             "config_path": PROXY_CONFIG_PATH,
             "config_file_exists": PROXY_CONFIG_PATH.exists(),
@@ -3102,6 +3578,7 @@ def proxy_response(
         total_bytes = sum(len(packet) for packet in packets)
         response_preview = build_preview_summary(consumed["preview_parts"])
         close_response_quietly(upstream_response)
+        resume_clear_meta = clear_interruption_resume_records(execution)
         proxy_logger.info(
             "request_id=%s 上游=%s 状态=%s 流式=true 合成来源=%s 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
             request_id,
@@ -3124,7 +3601,7 @@ def proxy_response(
             sanitized_markers=consumed["sanitized_markers"],
             response_preview=None,
             repaired_tool_args=consumed["repaired_tool_args"],
-            extra_meta=build_request_observability_meta(execution, request_payload),
+            extra_meta=build_request_observability_meta(execution, request_payload) | resume_clear_meta,
         )
         if isinstance(consumed.get("openai_body"), dict):
             save_request_cache_entry(
@@ -3230,6 +3707,7 @@ def proxy_response(
                 sanitized_markers = 0
                 repaired_tool_args = 0
                 preview_parts = []
+                resume_text_parts: list[str] = []
                 response_events = []
                 stream_tail_lines = []
                 terminal_finish_reasons = []
@@ -3284,21 +3762,25 @@ def proxy_response(
                         if normalized_line:
                             skip_next_blank = False
 
-                        if event and len(" ".join(preview_parts)) < 240:
+                        if event:
                             response_events.append(event)
                             choices = event.get("choices") or []
                             for choice in choices:
                                 delta = choice.get("delta") or {}
-                                if isinstance(delta.get("content"), str):
-                                    append_preview_text(preview_parts, delta.get("content"))
-                                for tool_call in delta.get("tool_calls") or []:
-                                    function_data = tool_call.get("function") or {}
-                                    append_preview_tool(
-                                        preview_parts,
-                                        function_data.get("name"),
-                                        function_data.get("arguments"),
-                                        tool_schemas,
-                                    )
+                                content_delta = delta.get("content")
+                                if isinstance(content_delta, str):
+                                    append_resume_text(resume_text_parts, content_delta)
+                                    if len(" ".join(preview_parts)) < 240:
+                                        append_preview_text(preview_parts, content_delta)
+                                if len(" ".join(preview_parts)) < 240:
+                                    for tool_call in delta.get("tool_calls") or []:
+                                        function_data = tool_call.get("function") or {}
+                                        append_preview_tool(
+                                            preview_parts,
+                                            function_data.get("name"),
+                                            function_data.get("arguments"),
+                                            tool_schemas,
+                                        )
                                 finish_reason = choice.get("finish_reason")
                                 if finish_reason is not None:
                                     terminal_finish_reasons.append(str(finish_reason))
@@ -3312,8 +3794,9 @@ def proxy_response(
                     if upstream_response.status_code < 400 and not emitted_data:
                         if nonempty_line_count > 0:
                             fallback_model = None
-                            if isinstance(observability_meta, dict):
-                                fallback_model = observability_meta.get("resolved_model") or observability_meta.get("logical_model")
+                            if isinstance(execution, dict):
+                                fallback_meta = build_request_observability_meta(execution, request_payload)
+                                fallback_model = fallback_meta.get("resolved_model") or fallback_meta.get("logical_model")
                             fallback_chunk = format_openai_sse_payload(
                                 {
                                     "id": f"chatcmpl-{request_id}",
@@ -3416,6 +3899,19 @@ def proxy_response(
                     close_response_quietly(upstream_response)
                     duration_ms = int((time.perf_counter() - started_at) * 1000)
                     response_preview = build_preview_summary(preview_parts)
+                    resume_save_meta = {}
+                    if stream_client_gone:
+                        resume_save_meta = save_interruption_resume_snapshot(
+                            execution=execution,
+                            protocol=protocol or "openai_chat_completions",
+                            request_id=request_id,
+                            upstream_url=upstream_url,
+                            partial_text=build_resume_partial_text(resume_text_parts, response_preview),
+                            response_preview=response_preview,
+                            bytes_sent=total_bytes,
+                        )
+                    elif not stream_error:
+                        resume_save_meta = clear_interruption_resume_records(execution)
                     tail_summary = " || ".join(stream_tail_lines[-4:])
                     finish_reason_summary = ", ".join(terminal_finish_reasons[-4:])
                     if stream_client_gone:
@@ -3475,7 +3971,7 @@ def proxy_response(
                         response_preview=response_preview if upstream_response.status_code >= 400 else None,
                         repaired_tool_args=repaired_tool_args,
                         client_gone=stream_client_gone,
-                        extra_meta=build_request_observability_meta(execution, request_payload),
+                        extra_meta=build_request_observability_meta(execution, request_payload) | resume_save_meta,
                     )
                     if (
                         not stream_error
@@ -3613,6 +4109,7 @@ def proxy_response(
             response_events=response_events,
             raw_error_lines=raw_error_lines,
         )
+        resume_clear_meta = {}
         if issue:
             next_execution = retry_malformed_success_once(
                 route_hint=route_hint,
@@ -3658,6 +4155,7 @@ def proxy_response(
         body_bytes = json.dumps(aggregated_body, ensure_ascii=False).encode("utf-8")
         response_preview = build_preview_summary(preview_parts)
         close_response_quietly(upstream_response)
+        resume_clear_meta = clear_interruption_resume_records(execution)
         proxy_logger.info(
             "request_id=%s 上游=%s 状态=%s 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
             request_id,
@@ -3679,7 +4177,7 @@ def proxy_response(
             sanitized_markers=sanitized_markers,
             response_preview=response_preview if upstream_response.status_code >= 400 else None,
             repaired_tool_args=repaired_tool_args,
-            extra_meta=build_request_observability_meta(execution, request_payload),
+            extra_meta=build_request_observability_meta(execution, request_payload) | resume_clear_meta,
         )
         if isinstance(aggregated_body, dict):
             save_request_cache_entry(
@@ -3745,6 +4243,7 @@ def proxy_response(
     if upstream_response.status_code >= 400 and is_text_response(content_type):
         response_preview = body.decode("utf-8", errors="ignore").replace("\n", "\\n")[:280]
     close_response_quietly(upstream_response)
+    resume_clear_meta = clear_interruption_resume_records(execution) if upstream_response.status_code < 400 else {}
     proxy_logger.info(
         "request_id=%s 上游=%s 状态=%s 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
         request_id,
@@ -3766,6 +4265,7 @@ def proxy_response(
         sanitized_markers=sanitized_markers,
         response_preview=response_preview,
         repaired_tool_args=repaired_tool_args,
+        extra_meta=build_request_observability_meta(execution, request_payload) | resume_clear_meta,
     )
     if isinstance(json_body, dict):
         save_request_cache_entry(
@@ -3964,8 +4464,16 @@ def v1_root():
 
     accept_header = request.headers.get("Accept", "").lower()
     if "text/html" in accept_header:
+        if not is_authenticated():
+            from flask import redirect as _redirect
+
+            return _redirect("/login")
+        dashboard_html = DASHBOARD_TEMPLATE.replace(
+            "</body>",
+            '<div style="position:fixed;bottom:20px;right:20px;z-index:9999"><a href="/logout" style="display:inline-block;padding:8px 16px;background:#ef4444;color:#fff;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;box-shadow:0 2px 8px rgba(239,68,68,.35)">退出登录</a></div></body>',
+        )
         return render_template_string(
-            DASHBOARD_TEMPLATE,
+            dashboard_html,
             port=PORT,
         )
 
@@ -4245,7 +4753,7 @@ def gemini_generate_content(subpath: str, request_payload: dict | None):
             started_at=started_at,
             tool_schemas=tool_schemas,
             retry_count=retry_count,
-            observability_meta=build_request_observability_meta(execution, openai_payload),
+            observability_meta=build_request_observability_meta(execution, openai_payload) | {"_execution": execution},
         )
 
     if execution.get("cache_hit") and isinstance(execution.get("cached_response_body"), dict):
@@ -4255,6 +4763,7 @@ def gemini_generate_content(subpath: str, request_payload: dict | None):
             body,
             started_at,
             requested_stream,
+            execution=execution,
             extra_meta=build_request_observability_meta(execution, request_payload),
         )
         proxy_logger.info(
@@ -4519,7 +5028,7 @@ def anthropic_messages():
             request_payload=request_payload,
             tool_schemas=tool_schemas,
             retry_count=retry_count,
-            observability_meta=build_request_observability_meta(execution, openai_payload) | {"_upstream_openai_payload": openai_payload},
+            observability_meta=build_request_observability_meta(execution, openai_payload) | {"_upstream_openai_payload": openai_payload, "_execution": execution},
         )
 
     content_type = upstream_response.headers.get("Content-Type", "")
@@ -4530,6 +5039,7 @@ def anthropic_messages():
         consumed["repaired_tool_args"] += normalize_chat_completion_text_tool_calls(openai_body, tool_schemas)
         consumed["repaired_tool_args"] += normalize_chat_completion_tool_calls(openai_body, tool_schemas)
         normalize_chat_completion_finish_reasons(openai_body)
+        clear_interruption_resume_records(execution)
     else:
         consumed = read_upstream_openai_response_body(upstream_response, tool_schemas)
         openai_body = consumed["openai_body"]
@@ -4563,7 +5073,7 @@ def anthropic_messages():
                     request_payload=request_payload,
                     tool_schemas=next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else tool_schemas,
                     retry_count=next_retry_count,
-                    observability_meta=build_request_observability_meta(next_execution, openai_payload),
+                    observability_meta=build_request_observability_meta(next_execution, openai_payload) | {"_execution": next_execution},
                 )
             if "text/event-stream" in str(next_response.headers.get("Content-Type", "")).lower():
                 upstream_response = next_response
@@ -4656,6 +5166,7 @@ def anthropic_messages():
     body = json.dumps(anthropic_body, ensure_ascii=False).encode("utf-8")
     response_preview = build_preview_summary(consumed["preview_parts"])
     close_response_quietly(upstream_response)
+    clear_interruption_resume_records(execution)
     proxy_logger.info(
         "request_id=%s 上游=%s 状态=%s 协议=anthropic_messages 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
         request_id,
@@ -5197,6 +5708,10 @@ def handle_gemini_stream_response(
         stream_error = None
         stream_client_gone = False
         preview_parts = []
+        resume_text_parts: list[str] = []
+        resume_execution = (observability_meta or {}).get("_execution")
+        if not isinstance(resume_execution, dict):
+            resume_execution = None
         stream_state = {}
         choice_states = {}
         skip_next_blank = False
@@ -5211,6 +5726,7 @@ def handle_gemini_stream_response(
                 for choice in consumed["openai_body"].get("choices") or []:
                     message = choice.get("message") or {}
                     append_preview_text(preview_parts, message.get("content"))
+                    append_resume_text(resume_text_parts, message.get("content"))
                 yield packet
                 return
 
@@ -5244,7 +5760,9 @@ def handle_gemini_stream_response(
                     for candidate in chunk.get("candidates") or []:
                         for part in ((candidate.get("content") or {}).get("parts") or []):
                             if part.get("text"):
-                                append_preview_text(preview_parts, part.get("text"))
+                                part_text = part.get("text")
+                                append_preview_text(preview_parts, part_text)
+                                append_resume_text(resume_text_parts, part_text)
                             function_call = part.get("functionCall")
                             if isinstance(function_call, dict):
                                 append_preview_tool(
@@ -5295,6 +5813,19 @@ def handle_gemini_stream_response(
             close_response_quietly(upstream_response)
             duration_ms = int((time.perf_counter() - started_at) * 1000)
             response_preview = build_preview_summary(preview_parts)
+            resume_meta = {}
+            if stream_client_gone:
+                resume_meta = save_interruption_resume_snapshot(
+                    execution=resume_execution,
+                    protocol="gemini_generate_content",
+                    request_id=request_id,
+                    upstream_url=upstream_url,
+                    partial_text=build_resume_partial_text(resume_text_parts, response_preview),
+                    response_preview=response_preview,
+                    bytes_sent=total_bytes,
+                )
+            elif not stream_error:
+                resume_meta = clear_interruption_resume_records(resume_execution)
             proxy_logger.info(
                 "request_id=%s 上游=%s 状态=%s 协议=gemini_generate_content 流式=true 客户端已断开=%s 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s 错误=%s",
                 request_id,
@@ -5320,7 +5851,7 @@ def handle_gemini_stream_response(
                 response_preview=response_preview if upstream_response.status_code >= 400 else None,
                 repaired_tool_args=repaired_tool_args,
                 client_gone=stream_client_gone,
-                extra_meta=observability_meta,
+                extra_meta=(observability_meta or {}) | resume_meta,
             )
 
     return Response(
@@ -5383,6 +5914,7 @@ def handle_anthropic_stream_response(
         duration_ms = int((time.perf_counter() - started_at) * 1000)
         response_preview = build_preview_summary(consumed["preview_parts"])
         close_response_quietly(upstream_response)
+        resume_clear_meta = clear_interruption_resume_records((observability_meta or {}).get("_execution"))
         proxy_logger.info(
             "request_id=%s 上游=%s 状态=%s 协议=anthropic_messages 流式=true 合成来源=%s 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
             request_id,
@@ -5404,7 +5936,7 @@ def handle_anthropic_stream_response(
             stream=True,
             sanitized_markers=consumed["sanitized_markers"],
             repaired_tool_args=consumed["repaired_tool_args"],
-            extra_meta=observability_meta,
+            extra_meta=(observability_meta or {}) | resume_clear_meta,
         )
         return Response(
             packets,
@@ -5418,6 +5950,10 @@ def handle_anthropic_stream_response(
         repaired_tool_args = 0
         preview_parts = []
         stream_error = None
+        resume_text_parts: list[str] = []
+        resume_execution = (observability_meta or {}).get("_execution")
+        if not isinstance(resume_execution, dict):
+            resume_execution = None
         message_started = False
         message_id = f"msg_{uuid.uuid4().hex[:24]}"
         message_model = request_payload.get("model")
@@ -5494,7 +6030,7 @@ def handle_anthropic_stream_response(
                                 request_payload=request_payload,
                                 tool_schemas=next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else tool_schemas,
                                 retry_count=int(next_execution.get("retry_count") or retry_count),
-                                observability_meta=build_request_observability_meta(next_execution, retry_payload) | {"_upstream_openai_payload": retry_payload} | next_meta,
+                                observability_meta=build_request_observability_meta(next_execution, retry_payload) | {"_upstream_openai_payload": retry_payload, "_execution": next_execution} | next_meta,
                             )
                             yield from next_stream.response
                             return
@@ -5653,6 +6189,7 @@ def handle_anthropic_stream_response(
                             total_bytes += len(packet)
                             yield packet
                         append_preview_text(preview_parts, content_text)
+                        append_resume_text(resume_text_parts, content_text)
                         packet = format_sse_event(
                             "content_block_delta",
                             {
@@ -5849,6 +6386,19 @@ def handle_anthropic_stream_response(
             close_response_quietly(upstream_response)
             duration_ms = int((time.perf_counter() - started_at) * 1000)
             response_preview = build_preview_summary(preview_parts)
+            resume_meta = {}
+            if stream_client_gone:
+                resume_meta = save_interruption_resume_snapshot(
+                    execution=resume_execution,
+                    protocol="anthropic_messages",
+                    request_id=request_id,
+                    upstream_url=upstream_url,
+                    partial_text=build_resume_partial_text(resume_text_parts, response_preview),
+                    response_preview=response_preview,
+                    bytes_sent=total_bytes,
+                )
+            elif not stream_error:
+                resume_meta = clear_interruption_resume_records(resume_execution)
             if stream_client_gone:
                 proxy_logger.info(
                     "request_id=%s 上游=%s 状态=%s 协议=anthropic_messages 流式=true 客户端已断开=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
@@ -5900,7 +6450,7 @@ def handle_anthropic_stream_response(
                 response_preview=response_preview if upstream_response.status_code >= 400 else None,
                 repaired_tool_args=repaired_tool_args,
                 client_gone=stream_client_gone,
-                extra_meta=observability_meta,
+                extra_meta=(observability_meta or {}) | resume_meta,
             )
 
     return Response(
@@ -6006,7 +6556,7 @@ def gemini_stream_response_with_connect_heartbeat(
                 started_at=started_at,
                 tool_schemas=execution.get("tool_schemas") or tool_schemas_fallback or {},
                 retry_count=retry_count,
-                observability_meta=build_request_observability_meta(execution, observability_payload or {}),
+                observability_meta=build_request_observability_meta(execution, observability_payload or {}) | {"_execution": execution},
             )
             yield from stream_response.response
         except GeneratorExit:  # pragma: no cover
@@ -6186,7 +6736,7 @@ def anthropic_stream_response_with_connect_heartbeat(
                 request_payload=request_payload or {},
                 tool_schemas=execution.get("tool_schemas") or tool_schemas_fallback or {},
                 retry_count=retry_count,
-                observability_meta=build_request_observability_meta(execution, observability_payload or {}) | {"_upstream_openai_payload": observability_payload or {}},
+                observability_meta=build_request_observability_meta(execution, observability_payload or {}) | {"_upstream_openai_payload": observability_payload or {}, "_execution": execution},
             )
             yield from stream_response.response
         except GeneratorExit:  # pragma: no cover
@@ -6397,6 +6947,7 @@ def proxy_entrypoint(subpath: str):
                 body,
                 started_at,
                 requested_stream,
+                execution=execution,
                 extra_meta=build_request_observability_meta(execution, request_payload),
             )
             proxy_logger.info(
@@ -6491,15 +7042,21 @@ def proxy_gemini_versioned(subpath: str):
     return proxy_entrypoint(subpath)
 
 
+def dashboard_redirect():
+    from flask import redirect
+
+    return redirect("/v1", code=302)
+
+
 register_http_routes(
     app,
     {
         "add_cors_headers": add_cors_headers,
         "health": health,
-        "debug_state": debug_state,
-        "debug_config": debug_config,
-        "debug_pool_test": debug_pool_test,
-        "debug_requests_clear": debug_requests_clear,
+        "debug_state": login_required(debug_state),
+        "debug_config": login_required(debug_config),
+        "debug_pool_test": login_required(debug_pool_test),
+        "debug_requests_clear": login_required(debug_requests_clear),
         "v1_root": v1_root,
         "gemini_version_root": gemini_version_root,
         "anthropic_messages": anthropic_messages,
@@ -6508,6 +7065,9 @@ register_http_routes(
     },
 )
 
+app.add_url_rule("/", endpoint="dashboard_redirect", view_func=dashboard_redirect)
+app.add_url_rule("/login", endpoint="login_page", view_func=login_page, methods=["GET", "POST"])
+app.add_url_rule("/logout", endpoint="logout", view_func=logout)
 
 def run_proxy_app() -> None:
     host = "0.0.0.0"
