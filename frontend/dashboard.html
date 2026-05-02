@@ -1331,7 +1331,7 @@
       </div>
       <div class="modal-body" id="poolTestResult" style="display:none;"></div>
       <div class="modal-foot">
-        <button class="btn btn-primary" id="savePoolBtn" type="button"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;"><path d="M6.5 10l2.5 2.5 4.5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> 保存该连接池</button>
+        <button class="btn btn-primary" id="savePoolBtn" type="button"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;"><path d="M6.5 10l2.5 2.5 4.5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> 保存并生效</button>
         <button class="btn btn-ghost" id="cancelPoolBtn" type="button">取消</button>
       </div>
     </div>
@@ -1966,6 +1966,10 @@
 
     async function saveConfig(event) {
       if (event) event.preventDefault();
+      if (poolSaveSubmitting) {
+        setConfigStatus("连接池配置正在保存，请稍后再保存全局配置。", "warn");
+        return;
+      }
       configSubmitting = true;
       configForm.setAttribute("aria-busy", "true");
       saveConfigBtn.disabled = true;
@@ -2080,6 +2084,36 @@
       };
     }
 
+    function normalizePoolEditorDraft(pool) {
+      var draft = normalizePoolDraft(pool);
+      var rawUrls = Array.isArray(pool && pool.urls) ? pool.urls : [];
+      var rawKeys = Array.isArray(pool && pool.keys) ? pool.keys : [];
+      draft.urls = rawUrls.map(function(url) {
+        return String(url || "").trim();
+      });
+      draft.keys = rawKeys.map(function(item) {
+        return {
+          key: String((typeof item === "string" ? item : (item && item.key)) || "").trim(),
+        };
+      });
+      if (!draft.urls.length) draft.urls = [""];
+      if (!draft.keys.length) draft.keys = [{ key: "" }];
+      return draft;
+    }
+
+    function renderPoolState(pools) {
+      if (poolSummaryText) poolSummaryText.textContent = poolSummary(pools);
+      renderPoolOverview(pools);
+    }
+
+    function canPersistPoolChange() {
+      if (poolSaveSubmitting || configSubmitting) {
+        setConfigStatus("连接池配置正在保存，请稍后再操作。", "warn");
+        return false;
+      }
+      return true;
+    }
+
     function urlRowsHtml(urls, poolIdx) {
       var h = '';
       (urls || []).forEach(function(u, ui) {
@@ -2186,7 +2220,7 @@
 
     function renderPoolEditor(pool) {
       if (!poolEditorBody) return;
-      pool = normalizePoolDraft(pool || { name: "", enabled: true, priority: 100, urls: [""], keys: [{ key: "" }] });
+      pool = normalizePoolEditorDraft(pool || { name: "", enabled: true, priority: 100, urls: [""], keys: [{ key: "" }] });
       var urls = (pool.urls && pool.urls.length) ? pool.urls : [""];
       var keys = (pool.keys && pool.keys.length) ? pool.keys : [{ key: "" }];
       var html = '<div class="pool-card">';
@@ -2209,7 +2243,9 @@
       poolEditorBody.innerHTML = html;
     }
 
-    function collectPoolEditorData() {
+    function collectPoolEditorData(options) {
+      options = options || {};
+      var preserveBlankRows = !!options.preserveBlankRows;
       if (!poolEditorBody) return { name: "", enabled: true, priority: 100, urls: [], keys: [] };
       var root = poolEditorBody.querySelector(".pool-card");
       if (!root) return { name: "", enabled: true, priority: 100, urls: [], keys: [] };
@@ -2227,8 +2263,18 @@
       var keyInputs = root.querySelectorAll('[data-field="key"]');
       var urls = [];
       var keys = [];
-      urlInputs.forEach(function(inp) { var v = inp.value.trim(); if (v) urls.push(v); });
-      keyInputs.forEach(function(inp) { var v = inp.value.trim(); if (v) keys.push({ key: v }); });
+      urlInputs.forEach(function(inp) {
+        var v = inp.value.trim();
+        if (v || preserveBlankRows) urls.push(v);
+      });
+      keyInputs.forEach(function(inp) {
+        var v = inp.value.trim();
+        if (v || preserveBlankRows) keys.push({ key: v });
+      });
+      if (preserveBlankRows) {
+        if (!urls.length) urls = [""];
+        if (!keys.length) keys = [{ key: "" }];
+      }
       var priority = priorityEl ? Number(priorityEl.value || 100) : 100;
       if (!Number.isFinite(priority)) priority = 100;
       return {
@@ -2265,6 +2311,7 @@
       if (!poolModalOverlay) return;
       poolModalOverlay.classList.remove("open");
       document.body.style.overflow = "";
+      currentPoolEditIndex = -1;
       if (poolTestResultEl) {
         poolTestResultEl.style.display = "none";
         poolTestResultEl.innerHTML = "";
@@ -2356,57 +2403,101 @@
       openPoolModal(-1);
     }
 
-    async function saveCurrentPool() {
-      if (poolSaveSubmitting) return;
-      var draft = normalizePoolDraft(collectPoolEditorData());
-      if (!draft.name) { alert("请先填写连接池名称。"); return; }
-      if (!draft.urls.length) { alert("至少需要配置一条上游地址。"); return; }
-      var nextPools = poolData.slice();
-      if (currentPoolEditIndex >= 0) nextPools[currentPoolEditIndex] = draft;
-      else nextPools.push(draft);
-      var prevPools = poolData.slice();
-      poolData = nextPools;
-      if (poolSummaryText) poolSummaryText.textContent = poolSummary(poolData);
-      renderPoolOverview(poolData);
+    async function persistPoolData(options) {
+      options = options || {};
+      if (poolSaveSubmitting || configSubmitting) return false;
+      var prevPools = (options.prevPools || []).slice();
+      var button = options.button || null;
+      var idleHtml = options.idleHtml || '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;"><path d="M6.5 10l2.5 2.5 4.5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> 保存并生效';
       poolSaveSubmitting = true;
-      if (savePoolBtn) {
-        savePoolBtn.disabled = true;
-        savePoolBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.4"/><path d="M10 5v5l3 2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg> 正在保存';
+      if (button) {
+        button.disabled = true;
+        button.innerHTML = '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.4"/><path d="M10 5v5l3 2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg> 正在保存';
       }
-      setConfigStatus("正在保存连接池配置...", "warn");
+      setConfigStatus(options.statusMessage || "正在保存连接池配置...", "warn");
       try {
-        await saveConfig();
-        configDirty = false;
-        closePoolModal();
-        setConfigStatus("连接池已保存并持久化。", "ok");
+        var resp = await fetch("/debug/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pools: poolData }),
+        });
+        var data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.message || "保存失败（HTTP " + resp.status + "）");
+        lastState = Object.assign({}, lastState || {}, {
+          config: data.config,
+          runtime: data.runtime,
+          upstream_url: data.upstream_url,
+          upstream_urls: data.upstream_urls,
+          upstream_url_count: data.upstream_url_count,
+        });
+        if (data.config && Array.isArray(data.config.pools)) {
+          poolData = data.config.pools.slice();
+          renderPoolState(poolData);
+        }
+        renderRuntimeOverview(lastState);
+        if (!configDirty && data.config) {
+          renderConfig(data.config, true);
+        }
+        setConfigStatus(
+          (options.successMessage || "连接池已保存并生效。") + (configDirty ? " 其它配置仍未保存。" : ""),
+          configDirty ? "warn" : "ok"
+        );
+        return true;
       } catch (err) {
         poolData = prevPools;
-        if (poolSummaryText) poolSummaryText.textContent = poolSummary(poolData);
-        renderPoolOverview(poolData);
-        setConfigStatus("连接池保存失败：" + err, "err");
+        renderPoolState(poolData);
+        setConfigStatus((options.failurePrefix || "连接池保存失败：") + err, "err");
+        return false;
       } finally {
         poolSaveSubmitting = false;
-        if (savePoolBtn) {
-          savePoolBtn.disabled = false;
-          savePoolBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;"><path d="M6.5 10l2.5 2.5 4.5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> 保存该连接池';
+        if (button) {
+          button.disabled = false;
+          button.innerHTML = idleHtml;
         }
       }
     }
 
-    function importPoolsFromJSON(jsonText) {
+    async function saveCurrentPool() {
+      if (!canPersistPoolChange()) return;
+      var draft = normalizePoolDraft(collectPoolEditorData());
+      if (!draft.name) { alert("请先填写连接池名称。"); return; }
+      if (!draft.urls.length) { alert("至少需要配置一条上游地址。"); return; }
+      if (!draft.keys.length) { alert("至少需要配置一个上游 API Key。"); return; }
+      var nextPools = poolData.slice();
+      if (currentPoolEditIndex >= 0 && currentPoolEditIndex < nextPools.length) nextPools[currentPoolEditIndex] = draft;
+      else nextPools.push(draft);
+      var prevPools = poolData.slice();
+      poolData = nextPools;
+      renderPoolState(poolData);
+      var saved = await persistPoolData({
+        prevPools: prevPools,
+        button: savePoolBtn,
+        statusMessage: "正在保存连接池配置...",
+        successMessage: "连接池已保存并生效。",
+        failurePrefix: "连接池保存失败：",
+      });
+      if (saved) closePoolModal();
+    }
+
+    async function importPoolsFromJSON(jsonText) {
+      if (!canPersistPoolChange()) return;
       var data;
       try { data = JSON.parse(jsonText); } catch (e) { alert("JSON 解析失败：" + e.message); return; }
       var pools = Array.isArray(data) ? data : (data.pools || []);
       if (!pools.length) { alert("未找到有效的连接池数据（期望数组或包含 pools 字段的对象）。"); return; }
-      poolData = pools.map(normalizePoolDraft);
-      if (poolSummaryText) poolSummaryText.textContent = poolSummary(poolData);
-      renderPoolOverview(poolData);
-      poolDirty();
-    }
-
-    function poolDirty() {
-      configDirty = true;
-      setConfigStatus("连接池草稿已更新，点击 [保存并生效] 才会真正写入代理。", "warn");
+      var nextPools = pools.map(normalizePoolDraft).filter(function(pool) {
+        return pool.urls.length && pool.keys.length;
+      });
+      if (!nextPools.length) { alert("导入数据里没有同时包含上游地址和 API Key 的有效连接池。"); return; }
+      var prevPools = poolData.slice();
+      poolData = nextPools;
+      renderPoolState(poolData);
+      await persistPoolData({
+        prevPools: prevPools,
+        statusMessage: "正在导入并保存连接池...",
+        successMessage: "连接池已导入并生效。",
+        failurePrefix: "连接池导入失败：",
+      });
     }
 
     if (poolEditorBody) {
@@ -2414,9 +2505,7 @@
         var btn = e.target.closest("[data-action]");
         if (!btn) return;
         var action = btn.dataset.action;
-        var draft = collectPoolEditorData();
-        draft.urls = draft.urls.length ? draft.urls.slice() : [""];
-        draft.keys = draft.keys.length ? draft.keys.slice() : [{ key: "" }];
+        var draft = collectPoolEditorData({ preserveBlankRows: true });
         if (action === "del-url") {
           var urlIdx = parseInt(btn.dataset.urlIdx, 10);
           if (draft.urls.length > 1) {
@@ -2440,7 +2529,7 @@
     }
 
     if (poolOverviewListEl) {
-      poolOverviewListEl.addEventListener("click", function(e) {
+      poolOverviewListEl.addEventListener("click", async function(e) {
         var btn = e.target.closest("[data-action]");
         if (!btn) return;
         var action = btn.dataset.action;
@@ -2450,32 +2539,52 @@
           poolCollapseState[key] = !poolCollapseState[key];
           renderPoolOverview(poolData);
         } else if (action === "move-up" && poolIdx > 0) {
+          if (!canPersistPoolChange()) return;
           var movedUp = poolData.slice();
           var tmpUp = movedUp[poolIdx - 1];
           movedUp[poolIdx - 1] = movedUp[poolIdx];
           movedUp[poolIdx] = tmpUp;
+          var prevUp = poolData.slice();
           poolData = movedUp;
-          renderPoolOverview(poolData);
-          poolDirty();
+          renderPoolState(poolData);
+          await persistPoolData({
+            prevPools: prevUp,
+            statusMessage: "正在保存连接池顺序...",
+            successMessage: "连接池顺序已保存并生效。",
+            failurePrefix: "连接池顺序保存失败：",
+          });
         } else if (action === "move-down" && poolIdx < poolData.length - 1) {
+          if (!canPersistPoolChange()) return;
           var movedDown = poolData.slice();
           var tmpDown = movedDown[poolIdx + 1];
           movedDown[poolIdx + 1] = movedDown[poolIdx];
           movedDown[poolIdx] = tmpDown;
+          var prevDown = poolData.slice();
           poolData = movedDown;
-          renderPoolOverview(poolData);
-          poolDirty();
+          renderPoolState(poolData);
+          await persistPoolData({
+            prevPools: prevDown,
+            statusMessage: "正在保存连接池顺序...",
+            successMessage: "连接池顺序已保存并生效。",
+            failurePrefix: "连接池顺序保存失败：",
+          });
         } else if (action === "manage-pool") {
           openPoolModal(poolIdx);
         } else if (action === "test-pool") {
           testPool(poolIdx);
         } else if (action === "del-pool") {
+          if (!canPersistPoolChange()) return;
           var poolName = poolData[poolIdx] && poolData[poolIdx].name ? poolData[poolIdx].name : "未命名";
           if (!confirm("确认删除连接池「" + poolName + "」？")) return;
+          var prevDelete = poolData.slice();
           poolData.splice(poolIdx, 1);
-          if (poolSummaryText) poolSummaryText.textContent = poolSummary(poolData);
-          renderPoolOverview(poolData);
-          poolDirty();
+          renderPoolState(poolData);
+          await persistPoolData({
+            prevPools: prevDelete,
+            statusMessage: "正在删除并保存连接池...",
+            successMessage: "连接池已删除并生效。",
+            failurePrefix: "连接池删除失败：",
+          });
         }
       });
     }

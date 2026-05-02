@@ -219,6 +219,41 @@ def build_upstream_timeout(*, requested_stream: bool) -> int | tuple[int, int]:
     return (connect_timeout, read_timeout)
 
 
+def openai_stream_expected_choice_count(request_payload: dict | None) -> int:
+    if not isinstance(request_payload, dict):
+        return 1
+    try:
+        return max(1, int(request_payload.get("n") or 1))
+    except Exception:
+        return 1
+
+
+def openai_stream_event_finish_indexes(event: dict | None) -> set[int]:
+    if not isinstance(event, dict):
+        return set()
+    choices = event.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return set()
+    indexes = set()
+    for fallback_index, choice in enumerate(choices):
+        if isinstance(choice, dict) and choice.get("finish_reason") is not None:
+            try:
+                indexes.add(int(choice.get("index", fallback_index) or 0))
+            except Exception:
+                indexes.add(fallback_index)
+    return indexes
+
+
+def update_openai_stream_terminal_state(
+    event: dict | None,
+    finished_choice_indexes: set[int],
+    *,
+    expected_choice_count: int = 1,
+) -> bool:
+    finished_choice_indexes.update(openai_stream_event_finish_indexes(event))
+    return len(finished_choice_indexes) >= max(1, expected_choice_count)
+
+
 def build_context_window_exceeded_error_payload(
     *,
     model_name: str | None,
@@ -3256,6 +3291,7 @@ def consume_openai_sse_events(upstream_response: requests.Response, tool_schemas
     raw_error_lines = []
     total_bytes = 0
     skip_next_blank = False
+    finished_choice_indexes: set[int] = set()
 
     for raw_line in iter_response_lines(upstream_response):
         text = raw_line.decode("utf-8", errors="ignore")
@@ -3292,6 +3328,9 @@ def consume_openai_sse_events(upstream_response: requests.Response, tool_schemas
                         function_data.get("arguments"),
                         tool_schemas,
                     )
+
+            if update_openai_stream_terminal_state(event, finished_choice_indexes):
+                break
 
         if normalized_line and not normalized_line.startswith("data:"):
             raw_error_lines.append(normalized_line)
@@ -3714,6 +3753,8 @@ def proxy_response(
                 saw_done = False
                 emitted_data = False
                 skip_next_blank = False
+                finished_choice_indexes: set[int] = set()
+                expected_choice_count = openai_stream_expected_choice_count(request_payload)
                 heartbeat_count = preflight_heartbeat_count
                 raw_line_count = 0
                 nonempty_line_count = 0
@@ -3730,6 +3771,7 @@ def proxy_response(
                             yield heartbeat_payload
                             continue
                         raw_line_count += 1
+                        terminal_event = False
                         text = raw_line.decode("utf-8", errors="ignore")
                         if first_upstream_event_ms is None:
                             first_upstream_event_ms = int((time.perf_counter() - started_at) * 1000)
@@ -3752,6 +3794,11 @@ def proxy_response(
                             continue
                         if normalized_line == "data: [DONE]":
                             saw_done = True
+                            payload = b"data: [DONE]\n\n"
+                            total_bytes += len(payload)
+                            yield payload
+                            close_response_quietly(upstream_response)
+                            break
                         elif normalized_line.startswith("data:"):
                             emitted_data = True
                             if first_data_event_ms is None:
@@ -3763,6 +3810,11 @@ def proxy_response(
                             skip_next_blank = False
 
                         if event:
+                            terminal_event = update_openai_stream_terminal_state(
+                                event,
+                                finished_choice_indexes,
+                                expected_choice_count=expected_choice_count,
+                            )
                             response_events.append(event)
                             choices = event.get("choices") or []
                             for choice in choices:
@@ -3790,6 +3842,12 @@ def proxy_response(
                         payload = f"{normalized_line}\n".encode("utf-8")
                         total_bytes += len(payload)
                         yield payload
+                        if terminal_event:
+                            event_separator = b"\n"
+                            total_bytes += len(event_separator)
+                            yield event_separator
+                            close_response_quietly(upstream_response)
+                            break
 
                     if upstream_response.status_code < 400 and not emitted_data:
                         if nonempty_line_count > 0:
@@ -4753,7 +4811,7 @@ def gemini_generate_content(subpath: str, request_payload: dict | None):
             started_at=started_at,
             tool_schemas=tool_schemas,
             retry_count=retry_count,
-            observability_meta=build_request_observability_meta(execution, openai_payload) | {"_execution": execution},
+            observability_meta=build_request_observability_meta(execution, openai_payload) | {"_upstream_openai_payload": openai_payload, "_execution": execution},
         )
 
     if execution.get("cache_hit") and isinstance(execution.get("cached_response_body"), dict):
@@ -5715,6 +5773,11 @@ def handle_gemini_stream_response(
         stream_state = {}
         choice_states = {}
         skip_next_blank = False
+        finished_choice_indexes: set[int] = set()
+        upstream_openai_payload = (observability_meta or {}).get("_upstream_openai_payload")
+        if not isinstance(upstream_openai_payload, dict):
+            upstream_openai_payload = None
+        expected_choice_count = openai_stream_expected_choice_count(upstream_openai_payload)
         emitted_any = False
         terminal_chunk_sent = False
         try:
@@ -5756,6 +5819,11 @@ def handle_gemini_stream_response(
                     stream_error = json.dumps(event.get("error"), ensure_ascii=False)
                     continue
 
+                terminal_event = update_openai_stream_terminal_state(
+                    event,
+                    finished_choice_indexes,
+                    expected_choice_count=expected_choice_count,
+                )
                 for chunk in convert_openai_stream_event_to_gemini_chunks(event, stream_state, tool_schemas):
                     for candidate in chunk.get("candidates") or []:
                         for part in ((candidate.get("content") or {}).get("parts") or []):
@@ -5777,6 +5845,9 @@ def handle_gemini_stream_response(
                     if any(candidate.get("finishReason") for candidate in chunk.get("candidates") or []):
                         terminal_chunk_sent = True
                     yield packet
+                if terminal_event:
+                    close_response_quietly(upstream_response)
+                    break
 
             if not emitted_any:
                 fallback_chunk = {
@@ -5969,6 +6040,8 @@ def handle_anthropic_stream_response(
         output_tokens = 0
         stream_client_gone = False
         message_stop_sent = False
+        finished_choice_indexes: set[int] = set()
+        expected_choice_count = openai_stream_expected_choice_count(upstream_openai_payload)
         prebuffered_raw_lines: list[bytes] = []
         preflight_heartbeat_count = 0
         preflight_raw_line_count = 0
@@ -6075,6 +6148,11 @@ def handle_anthropic_stream_response(
                 if not event:
                     continue
 
+                terminal_event = update_openai_stream_terminal_state(
+                    event,
+                    finished_choice_indexes,
+                    expected_choice_count=expected_choice_count,
+                )
                 if not message_started:
                     message_id = event.get("id") or message_id
                     message_model = event.get("model") or message_model
@@ -6276,6 +6354,9 @@ def handle_anthropic_stream_response(
 
                     if choice.get("finish_reason") is not None:
                         last_stop_reason = map_openai_finish_reason_to_anthropic(choice.get("finish_reason")) or "end_turn"
+                if terminal_event:
+                    close_response_quietly(upstream_response)
+                    break
 
             final_stop_reason = last_stop_reason
             if saw_tool_use and final_stop_reason in {None, "", "end_turn"}:
@@ -6556,7 +6637,7 @@ def gemini_stream_response_with_connect_heartbeat(
                 started_at=started_at,
                 tool_schemas=execution.get("tool_schemas") or tool_schemas_fallback or {},
                 retry_count=retry_count,
-                observability_meta=build_request_observability_meta(execution, observability_payload or {}) | {"_execution": execution},
+                observability_meta=build_request_observability_meta(execution, observability_payload or {}) | {"_upstream_openai_payload": observability_payload or {}, "_execution": execution},
             )
             yield from stream_response.response
         except GeneratorExit:  # pragma: no cover
