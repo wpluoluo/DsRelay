@@ -1940,7 +1940,7 @@ def should_retry_upstream_request(subpath: str, method: str) -> bool:
     method = method.upper()
     if method in {"GET", "HEAD"}:
         return True
-    return method == "POST" and subpath in {"chat/completions", "images/generations"}
+    return method == "POST"
 
 
 def extract_response_text(response: requests.Response) -> str:

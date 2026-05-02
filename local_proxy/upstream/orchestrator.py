@@ -10,6 +10,9 @@ from local_proxy.upstream.models import dedupe_model_candidates, normalize_model
 from local_proxy.upstream.retry import race_model_candidate_requests
 
 
+ROUTE_FAILOVER_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504, 524}
+
+
 def request_upstream_with_retries(
     request_kwargs: dict,
     *,
@@ -375,6 +378,32 @@ def request_upstream_with_retries(
                 attempts[-1]["learned_input_tokens"] = learned_input_tokens
 
         current_failed_keys = route_key_failures.setdefault(attempt_url, set())
+        has_alternate_route = len(candidate_urls) - len(blocked_urls) > 1
+        route_failover_response = (
+            retry_allowed
+            and has_alternate_route
+            and (
+                retry_action == "switch_route"
+                or response.status_code in ROUTE_FAILOVER_STATUS_CODES
+            )
+        )
+        if route_failover_response:
+            blocked_urls.add(attempt_url)
+            attempts[-1]["action"] = "switch_route"
+            logger.warning(
+                "request_id=%s 切换线路 次数=%s 线路=%s 状态=%s 原因=%s 剩余线路=%s",
+                request_id,
+                current_attempt_number,
+                attempt_url,
+                response.status_code,
+                reason,
+                max(0, len(candidate_urls) - len(blocked_urls)),
+            )
+            response.close()
+            immediate_followup_budget += 1
+            route_cycle = build_attempt_url_cycle(candidate_urls, blocked_urls)
+            continue
+
         if (
             key_choice.get("from_pool")
             and response.status_code >= 400
