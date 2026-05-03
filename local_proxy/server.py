@@ -2070,7 +2070,7 @@ def classify_upstream_response(response: requests.Response) -> tuple[str, str]:
     ):
         return "switch_route", f"route_switch_{status_code}"
 
-    if status_code in {408, 502, 504, 524}:
+    if status_code in {408, 429, 502, 504, 524}:
         return "switch_route", f"route_switch_{status_code}"
 
     if status_code in RETRYABLE_STATUS_CODES:

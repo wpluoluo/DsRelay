@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from local_proxy.compat.tools import normalize_tool_arguments_payload, normalize_tool_call_list
+from local_proxy.compat.tools import normalize_sse_line, normalize_tool_arguments_payload, normalize_tool_call_list
 
 
 BASH_TOOL_SCHEMAS = {
@@ -76,6 +76,57 @@ class ToolArgumentCompatTests(unittest.TestCase):
             json.loads(normalized_calls[0]["function"]["arguments"]),
             {"command": "ls -la"},
         )
+
+    def test_stream_bash_name_without_arguments_is_not_forwarded_as_partial_tool_call(self):
+        choice_states = {}
+        name_only = {
+            "id": "chatcmpl-bash",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "demo",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_bash",
+                                "type": "function",
+                                "function": {"name": "Bash"},
+                            }
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        }
+        terminal = {
+            "id": "chatcmpl-bash",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "demo",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+        }
+
+        normalized_line, _, repaired, event = normalize_sse_line(
+            "data: " + json.dumps(name_only),
+            choice_states,
+            BASH_TOOL_SCHEMAS,
+        )
+        self.assertIsNone(normalized_line)
+        self.assertEqual(event["choices"], [])
+        self.assertGreaterEqual(repaired, 0)
+
+        normalized_terminal, _, terminal_repairs, terminal_event = normalize_sse_line(
+            "data: " + json.dumps(terminal),
+            choice_states,
+            BASH_TOOL_SCHEMAS,
+        )
+        self.assertGreaterEqual(terminal_repairs, 0)
+        self.assertIsNotNone(normalized_terminal)
+        self.assertEqual(terminal_event["choices"][0]["finish_reason"], "stop")
+        self.assertNotIn("tool_calls", json.dumps(terminal_event))
 
     def test_grep_query_alias_is_normalized_to_pattern(self):
         normalized, modified = normalize_tool_arguments_payload(

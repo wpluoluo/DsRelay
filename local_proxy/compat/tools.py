@@ -1687,6 +1687,26 @@ def is_search_like_tool(tool_name: str | None, tool_schemas: dict) -> bool:
     )
 
 
+def tool_requires_arguments_before_stream_header(tool_name: str | None, tool_schemas: dict) -> bool:
+    resolved_name = resolve_tool_name(tool_name, tool_schemas) or tool_name or ""
+    if is_bash_like_tool_name(resolved_name):
+        return True
+
+    schema = tool_schemas.get(resolved_name, {})
+    required = list(schema.get("required") or [])
+    if not required:
+        return False
+
+    for field_name in required:
+        if field_is_run_in_background(field_name):
+            continue
+        if canonicalize_name(field_name) in EMPTY_TOOL_META_FIELD_CANONICALS:
+            continue
+        return True
+
+    return False
+
+
 def infer_tool_name_from_payload(tool_name: str | None, payload, tool_schemas: dict) -> str | None:
     resolved_name = resolve_tool_name(tool_name, tool_schemas) or (tool_name.strip() if isinstance(tool_name, str) else "")
     if resolved_name:
@@ -2937,7 +2957,9 @@ def normalize_stream_tool_calls(
         if (not tool_state["name"] or edit_like_tool) and function_delta.get("name"):
             edit_like_tool = bool(tool_state["name"]) and is_edit_like_tool(tool_state["name"], tool_schemas)
 
-        if tool_state["name"] and not edit_like_tool and function_delta.get("name"):
+        defer_header_until_arguments = tool_requires_arguments_before_stream_header(tool_state["name"], tool_schemas)
+
+        if tool_state["name"] and not edit_like_tool and not defer_header_until_arguments and function_delta.get("name"):
             emit_header()
         elif function_delta.get("name") and tool_state["header_emitted"]:
             emit_function["name"] = tool_state["name"]
