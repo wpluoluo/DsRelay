@@ -32,6 +32,12 @@ def register_http_routes(app, handlers: dict) -> None:
         view_func=_handler(handlers, "debug_requests_clear"),
         methods=["POST", "OPTIONS"],
     )
+    app.add_url_rule(
+        "/debug/proxy-keys",
+        endpoint="debug_proxy_api_keys",
+        view_func=_handler(handlers, "debug_proxy_api_keys"),
+        methods=["GET", "POST", "OPTIONS"],
+    )
     app.add_url_rule("/v1", endpoint="v1_root", view_func=_handler(handlers, "v1_root"), methods=["GET", "OPTIONS"])
     app.add_url_rule(
         "/v1beta",

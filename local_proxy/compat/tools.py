@@ -162,6 +162,13 @@ WINDOWS_DRIVE_CD_PATTERN = re.compile(
 
 COMMAND_ALIASES = (
     "cmd",
+    "commands",
+    "commandText",
+    "command_text",
+    "bashCommand",
+    "bash_command",
+    "shellCommand",
+    "shell_command",
     "script",
     "shell",
     "bash",
@@ -562,6 +569,14 @@ def canonicalize_name(name: str | None) -> str:
     return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
+def is_bash_like_tool_name(tool_name: str | None) -> bool:
+    bash_like_canonicals = {
+        canonicalize_name(item)
+        for item in BASH_LIKE_TOOL_NAMES | {"execute_command"}
+    }
+    return canonicalize_name(tool_name) in bash_like_canonicals
+
+
 def flatten_instruction_text(value) -> str:
     if isinstance(value, str):
         return value
@@ -689,7 +704,7 @@ def looks_like_textual_tool_payload(tool_name: str | None, payload_text: str, to
     schema = tool_schemas.get(resolved_tool_name, {})
     required = list(schema.get("required") or [])
 
-    if tool_canonical in {canonicalize_name(item) for item in BASH_LIKE_TOOL_NAMES | {"execute_command"}}:
+    if is_bash_like_tool_name(resolved_tool_name):
         return any(token in stripped for token in (" ", "/", "\\", ":", "-", "|", "&", ";", "=", ">", "<", ".")) or len(stripped) <= 64
 
     if any(marker in tool_canonical for marker in ("read", "file", "path", "dir", "list", "glob", "search")):
@@ -729,8 +744,7 @@ def looks_like_failed_tool_transcript(tool_name: str | None, payload_text: str, 
     if is_effectively_empty_tool_payload(payload_text):
         return True
 
-    normalized_tool_name = canonicalize_name(tool_name)
-    if normalized_tool_name in {canonicalize_name(item) for item in BASH_LIKE_TOOL_NAMES | {"execute_command"}}:
+    if is_bash_like_tool_name(tool_name):
         return "bash failed" in transcript
 
     return False
@@ -1730,6 +1744,14 @@ def tool_call_lacks_required_input_signal(tool_name: str | None, payload, tool_s
     property_types = dict(schema.get("property_types") or {})
     payload_object = parse_tool_arguments_object(payload)
 
+    if is_bash_like_tool_name(resolved_name):
+        if isinstance(payload_object, str):
+            return not tool_payload_has_meaningful_value(payload_object)
+        if isinstance(payload_object, dict):
+            command_value = extract_tool_field_value(payload_object, "command")
+            return not required_field_has_meaningful_value("string", command_value)
+        return True
+
     if isinstance(payload_object, str):
         return not tool_payload_has_meaningful_value(payload_object)
     if not isinstance(payload_object, dict):
@@ -1968,7 +1990,7 @@ def normalize_tool_arguments_payload(tool_name: str | None, payload, tool_schema
     schema = tool_schemas.get(resolved_name or "", {})
     required = list(schema.get("required") or [])
     properties = list(schema.get("properties") or [])
-    bash_like = (resolved_name or "").lower() in BASH_LIKE_TOOL_NAMES
+    bash_like = is_bash_like_tool_name(resolved_name)
 
     payload, unwrapped = unwrap_nested_arguments_container(payload, resolved_name, tool_schemas)
     modified = unwrapped or modified
@@ -2013,11 +2035,13 @@ def normalize_tool_arguments_payload(tool_name: str | None, payload, tool_schema
                 modified = True
                 break
 
-    if target_field and target_field not in normalized and len(required) == 1:
+    if target_field and target_field not in normalized and (len(required) == 1 or bash_like):
         string_entries = [
             (key, value)
             for key, value in normalized.items()
-            if isinstance(value, str) and value.strip()
+            if isinstance(value, str)
+            and value.strip()
+            and canonicalize_name(key) not in EMPTY_TOOL_META_FIELD_CANONICALS
         ]
         if len(string_entries) == 1:
             only_key, only_value = string_entries[0]

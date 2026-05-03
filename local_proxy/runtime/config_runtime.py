@@ -5,6 +5,7 @@ import json
 from local_proxy.runtime.helpers import ensure_proxy_prompt_rules, parse_bool, parse_int
 from local_proxy.runtime.policies import normalize_pool_route_policies
 from local_proxy.runtime.pools import normalize_proxy_pools
+from local_proxy.http.proxy_auth import normalize_proxy_api_key_records
 from local_proxy.upstream.capabilities import (
     normalize_model_capabilities_text,
     parse_model_capabilities,
@@ -21,6 +22,10 @@ def normalize_runtime_config_payload(
     current: dict,
 ) -> dict:
     config_payload = dict(config_payload or {})
+
+    next_proxy_api_key_records = current.get("PROXY_API_KEY_RECORDS", [])
+    if "proxy_api_key_records" in config_payload:
+        next_proxy_api_key_records = normalize_proxy_api_key_records(config_payload.get("proxy_api_key_records"))
 
     next_model_aliases_text = normalize_model_aliases_text(
         config_payload.get("model_aliases_text", current["MODEL_ALIASES_TEXT"])
@@ -174,6 +179,7 @@ def normalize_runtime_config_payload(
         next_pools = normalize_pool_route_policies(normalize_proxy_pools(incoming_pools))
 
     return {
+        "proxy_api_key_records": next_proxy_api_key_records,
         "proxy_pools": next_pools,
         "model_aliases_text": next_model_aliases_text,
         "model_aliases": next_model_aliases,
@@ -227,6 +233,7 @@ def log_runtime_config_update(*, logger, upstream_url_pool: list[str], model_ali
 
 def apply_runtime_globals(target_globals: dict, normalized_config: dict) -> None:
     target_globals["UPSTREAM_API_KEY"] = ""
+    target_globals["PROXY_API_KEY_RECORDS"] = normalized_config["proxy_api_key_records"]
     target_globals["MODEL_ALIASES_TEXT"] = normalized_config["model_aliases_text"]
     target_globals["MODEL_ALIASES"] = normalized_config["model_aliases"]
     target_globals["MODEL_CAPABILITIES_TEXT"] = normalized_config["model_capabilities_text"]

@@ -1,0 +1,254 @@
+import importlib
+import os
+import tempfile
+import unittest
+from pathlib import Path
+
+from local_proxy.http.proxy_auth import generate_proxy_api_key, parse_proxy_api_keys, verify_proxy_api_key
+
+
+class FakeRuntimeConfigStorage:
+    def __init__(self):
+        self.saved_payload = None
+        self.saved_key = None
+
+    def save_app_config(self, payload, config_key="runtime_config"):
+        self.saved_payload = payload
+        self.saved_key = config_key
+
+
+class ProxyApiAuthParserTests(unittest.TestCase):
+    def test_generate_proxy_api_key_uses_openai_style_shape(self):
+        generated_key = generate_proxy_api_key()
+
+        self.assertRegex(generated_key, r"^sk-[A-Za-z0-9]{48}$")
+
+    def test_parse_proxy_api_keys_supports_common_separators_and_dedupes(self):
+        self.assertEqual(
+            parse_proxy_api_keys(" key-a;key-b, key-a\nkey-c "),
+            ("key-a", "key-b", "key-c"),
+        )
+
+    def test_verify_proxy_api_key_accepts_bearer_header(self):
+        from flask import Flask, request
+
+        app = Flask(__name__)
+        with app.test_request_context(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer proxy-secret"},
+        ):
+            result = verify_proxy_api_key(request, ("proxy-secret",))
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.source, "authorization")
+
+    def test_verify_proxy_api_key_accepts_x_api_key_header(self):
+        from flask import Flask, request
+
+        app = Flask(__name__)
+        with app.test_request_context(
+            "/v1/chat/completions",
+            headers={"X-API-Key": "proxy-secret"},
+        ):
+            result = verify_proxy_api_key(request, ("proxy-secret",))
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.source, "x-api-key")
+
+    def test_verify_proxy_api_key_accepts_query_key(self):
+        from flask import Flask, request
+
+        app = Flask(__name__)
+        with app.test_request_context("/v1beta/models/demo:generateContent?key=proxy-secret"):
+            result = verify_proxy_api_key(request, ("proxy-secret",))
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.source, "key")
+
+
+class ProxyEntrypointAuthTests(unittest.TestCase):
+    def load_server_with_keys(self, value: str):
+        os.environ["PROXY_API_KEYS"] = value
+
+        import local_proxy.server as server
+
+        server = importlib.reload(server)
+        self.addCleanup(lambda: os.environ.pop("PROXY_API_KEYS", None))
+        return server
+
+    def test_models_root_requires_proxy_api_key_configuration(self):
+        server = self.load_server_with_keys("")
+        client = server.app.test_client()
+
+        response = client.get("/v1", headers={"Accept": "application/json"})
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()["error"]["code"], "proxy_api_key_not_configured")
+
+    def test_models_root_rejects_missing_proxy_api_key(self):
+        server = self.load_server_with_keys("proxy-secret")
+        client = server.app.test_client()
+
+        response = client.get("/v1", headers={"Accept": "application/json"})
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.get_json()["error"]["code"], "proxy_api_key_missing")
+
+    def test_chat_completions_rejects_missing_proxy_api_key_before_upstream(self):
+        server = self.load_server_with_keys("proxy-secret")
+        client = server.app.test_client()
+
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "demo", "messages": [{"role": "user", "content": "hi"}]},
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.get_json()["error"]["code"], "proxy_api_key_missing")
+
+    def test_gemini_root_rejects_missing_proxy_api_key(self):
+        server = self.load_server_with_keys("proxy-secret")
+        client = server.app.test_client()
+
+        response = client.get("/v1beta")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.get_json()["error"]["code"], "proxy_api_key_missing")
+
+    def test_models_root_rejects_invalid_proxy_api_key(self):
+        server = self.load_server_with_keys("proxy-secret")
+        client = server.app.test_client()
+
+        response = client.get(
+            "/v1",
+            headers={"Accept": "application/json", "Authorization": "Bearer wrong-secret"},
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.get_json()["error"]["code"], "proxy_api_key_invalid")
+
+    def test_models_root_accepts_valid_proxy_api_key(self):
+        server = self.load_server_with_keys("proxy-secret")
+        client = server.app.test_client()
+
+        response = client.get(
+            "/v1",
+            headers={"Accept": "application/json", "Authorization": "Bearer proxy-secret"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["ok"])
+
+    def test_managed_proxy_key_can_be_created_used_disabled_and_deleted(self):
+        server = self.load_server_with_keys("")
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        server.PROXY_CONFIG_PATH = Path(temp_dir.name) / "proxy-config.json"
+        server.PROXY_API_KEY_RECORDS = []
+        client = server.app.test_client()
+        with client.session_transaction() as session:
+            session["_proxy_authed"] = True
+
+        create_response = client.post(
+            "/debug/proxy-keys",
+            json={"action": "create", "name": "NEWAPI main"},
+        )
+
+        self.assertEqual(create_response.status_code, 200)
+        create_payload = create_response.get_json()
+        generated_key = create_payload["generated_key"]
+        key_id = create_payload["keys"][0]["id"]
+        self.assertRegex(generated_key, r"^sk-[A-Za-z0-9]{48}$")
+        self.assertNotIn(generated_key, str(create_payload["keys"]))
+
+        ok_response = client.get(
+            "/v1",
+            headers={"Accept": "application/json", "Authorization": f"Bearer {generated_key}"},
+        )
+        self.assertEqual(ok_response.status_code, 200)
+
+        disable_response = client.post(
+            "/debug/proxy-keys",
+            json={"action": "update", "id": key_id, "enabled": False},
+        )
+        self.assertEqual(disable_response.status_code, 200)
+        rejected_response = client.get(
+            "/v1",
+            headers={"Accept": "application/json", "Authorization": f"Bearer {generated_key}"},
+        )
+        self.assertEqual(rejected_response.status_code, 503)
+        self.assertEqual(rejected_response.get_json()["error"]["code"], "proxy_api_key_not_configured")
+
+        enable_response = client.post(
+            "/debug/proxy-keys",
+            json={"action": "update", "id": key_id, "enabled": True},
+        )
+        self.assertEqual(enable_response.status_code, 200)
+        restored_response = client.get(
+            "/v1",
+            headers={"Accept": "application/json", "Authorization": f"Bearer {generated_key}"},
+        )
+        self.assertEqual(restored_response.status_code, 200)
+
+        delete_response = client.post(
+            "/debug/proxy-keys",
+            json={"action": "delete", "id": key_id},
+        )
+        self.assertEqual(delete_response.status_code, 200)
+        final_response = client.get(
+            "/v1",
+            headers={"Accept": "application/json", "Authorization": f"Bearer {generated_key}"},
+        )
+        self.assertEqual(final_response.status_code, 503)
+
+    def test_managed_proxy_key_records_are_written_to_mysql_app_config_payload(self):
+        server = self.load_server_with_keys("")
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        server.PROXY_CONFIG_PATH = Path(temp_dir.name) / "proxy-config.json"
+        fake_storage = FakeRuntimeConfigStorage()
+        server.storage = fake_storage
+        server.PROXY_API_KEY_RECORDS = []
+        client = server.app.test_client()
+        with client.session_transaction() as session:
+            session["_proxy_authed"] = True
+
+        create_response = client.post("/debug/proxy-keys", json={"action": "create", "name": "NEWAPI"})
+        create_payload = create_response.get_json()
+        generated_key = create_payload["generated_key"]
+        record = server.PROXY_API_KEY_RECORDS[0]
+
+        self.assertEqual(fake_storage.saved_key, "runtime_config")
+        self.assertIn("proxy_api_key_records", fake_storage.saved_payload)
+        self.assertEqual(fake_storage.saved_payload["proxy_api_key_records"][0]["id"], record["id"])
+        self.assertEqual(fake_storage.saved_payload["proxy_api_key_records"][0]["key_hash"], record["key_hash"])
+        self.assertNotIn(generated_key, str(fake_storage.saved_payload))
+        self.assertRegex(generated_key, r"^sk-[A-Za-z0-9]{48}$")
+
+    def test_saving_public_config_payload_does_not_drop_managed_proxy_keys(self):
+        server = self.load_server_with_keys("")
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        server.PROXY_CONFIG_PATH = Path(temp_dir.name) / "proxy-config.json"
+        server.PROXY_API_KEY_RECORDS = []
+        client = server.app.test_client()
+        with client.session_transaction() as session:
+            session["_proxy_authed"] = True
+
+        create_response = client.post("/debug/proxy-keys", json={"action": "create", "name": "NEWAPI"})
+        generated_key = create_response.get_json()["generated_key"]
+
+        config_payload = client.get("/debug/config").get_json()["config"]
+        config_payload["request_timeout"] = 601
+        save_response = client.post("/debug/config", json=config_payload)
+
+        self.assertEqual(save_response.status_code, 200)
+        ok_response = client.get(
+            "/v1",
+            headers={"Accept": "application/json", "Authorization": f"Bearer {generated_key}"},
+        )
+        self.assertEqual(ok_response.status_code, 200)
+
+
+if __name__ == "__main__":
+    unittest.main()

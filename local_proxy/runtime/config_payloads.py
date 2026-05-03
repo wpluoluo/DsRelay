@@ -3,6 +3,7 @@ from __future__ import annotations
 
 def export_runtime_config_for_storage(context: dict) -> dict:
     return {
+        "proxy_api_key_records": context["proxy_api_key_records"],
         "pools": context["proxy_pools"],
         "model_aliases_text": context["model_aliases_text"],
         "model_capabilities_text": context["model_capabilities_text"],
@@ -39,12 +40,17 @@ def export_runtime_config_for_storage(context: dict) -> dict:
 def build_runtime_config_payload(context: dict) -> dict:
     pools = context["proxy_pools"]
     upstream_urls = list(context["upstream_urls"])
+    proxy_api_keys = [context["public_proxy_api_key_record"](record) for record in context["proxy_api_key_records"]]
     return {
         "upstream_url": context["upstream_url"],
         "upstream_urls": upstream_urls,
         "upstream_urls_text": "\n".join(upstream_urls),
         "upstream_api_key_configured": False,
         "upstream_api_key_preview": "",
+        "proxy_api_keys": proxy_api_keys,
+        "proxy_api_key_count": len(proxy_api_keys),
+        "proxy_api_key_enabled_count": sum(1 for item in proxy_api_keys if item.get("enabled", True)),
+        "proxy_api_key_env_count": context["proxy_api_key_env_count"],
         "pools": pools,
         "pools_count": len(pools),
         "pools_enabled_count": sum(1 for p in pools if p.get("enabled", True)),

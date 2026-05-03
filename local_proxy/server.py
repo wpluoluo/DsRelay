@@ -54,6 +54,14 @@ from local_proxy.http.headers import (
     build_upstream_params,
     sanitize_query_string,
 )
+from local_proxy.http.proxy_auth import (
+    make_proxy_api_key_record,
+    normalize_proxy_api_key_records,
+    parse_proxy_api_keys,
+    public_proxy_api_key_record,
+    utc_now_text,
+    verify_proxy_api_key,
+)
 from local_proxy.http.async_execution import BackgroundExecution
 from local_proxy.http.routes import register_http_routes
 from local_proxy.http.streaming import (
@@ -285,6 +293,8 @@ def build_context_window_exceeded_error_payload(
 UPSTREAM_URL_POOL = parse_upstream_url_pool()
 UPSTREAM_URL = UPSTREAM_URL_POOL[0] if UPSTREAM_URL_POOL else ""
 UPSTREAM_API_KEY = ""
+PROXY_API_KEYS = parse_proxy_api_keys(os.getenv("PROXY_API_KEYS", ""))
+PROXY_API_KEY_RECORDS: list[dict] = []
 PROXY_POOLS: list[dict] = []
 URL_POOL_KEY_MAP: dict[str, list[str]] = {}
 POOL_RUNTIME_STATE_KEY = "proxy_connection_pool"
@@ -990,6 +1000,7 @@ def mark_api_key_failure(url: str, key_choice: dict | None, reason: str, *, forc
 def export_runtime_config_for_storage() -> dict:
     return assemble_runtime_config_storage(
         {
+            "proxy_api_key_records": PROXY_API_KEY_RECORDS,
             "proxy_pools": PROXY_POOLS,
             "model_aliases_text": MODEL_ALIASES_TEXT,
             "model_capabilities_text": MODEL_CAPABILITIES_TEXT,
@@ -1030,6 +1041,9 @@ def build_runtime_config_payload() -> dict:
         {
             "upstream_url": UPSTREAM_URL,
             "upstream_urls": list(UPSTREAM_URL_POOL),
+            "proxy_api_key_records": PROXY_API_KEY_RECORDS,
+            "proxy_api_key_env_count": len(PROXY_API_KEYS),
+            "public_proxy_api_key_record": public_proxy_api_key_record,
             "proxy_pools": PROXY_POOLS,
             "model_aliases_text": MODEL_ALIASES_TEXT,
             "model_alias_count": len(MODEL_ALIASES),
@@ -1100,6 +1114,7 @@ def apply_runtime_config(config_payload: dict | None, *, persist: bool) -> dict:
     global UPSTREAM_URL_POOL
     global UPSTREAM_URL
     global UPSTREAM_API_KEY
+    global PROXY_API_KEY_RECORDS
     global PROXY_POOLS
     global URL_POOL_KEY_MAP
     global MODEL_ALIASES_TEXT
@@ -1136,6 +1151,7 @@ def apply_runtime_config(config_payload: dict | None, *, persist: bool) -> dict:
         config_payload,
         current={
             "PROXY_POOLS": PROXY_POOLS,
+            "PROXY_API_KEY_RECORDS": PROXY_API_KEY_RECORDS,
             "MODEL_ALIASES_TEXT": MODEL_ALIASES_TEXT,
             "MODEL_CAPABILITIES_TEXT": MODEL_CAPABILITIES_TEXT,
             "REQUEST_TIMEOUT": REQUEST_TIMEOUT,
@@ -2837,6 +2853,10 @@ def build_runtime_snapshot() -> dict:
             "force_upstream_chat_stream": FORCE_UPSTREAM_CHAT_STREAM,
             "upstream_urls": list(UPSTREAM_URL_POOL),
             "upstream_api_key": UPSTREAM_API_KEY,
+            "proxy_api_key_count": len(PROXY_API_KEYS) + len([r for r in PROXY_API_KEY_RECORDS if r.get("enabled") is not False]),
+            "proxy_api_key_env_count": len(PROXY_API_KEYS),
+            "proxy_api_key_managed_count": len(PROXY_API_KEY_RECORDS),
+            "proxy_api_key_managed_enabled_count": len([r for r in PROXY_API_KEY_RECORDS if r.get("enabled") is not False]),
             "mask_secret": mask_secret,
             "model_alias_count": len(MODEL_ALIASES),
             "model_aliases": dict(MODEL_ALIASES),
@@ -4347,6 +4367,59 @@ def add_cors_headers(response: Response) -> Response:
     return response
 
 
+def proxy_api_auth_error_response(status_code: int, message: str, code: str) -> Response:
+    payload = {
+        "error": {
+            "message": message,
+            "type": "authentication_error",
+            "param": None,
+            "code": code,
+        }
+    }
+    return Response(
+        json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        status=status_code,
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "WWW-Authenticate": 'Bearer realm="local-proxy"',
+        },
+    )
+
+
+def require_proxy_api_key() -> Response | None:
+    if request.method == "OPTIONS":
+        return None
+
+    result = verify_proxy_api_key(request, PROXY_API_KEYS, PROXY_API_KEY_RECORDS)
+    if result.ok:
+        return None
+
+    if result.reason == "proxy_api_key_not_configured":
+        proxy_logger.warning(
+            "代理入口鉴权未配置，拒绝请求 path=%s remote=%s",
+            request.path,
+            request.remote_addr,
+        )
+        return proxy_api_auth_error_response(
+            503,
+            "代理入口 API Key 未配置，请设置 PROXY_API_KEYS 后重启服务。",
+            "proxy_api_key_not_configured",
+        )
+
+    proxy_logger.warning(
+        "代理入口鉴权失败 path=%s remote=%s reason=%s source=%s",
+        request.path,
+        request.remote_addr,
+        result.reason,
+        result.source or "-",
+    )
+    return proxy_api_auth_error_response(
+        401,
+        "代理入口 API Key 无效或缺失。",
+        result.reason or "proxy_api_key_invalid",
+    )
+
+
 def health():
     runtime = build_runtime_snapshot()
     return {
@@ -4516,6 +4589,71 @@ def debug_requests_clear():
     return {"ok": True, "message": "请求历史已清空。"}
 
 
+def proxy_api_key_public_payload(*, generated_key: str = "") -> dict:
+    return {
+        "ok": True,
+        "keys": [public_proxy_api_key_record(record) for record in PROXY_API_KEY_RECORDS],
+        "env_key_count": len(PROXY_API_KEYS),
+        "managed_key_count": len(PROXY_API_KEY_RECORDS),
+        "managed_enabled_count": len([record for record in PROXY_API_KEY_RECORDS if record.get("enabled") is not False]),
+        "generated_key": generated_key,
+    }
+
+
+def persist_proxy_api_key_records() -> None:
+    global PROXY_API_KEY_RECORDS
+    PROXY_API_KEY_RECORDS = normalize_proxy_api_key_records(PROXY_API_KEY_RECORDS)
+    save_runtime_config_to_disk()
+
+
+def debug_proxy_api_keys():
+    global PROXY_API_KEY_RECORDS
+
+    if request.method == "OPTIONS":
+        return Response(status=204)
+
+    if request.method == "GET":
+        return proxy_api_key_public_payload()
+
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action") or "create").strip().lower()
+
+    if action == "create":
+        record, generated_key = make_proxy_api_key_record(payload.get("name"))
+        PROXY_API_KEY_RECORDS.append(record)
+        persist_proxy_api_key_records()
+        return proxy_api_key_public_payload(generated_key=generated_key)
+
+    key_id = str(payload.get("id") or "").strip()
+    target = None
+    for record in PROXY_API_KEY_RECORDS:
+        if str(record.get("id") or "") == key_id:
+            target = record
+            break
+    if target is None:
+        return {"ok": False, "message": "未找到入口 Key。"}, 404
+
+    if action == "update":
+        if "name" in payload:
+            target["name"] = str(payload.get("name") or "").strip()[:80] or "NEWAPI"
+        if "enabled" in payload:
+            target["enabled"] = payload.get("enabled") is not False
+        target["updated_at"] = utc_now_text()
+        persist_proxy_api_key_records()
+        return proxy_api_key_public_payload()
+
+    if action == "delete":
+        PROXY_API_KEY_RECORDS = [
+            record
+            for record in PROXY_API_KEY_RECORDS
+            if str(record.get("id") or "") != key_id
+        ]
+        persist_proxy_api_key_records()
+        return proxy_api_key_public_payload()
+
+    return {"ok": False, "message": "不支持的入口 Key 操作。"}, 400
+
+
 def v1_root():
     if request.method == "OPTIONS":
         return Response(status=204)
@@ -4534,6 +4672,10 @@ def v1_root():
             dashboard_html,
             port=PORT,
         )
+
+    auth_error = require_proxy_api_key()
+    if auth_error is not None:
+        return auth_error
 
     return {
         "ok": True,
@@ -4561,6 +4703,9 @@ def v1_root():
 def gemini_version_root():
     if request.method == "OPTIONS":
         return Response(status=204)
+    auth_error = require_proxy_api_key()
+    if auth_error is not None:
+        return auth_error
     return {
         "ok": True,
         "message": "本地代理 Gemini 兼容入口运行中。",
@@ -4891,6 +5036,9 @@ def gemini_generate_content(subpath: str, request_payload: dict | None):
 def anthropic_messages():
     if request.method == "OPTIONS":
         return Response(status=204)
+    auth_error = require_proxy_api_key()
+    if auth_error is not None:
+        return auth_error
 
     request_id = uuid.uuid4().hex[:8]
     started_at = time.perf_counter()
@@ -6899,6 +7047,9 @@ def anthropic_stream_response_with_connect_heartbeat(
 def proxy_entrypoint(subpath: str):
     if request.method == "OPTIONS":
         return Response(status=204)
+    auth_error = require_proxy_api_key()
+    if auth_error is not None:
+        return auth_error
 
     request_payload = request.get_json(silent=True)
     inbound_subpath = str(subpath or "").strip("/")
@@ -7138,6 +7289,7 @@ register_http_routes(
         "debug_config": login_required(debug_config),
         "debug_pool_test": login_required(debug_pool_test),
         "debug_requests_clear": login_required(debug_requests_clear),
+        "debug_proxy_api_keys": login_required(debug_proxy_api_keys),
         "v1_root": v1_root,
         "gemini_version_root": gemini_version_root,
         "anthropic_messages": anthropic_messages,

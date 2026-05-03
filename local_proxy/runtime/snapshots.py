@@ -55,6 +55,11 @@ def build_runtime_snapshot(context: dict) -> dict:
         "upstream_url_count": len(context["upstream_urls"]),
         "upstream_api_key_configured": bool(context["upstream_api_key"]),
         "upstream_api_key_preview": context["mask_secret"](context["upstream_api_key"]),
+        "proxy_api_key_configured": int(context.get("proxy_api_key_count") or 0) > 0,
+        "proxy_api_key_count": int(context.get("proxy_api_key_count") or 0),
+        "proxy_api_key_env_count": int(context.get("proxy_api_key_env_count") or 0),
+        "proxy_api_key_managed_count": int(context.get("proxy_api_key_managed_count") or 0),
+        "proxy_api_key_managed_enabled_count": int(context.get("proxy_api_key_managed_enabled_count") or 0),
         "model_alias_count": context["model_alias_count"],
         "model_aliases": dict(context["model_aliases"]),
         "model_routing": {

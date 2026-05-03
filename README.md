@@ -31,7 +31,7 @@
 
 ## 项目简介
 
-**Local Proxy** 是一个部署在本地开发环境中的 AI API 代理网关。推荐拓扑为 `客户端 -> NEWAPI -> 代理 -> 上游模型`：NEWAPI 负责客户端认证，代理负责协议转换、路由和上游认证。
+**Local Proxy** 是一个部署在本地开发环境中的 AI API 代理网关。推荐拓扑为 `客户端 -> NEWAPI -> 代理 -> 上游模型`：客户端、NEWAPI、本项目和上游模型之间的鉴权彼此独立，代理负责协议转换、路由和上游认证。
 
 - **协议统一**：客户端只需使用 OpenAI 兼容协议，代理自动转换为 Anthropic、Gemini 等原生协议
 - **智能路由**：支持多上游链路、模型别名映射、自动探测与竞速选择
@@ -85,7 +85,8 @@
 ### 安全特性
 
 - 敏感参数脱敏：日志中自动隐藏 `key`、`api_key`、`token` 等字段
-- 认证隔离：客户端凭据由 NEWAPI 校验，代理不会向上游透传客户端 `Authorization`、`x-api-key`、`x-goog-api-key` 或敏感查询参数
+- 三层鉴权隔离：客户端 Key 由 NEWAPI 校验，入口 Key 专用于 NEWAPI 调用本项目，上游 Key 仅用于代理调用模型服务
+- 认证隔离：代理不会向上游透传入站 `Authorization`、`x-api-key`、`x-goog-api-key` 或敏感查询参数
 - 上游认证：代理仅使用自身连接池配置的上游 API Key 调用模型服务
 - 环境隔离：启动脚本确保使用项目虚拟环境，拒绝外部 Python 环境
 
@@ -217,6 +218,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18765/health"
 | `UPSTREAM_URL` | — | 上游 API 基础地址 |
 | `UPSTREAM_URLS` | — | 多条上游链路，支持逗号/分号/换行分隔 |
 | `UPSTREAM_API_KEY` | — | 上游 API 密钥 |
+| `PROXY_API_KEYS` | — | NEWAPI 调用本项目的独立入口 Key，支持逗号/分号/换行分隔多个 Key；也可在控制台“入口鉴权”生成托管 Key |
 | `PORT` | `18765` | 代理监听端口 |
 | `REQUEST_TIMEOUT` | `600` | 请求超时时间（秒） |
 | `SSE_HEARTBEAT_SECONDS` | `12` | SSE 心跳间隔（秒） |
@@ -288,7 +290,21 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18765/health"
 
 ## 客户端接入
 
-代理默认监听 `http://127.0.0.1:18765`。推荐部署拓扑为 `客户端 -> NEWAPI -> 代理 -> 上游模型`：NEWAPI 负责客户端认证，代理只负责协议转换、路由和上游认证。
+代理默认监听 `http://127.0.0.1:18765`。推荐部署拓扑为 `客户端 -> NEWAPI -> 代理 -> 上游模型`，鉴权边界如下：
+
+- 客户端 -> NEWAPI：由 NEWAPI 校验客户端 Key。
+- NEWAPI -> 本项目：由本项目校验 `PROXY_API_KEYS`，这是独立入口 Key。
+- 本项目 -> 上游模型：由代理使用连接池里的上游 API Key。
+
+`PROXY_API_KEYS` 和客户端 Key、上游模型 Key 都没有关系，不能混用。NEWAPI 调用本项目时应携带：
+
+```text
+Authorization: Bearer <PROXY_API_KEY>
+```
+
+也兼容 `X-API-Key`、`X-Goog-API-Key`、`?key=`、`?api_key=` 和 `?apikey=`。
+
+也可以在管理控制台的“入口鉴权”菜单生成和管理托管入口 Key。托管 Key 生成格式为 `sk-` 加 48 位字母数字，例如 `sk-R3FgLkpc3lVrpotlu9tV9rNvvQLRsupzsozwG7pHo11vcbqr`。明文只在创建时返回一次；运行配置里只保存哈希、预览、名称和启停状态。启用 MySQL 持久化时，这些托管入口 Key 记录会随运行配置写入 MySQL 的 `app_config` 表。
 
 ### OpenAI Chat Completions
 
@@ -303,6 +319,7 @@ http://127.0.0.1:18765/v1
 ```powershell
 $headers = @{
   "Content-Type" = "application/json"
+  "Authorization" = "Bearer your-proxy-api-key"
 }
 
 $body = @{
@@ -357,11 +374,12 @@ Invoke-RestMethod `
   -Uri "http://127.0.0.1:18765/v1beta/models/gemini-2.5-flash:generateContent" `
   -Headers @{
     "Content-Type" = "application/json"
+    "Authorization" = "Bearer your-proxy-api-key"
   } `
   -Body $body
 ```
 
-代理会移除入站请求中的客户端认证字段，并使用连接池中配置的上游 Key 调用对应模型服务。
+代理校验入口 Key 后，会移除入站请求中的认证字段，并使用连接池中配置的上游 Key 调用对应模型服务。
 
 ### 图像生成
 
@@ -562,8 +580,13 @@ gpt-5.5=1000000,128000
 ### 请求返回 401 / 认证失败
 
 - 客户端侧 401：检查 NEWAPI 中配置的客户端 Key、渠道和目标地址
+- 代理入口 401：检查 NEWAPI 调用本项目时携带的 Key 是否匹配 `PROXY_API_KEYS` 或控制台“入口鉴权”中的托管 Key
 - 上游侧 401：检查代理控制台连接池中配置的上游 API Key
-- 代理会剥离客户端认证字段，不会把客户端 Key 透传给上游
+- 代理会剥离入站认证字段，不会把 NEWAPI 的入口 Key 或客户端 Key 透传给上游
+
+### 请求返回 503 / 代理入口 Key 未配置
+
+模型代理入口要求配置独立入口 Key。如果 NEWAPI 或客户端直接请求 `/v1/*`、`/v1beta/*`、`/v1alpha/*` 时收到 `proxy_api_key_not_configured`，请在 `.env` 中设置 `PROXY_API_KEYS` 并重启服务，或在控制台“入口鉴权”生成并启用托管 Key。
 
 ### 模型返回 "model not found"
 

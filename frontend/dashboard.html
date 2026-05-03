@@ -877,10 +877,27 @@
     .pool-entry-row .btn-icon { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--muted); cursor: pointer; font-size: 15px; line-height: 1; padding: 0; transition: all 0.15s; }
     .pool-entry-row .btn-icon:hover { border-color: var(--error); color: var(--error); background: var(--error-soft); }
     .pool-entry-row .btn-icon.add:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    .key-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+    .key-summary { display: flex; gap: 8px; flex-wrap: wrap; }
+    .key-list { display: grid; gap: 10px; }
+    .key-card { border: 1px solid var(--border); background: var(--surface); border-radius: 10px; padding: 14px; display: grid; gap: 12px; }
+    .key-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .key-name { font-size: 14px; font-weight: 800; color: var(--ink); overflow-wrap: anywhere; }
+    .key-meta { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+    .key-preview { font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; background: var(--surface-alt); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; overflow-wrap: anywhere; }
+    .key-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .generated-key-box { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 12px; display: none; gap: 10px; margin-bottom: 14px; }
+    .generated-key-box.show { display: grid; }
+    .generated-key-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+    .generated-key-value { font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; font-size: 12px; padding: 9px 10px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); overflow-wrap: anywhere; }
+    .key-empty { border: 1px dashed var(--border); border-radius: 10px; padding: 22px; color: var(--muted); font-size: 13px; background: var(--surface-alt); }
     @media (max-width: 760px) {
       .pool-overview-head { align-items: flex-start; }
       .pool-overview-actions { width: 100%; }
       .pool-inline-grid, .pool-card-body { grid-template-columns: 1fr; }
+      .generated-key-row { grid-template-columns: 1fr; }
+      .key-card-head { display: grid; }
+      .key-actions { justify-content: flex-start; }
       .filter-grid { grid-template-columns: 1fr; }
       .request-filter-bar { padding: 12px; }
     }
@@ -1030,6 +1047,9 @@
       <button type="button" data-nav="logs">
         <span class="nav-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2.5" y="2" width="15" height="16" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M6 7h8M6 10h6M6 13h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></span> 运行日志
       </button>
+      <button type="button" data-nav="proxyKeys">
+        <span class="nav-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="7" cy="10" r="3.5" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 10H18M14 10v2.5M16.5 10v2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span> 入口鉴权
+      </button>
       <button type="button" data-nav="config">
         <span class="nav-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.4"/><path d="M10 1v3M10 16v3M3 10H1M19 10h-2M3.5 3.5l2 2M14.5 14.5l2 2M16.5 3.5l-2 2M5.5 14.5l-2 2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></span> 路由与策略
       </button>
@@ -1163,6 +1183,34 @@
               <tbody id="logTableBody"></tbody>
             </table>
           </div>
+        </div>
+      </section>
+
+      <!-- ===== Proxy API Keys View ===== -->
+      <section class="view" data-view="proxyKeys">
+        <div class="panel">
+          <div class="panel-head">
+            <h3><svg width="18" height="18" viewBox="0 0 20 20" fill="none" style="vertical-align:-4px;margin-right:6px;"><circle cx="7" cy="10" r="3.5" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 10H18M14 10v2.5M16.5 10v2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>NEWAPI 入口 Key</h3>
+            <span class="subtle" id="proxyKeySummary">读取中...</span>
+          </div>
+          <div class="key-toolbar">
+            <div class="key-summary">
+              <span class="channel-badge" id="proxyKeyManagedCount">托管 0</span>
+              <span class="channel-badge" id="proxyKeyEnabledCount">启用 0</span>
+              <span class="channel-badge" id="proxyKeyEnvCount">环境变量 0</span>
+            </div>
+            <button class="btn btn-primary" id="createProxyKeyBtn" type="button"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> 生成入口 Key</button>
+          </div>
+          <div class="subtle" style="font-size:12px;margin:-4px 0 12px;">托管 Key 生成格式为 sk- 加 48 位字母数字；仅保存哈希和预览，随运行配置写入本地配置，并在启用 MySQL 时同步到 app_config。</div>
+          <div class="generated-key-box" id="generatedProxyKeyBox">
+            <div style="font-size:12px;font-weight:800;color:var(--accent);">新 Key 只显示一次</div>
+            <div class="generated-key-row">
+              <div class="generated-key-value" id="generatedProxyKeyValue"></div>
+              <button class="btn btn-ghost" id="copyGeneratedProxyKeyBtn" type="button">复制</button>
+            </div>
+          </div>
+          <div class="key-list" id="proxyKeyList"></div>
+          <div class="status-msg" id="proxyKeyStatus"></div>
         </div>
       </section>
 
@@ -1416,6 +1464,16 @@
     const requestScopeFilterEl = document.getElementById("requestScopeFilter");
     const applyRequestFiltersBtn = document.getElementById("applyRequestFiltersBtn");
     const resetRequestFiltersBtn = document.getElementById("resetRequestFiltersBtn");
+    const proxyKeySummaryEl = document.getElementById("proxyKeySummary");
+    const proxyKeyManagedCountEl = document.getElementById("proxyKeyManagedCount");
+    const proxyKeyEnabledCountEl = document.getElementById("proxyKeyEnabledCount");
+    const proxyKeyEnvCountEl = document.getElementById("proxyKeyEnvCount");
+    const proxyKeyListEl = document.getElementById("proxyKeyList");
+    const proxyKeyStatusEl = document.getElementById("proxyKeyStatus");
+    const createProxyKeyBtn = document.getElementById("createProxyKeyBtn");
+    const generatedProxyKeyBox = document.getElementById("generatedProxyKeyBox");
+    const generatedProxyKeyValue = document.getElementById("generatedProxyKeyValue");
+    const copyGeneratedProxyKeyBtn = document.getElementById("copyGeneratedProxyKeyBtn");
 
     const navButtons = Array.from(document.querySelectorAll("[data-nav]"));
     const views = Array.from(document.querySelectorAll("[data-view]"));
@@ -1426,6 +1484,8 @@
     let poolSaveSubmitting = false;
     let activeConfigTabKey = "routes";
     let requestFilterState = { scope: "recent" };
+    let proxyKeyData = { keys: [], env_key_count: 0, managed_enabled_count: 0 };
+    let proxyKeySubmitting = false;
 
     function setText(el, value) {
       if (el) el.textContent = value == null ? "" : String(value);
@@ -1439,6 +1499,7 @@
       overview: ["运行总览", "OVERVIEW"],
       requests: ["请求观测", "REQUESTS"],
       logs: ["运行日志", "LOGS"],
+      proxyKeys: ["入口鉴权", "PROXY KEYS"],
       config: ["路由与策略", "CONFIG"],
     };
 
@@ -1705,6 +1766,87 @@
       setText(configResumeMetaEl, "注入 " + resumeInjected + " · 保存 " + resumeSaved + " · 清理 " + resumeCleared + " · 条目 " + interruptedEntries);
     }
 
+    function setProxyKeyStatus(message, type) {
+      if (!proxyKeyStatusEl) return;
+      proxyKeyStatusEl.textContent = message || "";
+      proxyKeyStatusEl.className = "status-msg" + (type ? " " + type : "");
+    }
+
+    function renderProxyKeys(payload) {
+      payload = payload || {};
+      proxyKeyData = {
+        keys: Array.isArray(payload.keys) ? payload.keys : [],
+        env_key_count: Number(payload.env_key_count || 0),
+        managed_enabled_count: Number(payload.managed_enabled_count || 0),
+      };
+      var managedCount = proxyKeyData.keys.length;
+      var enabledCount = Number(payload.managed_enabled_count || proxyKeyData.keys.filter(function(k) { return k.enabled !== false; }).length || 0);
+      var envCount = Number(payload.env_key_count || 0);
+      setText(proxyKeySummaryEl, (enabledCount + envCount) ? ((enabledCount + envCount) + " 个入口 Key 可用") : "未配置入口 Key");
+      setText(proxyKeyManagedCountEl, "托管 " + managedCount);
+      setText(proxyKeyEnabledCountEl, "启用 " + enabledCount);
+      setText(proxyKeyEnvCountEl, "环境变量 " + envCount);
+      if (!proxyKeyListEl) return;
+      if (!managedCount) {
+        proxyKeyListEl.innerHTML = '<div class="key-empty">暂无托管入口 Key。生成一个后，把明文填到 NEWAPI 渠道的请求头里。</div>';
+        return;
+      }
+      proxyKeyListEl.innerHTML = proxyKeyData.keys.map(function(item) {
+        var enabled = item.enabled !== false;
+        var badgeClass = enabled ? "ok" : "off";
+        var badgeText = enabled ? "启用中" : "已停用";
+        return '<div class="key-card" data-key-id="' + escapeAttr(item.id || "") + '">' +
+          '<div class="key-card-head">' +
+            '<div><div class="key-name">' + escapeHtml(item.name || "NEWAPI") + '</div>' +
+            '<div class="key-meta"><span class="pool-badge ' + badgeClass + '">' + badgeText + '</span><span>创建 ' + escapeHtml(item.created_at || "-") + '</span><span>更新 ' + escapeHtml(item.updated_at || "-") + '</span></div></div>' +
+            '<div class="key-actions">' +
+              '<button class="pool-inline-btn" data-key-action="rename">改名</button>' +
+              '<button class="pool-inline-btn" data-key-action="toggle">' + (enabled ? "停用" : "启用") + '</button>' +
+              '<button class="pool-inline-btn danger" data-key-action="delete">删除</button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="key-preview">' + escapeHtml(item.key_preview || "无预览") + '</div>' +
+        '</div>';
+      }).join("");
+    }
+
+    async function loadProxyKeys() {
+      try {
+        var resp = await fetch("/debug/proxy-keys", { cache: "no-store" });
+        var data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.message || "读取入口 Key 失败");
+        renderProxyKeys(data);
+      } catch (err) {
+        setProxyKeyStatus("读取失败：" + err, "err");
+      }
+    }
+
+    async function mutateProxyKey(payload, successMessage) {
+      if (proxyKeySubmitting) return;
+      proxyKeySubmitting = true;
+      setProxyKeyStatus("正在处理入口 Key...", "warn");
+      try {
+        var resp = await fetch("/debug/proxy-keys", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload || {}),
+        });
+        var data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.message || "入口 Key 操作失败");
+        renderProxyKeys(data);
+        if (data.generated_key) {
+          generatedProxyKeyValue.textContent = data.generated_key;
+          generatedProxyKeyBox.classList.add("show");
+        }
+        setProxyKeyStatus(successMessage || "入口 Key 已更新。", "ok");
+        await refreshState();
+      } catch (err) {
+        setProxyKeyStatus("操作失败：" + err, "err");
+      } finally {
+        proxyKeySubmitting = false;
+      }
+    }
+
     function renderRuntimeOverview(data) {
       var runtime = data.runtime || {};
       var config = data.config || {};
@@ -1713,10 +1855,13 @@
 
       setText(primaryUpstreamEl, data.upstream_url || "未配置");
 
-      var keyOk = runtime.upstream_api_key_configured;
-      setText(heroAuthEl, keyOk ? "已配置" : "未配置");
+      var proxyKeyCount = Number(runtime.proxy_api_key_count || config.proxy_api_key_count || 0);
+      var managedKeyCount = Number(runtime.proxy_api_key_managed_count || config.proxy_api_key_count || 0);
+      var envKeyCount = Number(runtime.proxy_api_key_env_count || config.proxy_api_key_env_count || 0);
+      var keyOk = proxyKeyCount > 0;
+      setText(heroAuthEl, keyOk ? ("入口 Key " + proxyKeyCount) : "入口未配置");
       if (heroAuthEl) heroAuthEl.className = keyOk ? "tag ok" : "tag warn";
-      setText(overviewAuthEl, keyOk ? "已配置" : "未配置");
+      setText(overviewAuthEl, keyOk ? ("入口 " + proxyKeyCount + " 个 · 托管 " + managedKeyCount + " · 环境 " + envKeyCount) : "入口 Key 未配置");
 
       setText(heroRoutesEl, (data.pools_count || 0) + " 池 · " + Number(data.upstream_url_count || 0) + " 链路");
       if (heroRoutesEl) heroRoutesEl.className = (data.pools_count || 0) > 0 ? "tag accent" : "tag";
@@ -2018,6 +2163,14 @@
         renderStats(data.stats || {}, activeCount, streamCount);
         renderRequestTable(data);
         renderLogTable(data.recent_logs || []);
+        if (data.config) {
+          renderProxyKeys({
+            ok: true,
+            keys: data.config.proxy_api_keys || [],
+            env_key_count: data.config.proxy_api_key_env_count || 0,
+            managed_enabled_count: data.config.proxy_api_key_enabled_count || 0,
+          });
+        }
         setText(lastUpdatedEl, "更新 " + (data.generated_at || ""));
         setText(logPathEl, data.log_path || "");
       } catch (err) {
@@ -2640,6 +2793,40 @@
         if (lastState?.config) { renderConfig(lastState.config, true); setConfigStatus("已恢复到当前正在生效的配置。", "ok"); }
       });
     }
+    safeOn(createProxyKeyBtn, "click", function() {
+      var name = prompt("入口 Key 名称", "NEWAPI");
+      if (name === null) return;
+      mutateProxyKey({ action: "create", name: name }, "入口 Key 已生成，请立即复制。");
+    });
+    safeOn(copyGeneratedProxyKeyBtn, "click", async function() {
+      var value = generatedProxyKeyValue ? generatedProxyKeyValue.textContent : "";
+      if (!value) return;
+      try {
+        await navigator.clipboard.writeText(value);
+        setProxyKeyStatus("已复制新 Key。", "ok");
+      } catch (err) {
+        setProxyKeyStatus("复制失败，请手动选中新 Key。", "err");
+      }
+    });
+    safeOn(proxyKeyListEl, "click", function(e) {
+      var btn = e.target.closest("[data-key-action]");
+      if (!btn) return;
+      var card = btn.closest("[data-key-id]");
+      var keyId = card ? card.dataset.keyId : "";
+      var item = (proxyKeyData.keys || []).find(function(k) { return k.id === keyId; });
+      if (!item) return;
+      var action = btn.dataset.keyAction;
+      if (action === "rename") {
+        var nextName = prompt("入口 Key 名称", item.name || "NEWAPI");
+        if (nextName === null) return;
+        mutateProxyKey({ action: "update", id: keyId, name: nextName }, "入口 Key 名称已更新。");
+      } else if (action === "toggle") {
+        mutateProxyKey({ action: "update", id: keyId, enabled: item.enabled === false }, item.enabled === false ? "入口 Key 已启用。" : "入口 Key 已停用。");
+      } else if (action === "delete") {
+        if (!confirm("确认删除入口 Key「" + (item.name || item.key_preview || keyId) + "」？")) return;
+        mutateProxyKey({ action: "delete", id: keyId }, "入口 Key 已删除。");
+      }
+    });
     if (applyRequestFiltersBtn) {
       applyRequestFiltersBtn.addEventListener("click", function() {
         syncRequestFilterState();
