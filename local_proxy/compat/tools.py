@@ -185,7 +185,23 @@ COMMON_FIELD_ALIASES = {
     "filePath": ("path", "file_path", "filepath", "file"),
     "target_directory": ("targetDirectory", "directory", "dir", "folder", "path"),
     "targetDirectory": ("target_directory", "directory", "dir", "folder", "path"),
-    "pattern": ("query", "q", "glob", "globpattern"),
+    "pattern": (
+        "query",
+        "q",
+        "glob",
+        "globpattern",
+        "regex",
+        "regexp",
+        "search",
+        "search_query",
+        "keyword",
+        "keywords",
+        "needle",
+        "term",
+        "terms",
+        "text",
+        "content",
+    ),
     "explanation": ("reason", "justification", "summary", "comment", "description"),
     "justification": ("reason", "explanation", "summary", "comment", "description"),
     "run_in_background": (
@@ -301,8 +317,17 @@ SEARCH_INPUT_FIELD_CANONICALS = {
     "q",
     "glob",
     "globpattern",
+    "regex",
+    "regexp",
+    "search",
+    "searchquery",
     "keyword",
     "keywords",
+    "needle",
+    "term",
+    "terms",
+    "text",
+    "content",
 }
 PREVIEW_TOOL_ARGUMENT_PRIORITY = (
     "command",
@@ -1648,6 +1673,20 @@ def extract_tool_field_value(payload_object: dict, field_name: str):
     return None
 
 
+def is_search_like_tool(tool_name: str | None, tool_schemas: dict) -> bool:
+    resolved_name = resolve_tool_name(tool_name, tool_schemas) or tool_name or ""
+    schema = tool_schemas.get(resolved_name, {})
+    schema_fields = {
+        canonicalize_name(field_name)
+        for field_name in list(schema.get("properties") or []) + list(schema.get("required") or [])
+    }
+    tool_canonical = canonicalize_name(resolved_name)
+    return bool(schema_fields & SEARCH_INPUT_FIELD_CANONICALS) or any(
+        marker in tool_canonical
+        for marker in ("search", "grep", "glob", "find")
+    )
+
+
 def infer_tool_name_from_payload(tool_name: str | None, payload, tool_schemas: dict) -> str | None:
     resolved_name = resolve_tool_name(tool_name, tool_schemas) or (tool_name.strip() if isinstance(tool_name, str) else "")
     if resolved_name:
@@ -1770,18 +1809,7 @@ def tool_call_lacks_required_input_signal(tool_name: str | None, payload, tool_s
 
 
 def tool_call_has_empty_search_signal(tool_name: str | None, payload, tool_schemas: dict) -> bool:
-    resolved_name = resolve_tool_name(tool_name, tool_schemas) or tool_name or ""
-    schema = tool_schemas.get(resolved_name, {})
-    schema_fields = {
-        canonicalize_name(field_name)
-        for field_name in list(schema.get("properties") or []) + list(schema.get("required") or [])
-    }
-    tool_canonical = canonicalize_name(resolved_name)
-    is_search_like = bool(schema_fields & SEARCH_INPUT_FIELD_CANONICALS) or any(
-        marker in tool_canonical
-        for marker in ("search", "grep", "glob", "find")
-    )
-    if not is_search_like:
+    if not is_search_like_tool(tool_name, tool_schemas):
         return False
 
     payload_object = parse_tool_arguments_object(payload)
@@ -1991,6 +2019,7 @@ def normalize_tool_arguments_payload(tool_name: str | None, payload, tool_schema
     required = list(schema.get("required") or [])
     properties = list(schema.get("properties") or [])
     bash_like = is_bash_like_tool_name(resolved_name)
+    search_like = is_search_like_tool(resolved_name, tool_schemas)
 
     payload, unwrapped = unwrap_nested_arguments_container(payload, resolved_name, tool_schemas)
     modified = unwrapped or modified
@@ -2035,7 +2064,12 @@ def normalize_tool_arguments_payload(tool_name: str | None, payload, tool_schema
                 modified = True
                 break
 
-    if target_field and target_field not in normalized and (len(required) == 1 or bash_like):
+    if (
+        target_field
+        and target_field not in normalized
+        and (len(required) == 1 or bash_like)
+        and not (search_like and canonicalize_name(target_field) in SEARCH_INPUT_FIELD_CANONICALS)
+    ):
         string_entries = [
             (key, value)
             for key, value in normalized.items()
