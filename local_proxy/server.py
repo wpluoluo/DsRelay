@@ -35,6 +35,8 @@ from local_proxy.compat.tools import (
 from local_proxy.compat.protocols import (
     build_anthropic_error_payload,
     build_gemini_error_payload,
+    coerce_non_negative_int,
+    estimate_text_tokens,
     convert_anthropic_request_to_openai,
     convert_openai_response_to_anthropic,
     convert_gemini_request_to_openai,
@@ -136,6 +138,7 @@ from local_proxy.upstream.capabilities import (
     find_model_capability,
     normalize_model_capabilities_text,
     parse_model_capabilities,
+    estimate_payload_tokens,
 )
 from local_proxy.upstream.models import (
     DEFAULT_MODEL_ALIASES_TEXT,
@@ -5328,7 +5331,11 @@ def anthropic_messages():
                     raw_error_lines=consumed.get("raw_error_lines"),
                 )
                 if not issue:
-                    anthropic_body = convert_openai_response_to_anthropic(openai_body, tool_schemas)
+                    anthropic_body = convert_openai_response_to_anthropic(
+                        openai_body,
+                        tool_schemas,
+                        next_execution.get("upstream_payload") if isinstance(next_execution.get("upstream_payload"), dict) else openai_payload,
+                    )
                     body = json.dumps(anthropic_body, ensure_ascii=False).encode("utf-8")
                     response_preview = build_preview_summary(consumed["preview_parts"])
                     close_response_quietly(upstream_response)
@@ -5382,7 +5389,11 @@ def anthropic_messages():
                     raw_error_lines=consumed.get("raw_error_lines"),
                 )
                 if not issue:
-                    anthropic_body = convert_openai_response_to_anthropic(openai_body, tool_schemas)
+                    anthropic_body = convert_openai_response_to_anthropic(
+                        openai_body,
+                        tool_schemas,
+                        next_execution.get("upstream_payload") if isinstance(next_execution.get("upstream_payload"), dict) else openai_payload,
+                    )
                     body = json.dumps(anthropic_body, ensure_ascii=False).encode("utf-8")
                     response_preview = build_preview_summary(consumed["preview_parts"])
                     close_response_quietly(next_response)
@@ -5449,7 +5460,11 @@ def anthropic_messages():
             },
         )
 
-    anthropic_body = convert_openai_response_to_anthropic(openai_body, tool_schemas)
+    anthropic_body = convert_openai_response_to_anthropic(
+        openai_body,
+        tool_schemas,
+        execution.get("upstream_payload") if isinstance(execution.get("upstream_payload"), dict) else openai_payload,
+    )
     body = json.dumps(anthropic_body, ensure_ascii=False).encode("utf-8")
     response_preview = build_preview_summary(consumed["preview_parts"])
     close_response_quietly(upstream_response)
@@ -6208,7 +6223,7 @@ def handle_anthropic_stream_response(
                 },
             )
 
-        anthropic_body = convert_openai_response_to_anthropic(consumed["openai_body"], tool_schemas)
+        anthropic_body = convert_openai_response_to_anthropic(consumed["openai_body"], tool_schemas, upstream_openai_payload or request_payload)
         packets = build_anthropic_stream_packets_from_message(anthropic_body)
         total_bytes = sum(len(packet) for packet in packets)
         duration_ms = int((time.perf_counter() - started_at) * 1000)
@@ -6266,7 +6281,9 @@ def handle_anthropic_stream_response(
         last_stop_reason = "end_turn"
         choice_states = {}
         skip_next_blank = False
+        input_tokens = estimate_payload_tokens(upstream_openai_payload or request_payload)
         output_tokens = 0
+        output_fragments: list[str] = []
         stream_client_gone = False
         message_stop_sent = False
         finished_choice_indexes: set[int] = set()
@@ -6396,7 +6413,7 @@ def handle_anthropic_stream_response(
                             "stop_reason": None,
                             "stop_sequence": None,
                             "usage": {
-                                "input_tokens": 0,
+                                "input_tokens": input_tokens,
                                 "output_tokens": 0,
                             },
                         },
@@ -6407,7 +6424,9 @@ def handle_anthropic_stream_response(
                     message_started = True
 
                 usage = event.get("usage") or {}
-                output_tokens = usage.get("completion_tokens", output_tokens)
+                if isinstance(usage, dict):
+                    input_tokens = coerce_non_negative_int(usage.get("prompt_tokens") or usage.get("input_tokens")) or input_tokens
+                    output_tokens = coerce_non_negative_int(usage.get("completion_tokens") or usage.get("output_tokens")) or output_tokens
 
                 for choice in event.get("choices") or []:
                     delta = choice.get("delta") or {}
@@ -6497,6 +6516,7 @@ def handle_anthropic_stream_response(
                             yield packet
                         append_preview_text(preview_parts, content_text)
                         append_resume_text(resume_text_parts, content_text)
+                        output_fragments.append(content_text)
                         packet = format_sse_event(
                             "content_block_delta",
                             {
@@ -6543,6 +6563,8 @@ def handle_anthropic_stream_response(
                             next_block_index += 1
                             open_tool_blocks[tool_index] = block_index
                             saw_tool_use = True
+                            if isinstance(function_data.get("name"), str):
+                                output_fragments.append(function_data.get("name") or "")
                             packet = format_sse_event(
                                 "content_block_start",
                                 {
@@ -6561,6 +6583,7 @@ def handle_anthropic_stream_response(
 
                         arguments_text = function_data.get("arguments")
                         if isinstance(arguments_text, str) and arguments_text:
+                            output_fragments.append(arguments_text)
                             append_preview_tool(
                                 preview_parts,
                                 function_data.get("name"),
@@ -6590,6 +6613,8 @@ def handle_anthropic_stream_response(
             final_stop_reason = last_stop_reason
             if saw_tool_use and final_stop_reason in {None, "", "end_turn"}:
                 final_stop_reason = "tool_use"
+            if output_tokens <= 0:
+                output_tokens = estimate_text_tokens("".join(output_fragments))
 
             if active_text_block_index is not None:
                 packet = format_sse_event(
@@ -6637,7 +6662,7 @@ def handle_anthropic_stream_response(
                             "content": [],
                             "stop_reason": None,
                             "stop_sequence": None,
-                            "usage": {"input_tokens": 0, "output_tokens": 0},
+                            "usage": {"input_tokens": input_tokens, "output_tokens": 0},
                         },
                     },
                 )

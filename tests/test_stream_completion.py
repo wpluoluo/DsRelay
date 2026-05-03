@@ -79,6 +79,23 @@ def collect_response_body(response):
     return b"".join(response.response)
 
 
+def parse_sse_events(body: str) -> list[tuple[str | None, dict]]:
+    events = []
+    for packet in body.split("\n\n"):
+        if not packet.strip():
+            continue
+        event_name = None
+        data = None
+        for line in packet.splitlines():
+            if line.startswith("event: "):
+                event_name = line[len("event: "):]
+            elif line.startswith("data: "):
+                data = line[len("data: "):]
+        if data:
+            events.append((event_name, json.loads(data)))
+    return events
+
+
 class StreamCompletionTests(unittest.TestCase):
     def test_openai_stream_stops_after_finish_reason_and_adds_done(self):
         upstream = SlowAfterTerminalResponse(openai_stream_lines())
@@ -117,23 +134,29 @@ class StreamCompletionTests(unittest.TestCase):
 
     def test_anthropic_stream_sends_message_stop_after_openai_finish_reason(self):
         upstream = SlowAfterTerminalResponse(openai_stream_lines())
+        request_payload = {"model": "test-model", "stream": True, "messages": [{"role": "user", "content": "hello"}]}
         response = handle_anthropic_stream_response(
             upstream_response=upstream,
             request_id="anthstream",
             upstream_url=upstream.url,
             started_at=time.perf_counter(),
-            request_payload={"model": "test-model", "stream": True},
+            request_payload=request_payload,
             tool_schemas={},
             retry_count=0,
-            observability_meta={"_upstream_openai_payload": {"model": "test-model", "stream": True}},
+            observability_meta={"_upstream_openai_payload": request_payload},
         )
 
         body = collect_response_body(response).decode("utf-8")
+        events = parse_sse_events(body)
+        message_start = next(payload for name, payload in events if name == "message_start")
+        message_delta = next(payload for name, payload in events if name == "message_delta")
 
         self.assertIn("event: message_start", body)
         self.assertIn("event: content_block_delta", body)
         self.assertIn('"stop_reason":"end_turn"', body)
         self.assertIn("event: message_stop", body)
+        self.assertGreater(message_start["message"]["usage"]["input_tokens"], 0)
+        self.assertGreater(message_delta["usage"]["output_tokens"], 0)
         self.assertTrue(upstream.closed_by_proxy)
 
     def test_gemini_stream_sends_terminal_chunk_after_openai_finish_reason(self):

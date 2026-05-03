@@ -12,6 +12,7 @@ from local_proxy.compat.tools import (
     parse_tool_arguments_object,
     should_suppress_tool_call,
 )
+from local_proxy.upstream.capabilities import estimate_payload_tokens
 
 
 GEMINI_GENERATE_SUBPATH_PATTERN = re.compile(
@@ -26,6 +27,80 @@ GEMINI_SCHEMA_TYPE_MAP = {
     "ARRAY": "array",
     "OBJECT": "object",
 }
+
+
+def coerce_non_negative_int(value) -> int:
+    if value is None or isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return max(0, int(value))
+    try:
+        return max(0, int(float(str(value).strip())))
+    except Exception:
+        return 0
+
+
+def estimate_text_tokens(text: str | None) -> int:
+    if not isinstance(text, str) or not text:
+        return 0
+    char_count = len(text)
+    ascii_count = sum(1 for ch in text if ord(ch) < 128)
+    non_ascii_count = max(0, char_count - ascii_count)
+    estimated = (ascii_count / 4.0) + (non_ascii_count / 1.6)
+    return max(1, int(estimated))
+
+
+def estimate_openai_response_completion_tokens(response_body: dict | None) -> int:
+    if not isinstance(response_body, dict):
+        return 0
+
+    fragments: list[str] = []
+    for choice in response_body.get("choices") or []:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message") or {}
+        if not isinstance(message, dict):
+            continue
+
+        content = message.get("content")
+        if isinstance(content, str):
+            fragments.append(content)
+        elif isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and isinstance(item.get("text"), str):
+                    fragments.append(item.get("text") or "")
+
+        reasoning = message.get("reasoning") or message.get("reasoning_content")
+        if isinstance(reasoning, str):
+            fragments.append(reasoning)
+
+        for tool_call in message.get("tool_calls") or []:
+            if not isinstance(tool_call, dict):
+                continue
+            function_data = tool_call.get("function") or {}
+            if isinstance(function_data.get("name"), str):
+                fragments.append(function_data.get("name") or "")
+            if isinstance(function_data.get("arguments"), str):
+                fragments.append(function_data.get("arguments") or "")
+
+    return estimate_text_tokens("".join(fragments))
+
+
+def build_anthropic_usage_from_openai(response_body: dict | None, request_payload: dict | None = None) -> dict:
+    usage = response_body.get("usage") if isinstance(response_body, dict) else {}
+    usage = usage if isinstance(usage, dict) else {}
+    input_tokens = coerce_non_negative_int(usage.get("prompt_tokens") or usage.get("input_tokens"))
+    output_tokens = coerce_non_negative_int(usage.get("completion_tokens") or usage.get("output_tokens"))
+
+    if input_tokens <= 0 and isinstance(request_payload, dict):
+        input_tokens = estimate_payload_tokens(request_payload)
+    if output_tokens <= 0:
+        output_tokens = estimate_openai_response_completion_tokens(response_body)
+
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    }
 
 
 def flatten_anthropic_text_content(content) -> str:
@@ -812,7 +887,11 @@ def map_openai_finish_reason_to_anthropic(finish_reason: str | None) -> str | No
     return finish_reason
 
 
-def convert_openai_response_to_anthropic(response_body: dict, tool_schemas: dict | None = None) -> dict:
+def convert_openai_response_to_anthropic(
+    response_body: dict,
+    tool_schemas: dict | None = None,
+    request_payload: dict | None = None,
+) -> dict:
     choice = ((response_body.get("choices") or [{}])[0]) if isinstance(response_body, dict) else {}
     message = choice.get("message") or {}
     content_blocks = []
@@ -854,7 +933,7 @@ def convert_openai_response_to_anthropic(response_body: dict, tool_schemas: dict
     if any(block.get("type") == "tool_use" for block in content_blocks) and stop_reason in {None, "end_turn"}:
         stop_reason = "tool_use"
 
-    usage = response_body.get("usage") or {}
+    usage = build_anthropic_usage_from_openai(response_body, request_payload)
     return {
         "id": response_body.get("id", f"msg_{uuid.uuid4().hex[:24]}"),
         "type": "message",
@@ -863,10 +942,7 @@ def convert_openai_response_to_anthropic(response_body: dict, tool_schemas: dict
         "content": content_blocks,
         "stop_reason": stop_reason,
         "stop_sequence": None,
-        "usage": {
-            "input_tokens": usage.get("prompt_tokens", 0),
-            "output_tokens": usage.get("completion_tokens", 0),
-        },
+        "usage": usage,
     }
 
 

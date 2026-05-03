@@ -39,6 +39,7 @@ class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
         os.environ["UPSTREAM_URL"] = "https://bad.example/v1"
         os.environ["UPSTREAM_URL_POOL"] = "https://bad.example/v1,https://good.example/v1"
         os.environ["UPSTREAM_API_KEY"] = "upstream-secret"
+        os.environ["UPSTREAM_RANDOMIZE_ENDPOINTS"] = "0"
 
         import local_proxy.server as server
 
@@ -47,11 +48,13 @@ class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
         self.addCleanup(lambda: os.environ.pop("UPSTREAM_URL", None))
         self.addCleanup(lambda: os.environ.pop("UPSTREAM_URL_POOL", None))
         self.addCleanup(lambda: os.environ.pop("UPSTREAM_API_KEY", None))
+        self.addCleanup(lambda: os.environ.pop("UPSTREAM_RANDOMIZE_ENDPOINTS", None))
         return server
 
     def test_anthropic_messages_retries_empty_stream_success_on_alternate_route(self):
         server = self.load_server()
         server.ENABLE_MODEL_PROBE = False
+        server.UPSTREAM_RANDOMIZE_ENDPOINTS = False
         server.PROXY_POOLS[:] = [
             {
                 "name": "bad",
@@ -73,6 +76,7 @@ class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
         server.rebuild_pool_state()
         server.route_health.clear()
         server.route_selection_state.clear()
+        server.model_route_cache["routes"] = {}
         sent_urls = []
 
         terminal_only = {
@@ -137,6 +141,115 @@ class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
             ],
         )
         self.assertEqual(response.headers.get("X-Proxy-Retries"), "1")
+
+    def test_anthropic_messages_fills_usage_when_upstream_omits_usage(self):
+        server = self.load_server()
+        server.ENABLE_MODEL_PROBE = False
+        server.PROXY_POOLS[:] = [
+            {
+                "name": "good",
+                "enabled": True,
+                "priority": 100,
+                "urls": ["https://good.example/v1"],
+                "keys": [{"key": "good-key"}],
+                "route_policy": {},
+            },
+        ]
+        server.rebuild_pool_state()
+        server.route_health.clear()
+        server.route_selection_state.clear()
+        healthy_body = {
+            "id": "chatcmpl-ok",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "demo",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+
+        def fake_request(**kwargs):
+            return make_json_response(kwargs["url"], healthy_body)
+
+        server.UPSTREAM_SESSION.request = fake_request
+        client = server.app.test_client()
+
+        response = client.post(
+            "/v1/messages",
+            headers={
+                "Authorization": "Bearer proxy-secret",
+                "anthropic-version": "2023-06-01",
+            },
+            json={
+                "model": "demo",
+                "max_tokens": 64,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["content"][0]["text"], "ok")
+        self.assertGreater(payload["usage"]["input_tokens"], 0)
+        self.assertGreater(payload["usage"]["output_tokens"], 0)
+
+    def test_anthropic_messages_preserves_upstream_usage(self):
+        server = self.load_server()
+        server.ENABLE_MODEL_PROBE = False
+        server.PROXY_POOLS[:] = [
+            {
+                "name": "good",
+                "enabled": True,
+                "priority": 100,
+                "urls": ["https://good.example/v1"],
+                "keys": [{"key": "good-key"}],
+                "route_policy": {},
+            },
+        ]
+        server.rebuild_pool_state()
+        server.route_health.clear()
+        server.route_selection_state.clear()
+        healthy_body = {
+            "id": "chatcmpl-ok",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "demo",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 123, "completion_tokens": 45, "total_tokens": 168},
+        }
+
+        def fake_request(**kwargs):
+            return make_json_response(kwargs["url"], healthy_body)
+
+        server.UPSTREAM_SESSION.request = fake_request
+        client = server.app.test_client()
+
+        response = client.post(
+            "/v1/messages",
+            headers={
+                "Authorization": "Bearer proxy-secret",
+                "anthropic-version": "2023-06-01",
+            },
+            json={
+                "model": "demo",
+                "max_tokens": 64,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["usage"], {"input_tokens": 123, "output_tokens": 45})
 
 
 if __name__ == "__main__":
