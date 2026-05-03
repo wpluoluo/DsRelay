@@ -52,6 +52,15 @@ class FiniteStreamResponse(requests.Response):
         return super().close()
 
 
+def make_json_response(payload: dict) -> requests.Response:
+    response = requests.Response()
+    response.status_code = 200
+    response.url = "https://upstream.example/v1/chat/completions"
+    response.headers["Content-Type"] = "application/json"
+    response._content = json.dumps(payload).encode("utf-8")
+    return response
+
+
 def openai_stream_lines(*, finish_reason="stop"):
     first = {
         "id": "chatcmpl-test",
@@ -91,14 +100,23 @@ def parse_sse_events(body: str) -> list[tuple[str | None, dict]]:
                 event_name = line[len("event: "):]
             elif line.startswith("data: "):
                 data = line[len("data: "):]
-        if data:
+        if data and data != "[DONE]":
             events.append((event_name, json.loads(data)))
     return events
+
+
+def openai_stream_usage_events(body: str) -> list[dict]:
+    return [
+        payload
+        for _, payload in parse_sse_events(body)
+        if isinstance(payload, dict) and isinstance(payload.get("usage"), dict)
+    ]
 
 
 class StreamCompletionTests(unittest.TestCase):
     def test_openai_stream_stops_after_finish_reason_and_adds_done(self):
         upstream = SlowAfterTerminalResponse(openai_stream_lines())
+        request_payload = {"model": "test-model", "stream": True, "messages": [{"role": "user", "content": "hello"}]}
         response = proxy_response(
             upstream,
             sanitize_dsml=True,
@@ -110,16 +128,137 @@ class StreamCompletionTests(unittest.TestCase):
             tool_schemas={},
             retry_count=0,
             protocol="openai_chat_completions",
-            request_payload={"model": "test-model", "stream": True},
+            request_payload=request_payload,
             execution={},
         )
 
         body = collect_response_body(response).decode("utf-8")
+        usage_events = openai_stream_usage_events(body)
 
         self.assertIn('"content":"ok"', body)
         self.assertIn('"finish_reason":"stop"', body)
         self.assertIn("data: [DONE]\n\n", body)
+        self.assertEqual(len(usage_events), 1)
+        self.assertGreater(usage_events[0]["usage"]["prompt_tokens"], 0)
+        self.assertGreater(usage_events[0]["usage"]["completion_tokens"], 0)
         self.assertTrue(upstream.closed_by_proxy)
+
+    def test_openai_non_stream_fills_usage_when_upstream_omits_usage(self):
+        upstream = make_json_response(
+            {
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "test-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+        )
+        response = proxy_response(
+            upstream,
+            sanitize_dsml=True,
+            request_id="jsonusage",
+            upstream_url=upstream.url,
+            started_at=time.perf_counter(),
+            requested_stream=False,
+            route_hint="chat/completions",
+            tool_schemas={},
+            retry_count=0,
+            protocol="openai_chat_completions",
+            request_payload={"model": "test-model", "messages": [{"role": "user", "content": "hello"}]},
+            execution={},
+        )
+
+        payload = json.loads(collect_response_body(response).decode("utf-8"))
+
+        self.assertEqual(payload["choices"][0]["message"]["content"], "ok")
+        self.assertGreater(payload["usage"]["prompt_tokens"], 0)
+        self.assertGreater(payload["usage"]["completion_tokens"], 0)
+        self.assertEqual(payload["usage"]["total_tokens"], payload["usage"]["prompt_tokens"] + payload["usage"]["completion_tokens"])
+
+    def test_openai_json_to_stream_fills_usage_when_upstream_omits_usage(self):
+        upstream = make_json_response(
+            {
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "test-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+        )
+        response = proxy_response(
+            upstream,
+            sanitize_dsml=True,
+            request_id="jsonstreamusage",
+            upstream_url=upstream.url,
+            started_at=time.perf_counter(),
+            requested_stream=True,
+            route_hint="chat/completions",
+            tool_schemas={},
+            retry_count=0,
+            protocol="openai_chat_completions",
+            request_payload={"model": "test-model", "stream": True, "messages": [{"role": "user", "content": "hello"}]},
+            execution={},
+        )
+
+        body = collect_response_body(response).decode("utf-8")
+        usage_events = openai_stream_usage_events(body)
+
+        self.assertIn("data: [DONE]\n\n", body)
+        self.assertEqual(len(usage_events), 1)
+        self.assertGreater(usage_events[0]["usage"]["prompt_tokens"], 0)
+        self.assertGreater(usage_events[0]["usage"]["completion_tokens"], 0)
+
+    def test_openai_stream_preserves_upstream_usage(self):
+        usage_event = {
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [],
+            "usage": {"prompt_tokens": 123, "completion_tokens": 45, "total_tokens": 168},
+        }
+        upstream = SlowAfterTerminalResponse(
+            [
+                openai_stream_lines()[0],
+                openai_stream_lines()[1],
+                "data: " + json.dumps(usage_event, separators=(",", ":")),
+                "",
+                openai_stream_lines()[2],
+                openai_stream_lines()[3],
+            ]
+        )
+        response = proxy_response(
+            upstream,
+            sanitize_dsml=True,
+            request_id="streamusagepreserve",
+            upstream_url=upstream.url,
+            started_at=time.perf_counter(),
+            requested_stream=True,
+            route_hint="chat/completions",
+            tool_schemas={},
+            retry_count=0,
+            protocol="openai_chat_completions",
+            request_payload={"model": "test-model", "stream": True, "messages": [{"role": "user", "content": "hello"}]},
+            execution={},
+        )
+
+        body = collect_response_body(response).decode("utf-8")
+        usage_events = openai_stream_usage_events(body)
+
+        self.assertEqual(len(usage_events), 1)
+        self.assertEqual(usage_events[0]["usage"], {"prompt_tokens": 123, "completion_tokens": 45, "total_tokens": 168})
 
     def test_consume_openai_sse_events_does_not_wait_for_upstream_close_after_finish(self):
         upstream = SlowAfterTerminalResponse(openai_stream_lines())

@@ -36,7 +36,9 @@ from local_proxy.compat.protocols import (
     build_anthropic_error_payload,
     build_gemini_error_payload,
     coerce_non_negative_int,
+    ensure_openai_response_usage,
     estimate_text_tokens,
+    openai_usage_has_billable_tokens,
     convert_anthropic_request_to_openai,
     convert_openai_response_to_anthropic,
     convert_gemini_request_to_openai,
@@ -263,6 +265,20 @@ def update_openai_stream_terminal_state(
 ) -> bool:
     finished_choice_indexes.update(openai_stream_event_finish_indexes(event))
     return len(finished_choice_indexes) >= max(1, expected_choice_count)
+
+
+def build_openai_stream_usage_packet(response_body: dict, request_payload: dict | None) -> bytes:
+    usage = ensure_openai_response_usage(response_body, request_payload)
+    return format_openai_sse_payload(
+        {
+            "id": response_body.get("id", f"chatcmpl-{uuid.uuid4().hex[:16]}"),
+            "object": "chat.completion.chunk",
+            "created": int(response_body.get("created") or time.time()),
+            "model": response_body.get("model"),
+            "choices": [],
+            "usage": usage,
+        }
+    )
 
 
 def build_context_window_exceeded_error_payload(
@@ -2354,6 +2370,7 @@ def build_cached_openai_stream_response(
     execution: dict | None,
     request_payload: dict | None,
 ) -> Response:
+    ensure_openai_response_usage(cached_response_body, request_payload)
     packets = build_openai_stream_packets_from_chat_completion(cached_response_body)
     total_bytes = sum(len(packet) for packet in packets)
     duration_ms = record_request_cache_hit(
@@ -3665,6 +3682,7 @@ def proxy_response(
             response_headers["Content-Type"] = "application/json; charset=utf-8"
             return Response(body, status=502, headers=response_headers)
 
+        ensure_openai_response_usage(consumed["openai_body"], request_payload)
         packets = build_openai_stream_packets_from_chat_completion(consumed["openai_body"])
         total_bytes = sum(len(packet) for packet in packets)
         response_preview = build_preview_summary(consumed["preview_parts"])
@@ -3849,6 +3867,10 @@ def proxy_response(
                             if not openai_stream_events_have_meaningful_output(response_events):
                                 close_response_quietly(upstream_response)
                                 break
+                            if isinstance(aggregated_body := build_chat_completion_from_sse(response_events), dict) and not openai_usage_has_billable_tokens(aggregated_body.get("usage")):
+                                usage_packet = build_openai_stream_usage_packet(aggregated_body, request_payload)
+                                total_bytes += len(usage_packet)
+                                yield usage_packet
                             saw_done = True
                             payload = b"data: [DONE]\n\n"
                             total_bytes += len(payload)
@@ -3985,6 +4007,10 @@ def proxy_response(
                         yield error_packet
 
                     if upstream_response.status_code < 400 and not saw_done:
+                        if openai_stream_events_have_meaningful_output(response_events) and isinstance(aggregated_body := build_chat_completion_from_sse(response_events), dict) and not openai_usage_has_billable_tokens(aggregated_body.get("usage")):
+                            usage_packet = build_openai_stream_usage_packet(aggregated_body, request_payload)
+                            total_bytes += len(usage_packet)
+                            yield usage_packet
                         done_payload = b"data: [DONE]\n\n"
                         saw_done = True
                         total_bytes += len(done_payload)
@@ -4087,6 +4113,7 @@ def proxy_response(
                         and response_events
                         and isinstance(aggregated_body := build_chat_completion_from_sse(response_events), dict)
                     ):
+                        ensure_openai_response_usage(aggregated_body, request_payload)
                         save_request_cache_entry(
                             execution=execution or {},
                             protocol=protocol or "openai_chat_completions",
@@ -4260,6 +4287,7 @@ def proxy_response(
             )
             response_headers["Content-Type"] = "application/json; charset=utf-8"
             return Response(body, status=502, headers=response_headers)
+        ensure_openai_response_usage(aggregated_body, request_payload)
         body_bytes = json.dumps(aggregated_body, ensure_ascii=False).encode("utf-8")
         response_preview = build_preview_summary(preview_parts)
         close_response_quietly(upstream_response)
@@ -4319,6 +4347,9 @@ def proxy_response(
             normalize_chat_completion_finish_reasons(json_body)
             if repaired_tool_args or json_body.get("choices"):
                 body = json.dumps(json_body, ensure_ascii=False).encode("utf-8")
+        if route_hint == "chat/completions" and isinstance(json_body, dict) and upstream_response.status_code < 400:
+            ensure_openai_response_usage(json_body, request_payload)
+            body = json.dumps(json_body, ensure_ascii=False).encode("utf-8")
 
     issue = inspect_success_payload(
         route_hint=route_hint,

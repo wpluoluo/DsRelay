@@ -103,6 +103,43 @@ def build_anthropic_usage_from_openai(response_body: dict | None, request_payloa
     }
 
 
+def build_openai_usage_from_response(response_body: dict | None, request_payload: dict | None = None) -> dict:
+    usage = response_body.get("usage") if isinstance(response_body, dict) else {}
+    usage = dict(usage) if isinstance(usage, dict) else {}
+    prompt_tokens = coerce_non_negative_int(usage.get("prompt_tokens") or usage.get("input_tokens"))
+    completion_tokens = coerce_non_negative_int(usage.get("completion_tokens") or usage.get("output_tokens"))
+    total_tokens = coerce_non_negative_int(usage.get("total_tokens"))
+
+    if prompt_tokens <= 0 and isinstance(request_payload, dict):
+        prompt_tokens = estimate_payload_tokens(request_payload)
+    if completion_tokens <= 0:
+        completion_tokens = estimate_openai_response_completion_tokens(response_body)
+    if total_tokens <= 0:
+        total_tokens = prompt_tokens + completion_tokens
+
+    usage["prompt_tokens"] = prompt_tokens
+    usage["completion_tokens"] = completion_tokens
+    usage["total_tokens"] = total_tokens
+    return usage
+
+
+def ensure_openai_response_usage(response_body: dict | None, request_payload: dict | None = None) -> dict:
+    if not isinstance(response_body, dict):
+        return {}
+    usage = build_openai_usage_from_response(response_body, request_payload)
+    response_body["usage"] = usage
+    return usage
+
+
+def openai_usage_has_billable_tokens(usage: dict | None) -> bool:
+    if not isinstance(usage, dict):
+        return False
+    return (
+        coerce_non_negative_int(usage.get("prompt_tokens") or usage.get("input_tokens")) > 0
+        and coerce_non_negative_int(usage.get("completion_tokens") or usage.get("output_tokens")) > 0
+    )
+
+
 def flatten_anthropic_text_content(content) -> str:
     if isinstance(content, str):
         return content
