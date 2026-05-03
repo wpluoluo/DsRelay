@@ -419,6 +419,7 @@ def order_model_candidates_for_route(**kwargs) -> list[str]:
 
 def apply_model_candidate_to_request_kwargs(request_kwargs: dict, model_candidate: str | None) -> dict:
     current_request_kwargs = dict(request_kwargs)
+    current_request_kwargs["headers"] = dict(current_request_kwargs.get("headers") or {})
     if not model_candidate:
         return current_request_kwargs
 

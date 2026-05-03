@@ -43,9 +43,6 @@ def openai_choice_has_meaningful_output(choice: dict | None) -> bool:
     if not isinstance(choice, dict):
         return False
 
-    if choice.get("finish_reason") is not None:
-        return True
-
     message = choice.get("message") or {}
     content = message.get("content")
     if isinstance(content, str) and content.strip():
@@ -60,9 +57,15 @@ def openai_choice_has_meaningful_output(choice: dict | None) -> bool:
     tool_calls = message.get("tool_calls") or []
     if isinstance(tool_calls, list) and tool_calls:
         return True
+    reasoning = message.get("reasoning") or message.get("reasoning_content")
+    if isinstance(reasoning, str) and reasoning.strip():
+        return True
 
     delta = choice.get("delta") or {}
     if isinstance(delta.get("content"), str) and delta.get("content", "").strip():
+        return True
+    delta_reasoning = delta.get("reasoning") or delta.get("reasoning_content")
+    if isinstance(delta_reasoning, str) and delta_reasoning.strip():
         return True
     delta_tool_calls = delta.get("tool_calls") or []
     return isinstance(delta_tool_calls, list) and bool(delta_tool_calls)
@@ -80,6 +83,18 @@ def openai_response_has_meaningful_output(response_body: dict | None) -> bool:
         return False
 
     return any(openai_choice_has_meaningful_output(choice) for choice in choices)
+
+
+def openai_stream_events_have_meaningful_output(response_events: list[dict] | None) -> bool:
+    if not isinstance(response_events, list) or not response_events:
+        return False
+    for event in response_events:
+        if not isinstance(event, dict):
+            continue
+        for choice in event.get("choices") or []:
+            if openai_choice_has_meaningful_output(choice):
+                return True
+    return False
 
 
 def inspect_success_payload(
@@ -117,6 +132,12 @@ def inspect_success_payload(
             return {
                 "code": "empty_sse_success",
                 "message": "Upstream returned an empty streaming success payload.",
+                "preview": preview,
+            }
+        if response_events is not None and not openai_stream_events_have_meaningful_output(response_events):
+            return {
+                "code": "empty_sse_success",
+                "message": "Upstream returned a streaming success payload with no usable output.",
                 "preview": preview,
             }
         if not isinstance(payload, dict):

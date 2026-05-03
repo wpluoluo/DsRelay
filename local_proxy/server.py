@@ -76,7 +76,7 @@ from local_proxy.http.streaming import (
     iter_response_lines_with_heartbeat,
     text_indicates_client_gone,
 )
-from local_proxy.http.validation import inspect_success_payload
+from local_proxy.http.validation import inspect_success_payload, openai_stream_events_have_meaningful_output
 from local_proxy.providers.images import (
     build_image_generation_plan,
     dashscope_body_has_images,
@@ -3492,9 +3492,10 @@ def convert_openai_stream_event_to_gemini_chunks(event: dict, stream_state: dict
             "index": choice_index,
             "content": {
                 "role": "model",
-                "parts": parts or [{"text": ""}],
             },
         }
+        if parts:
+            candidate["content"]["parts"] = parts
         if finish_reason is not None:
             candidate["finishReason"] = map_openai_finish_reason_to_gemini(finish_reason)
         chunk = {
@@ -3772,6 +3773,7 @@ def proxy_response(
                 terminal_finish_reasons = []
                 saw_done = False
                 emitted_data = False
+                buffered_sse_payloads: list[bytes] = []
                 skip_next_blank = False
                 finished_choice_indexes: set[int] = set()
                 expected_choice_count = openai_stream_expected_choice_count(request_payload)
@@ -3813,6 +3815,9 @@ def proxy_response(
                             skip_next_blank = False
                             continue
                         if normalized_line == "data: [DONE]":
+                            if not openai_stream_events_have_meaningful_output(response_events):
+                                close_response_quietly(upstream_response)
+                                break
                             saw_done = True
                             payload = b"data: [DONE]\n\n"
                             total_bytes += len(payload)
@@ -3820,7 +3825,6 @@ def proxy_response(
                             close_response_quietly(upstream_response)
                             break
                         elif normalized_line.startswith("data:"):
-                            emitted_data = True
                             if first_data_event_ms is None:
                                 first_data_event_ms = int((time.perf_counter() - started_at) * 1000)
                             stream_tail_lines.append(normalized_line[:600])
@@ -3860,99 +3864,94 @@ def proxy_response(
                                         terminal_finish_reasons.pop(0)
 
                         payload = f"{normalized_line}\n".encode("utf-8")
-                        total_bytes += len(payload)
-                        yield payload
+                        event_has_output = openai_stream_events_have_meaningful_output(response_events)
+                        if event_has_output and not emitted_data:
+                            emitted_data = True
+                            for buffered_payload in buffered_sse_payloads:
+                                total_bytes += len(buffered_payload)
+                                yield buffered_payload
+                            buffered_sse_payloads.clear()
+                        if emitted_data:
+                            total_bytes += len(payload)
+                            yield payload
+                        else:
+                            buffered_sse_payloads.append(payload)
                         if terminal_event:
                             event_separator = b"\n"
-                            total_bytes += len(event_separator)
-                            yield event_separator
+                            if emitted_data:
+                                total_bytes += len(event_separator)
+                                yield event_separator
+                            else:
+                                buffered_sse_payloads.append(event_separator)
                             close_response_quietly(upstream_response)
                             break
 
-                    if upstream_response.status_code < 400 and not emitted_data:
-                        if nonempty_line_count > 0:
-                            fallback_model = None
-                            if isinstance(execution, dict):
-                                fallback_meta = build_request_observability_meta(execution, request_payload)
-                                fallback_model = fallback_meta.get("resolved_model") or fallback_meta.get("logical_model")
-                            fallback_chunk = format_openai_sse_payload(
+                    if (
+                        upstream_response.status_code < 400
+                        and not openai_stream_events_have_meaningful_output(response_events)
+                    ):
+                        issue = {
+                            "code": "empty_sse_success",
+                            "message": (
+                                "Upstream returned a streaming success payload with no usable output."
+                                if response_events
+                                else "Upstream returned an empty streaming success payload."
+                            ),
+                            "preview": json.dumps(
                                 {
-                                    "id": f"chatcmpl-{request_id}",
-                                    "object": "chat.completion.chunk",
-                                    "created": int(time.time()),
-                                    "model": upstream_response.headers.get("x-model") or fallback_model,
-                                    "choices": [
-                                        {
-                                            "index": 0,
-                                            "delta": {"role": "assistant", "content": ""},
-                                            "finish_reason": "stop",
-                                        }
-                                    ],
-                                }
-                            )
-                            total_bytes += len(fallback_chunk)
-                            emitted_data = True
-                            saw_done = True
-                            yield fallback_chunk
-                        else:
-                            issue = {
-                                "code": "empty_sse_success",
-                                "message": "Upstream returned an empty streaming success payload.",
-                                "preview": json.dumps(
-                                    {
-                                        "content_type": upstream_response.headers.get("Content-Type", ""),
-                                        "heartbeat_count": heartbeat_count,
-                                        "raw_line_count": raw_line_count,
-                                        "nonempty_line_count": nonempty_line_count,
-                                        "first_upstream_event_ms": first_upstream_event_ms,
-                                        "first_data_event_ms": first_data_event_ms,
-                                        "last_nonempty_line": last_nonempty_line,
-                                    },
-                                    ensure_ascii=False,
-                                    separators=(",", ":"),
-                                ),
-                            }
-                            mark_route_failure(upstream_url, issue["code"])
-                            if total_bytes == 0 and empty_stream_fallbacks < 2 and isinstance(request_payload, dict):
-                                stream_error = issue["code"]
-                                proxy_logger.warning(
-                                    "request_id=%s 流式空载成功，生成阶段同请求切换线路 次数=%s 当前线路=%s",
-                                    request_id,
-                                    empty_stream_fallbacks + 1,
-                                    upstream_url,
-                                )
-                                close_response_quietly(upstream_response)
-                                next_execution = execute_upstream_request(route_hint, request_payload, request_id)
-                                if isinstance(next_execution, dict):
-                                    next_execution["empty_sse_fallbacks"] = empty_stream_fallbacks + 1
-                                next_response = next_execution.get("upstream_response") if isinstance(next_execution, dict) else None
-                                if next_response is not None:
-                                    next_proxy_response = proxy_response(
-                                        next_response,
-                                        sanitize_dsml=sanitize_dsml,
-                                        request_id=request_id,
-                                        upstream_url=str(next_execution.get("upstream_url") or upstream_url),
-                                        started_at=started_at,
-                                        requested_stream=requested_stream,
-                                        route_hint=route_hint,
-                                        tool_schemas=next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else tool_schemas,
-                                        retry_count=int(next_execution.get("retry_count") or retry_count),
-                                        protocol=protocol,
-                                        request_payload=request_payload,
-                                        execution=next_execution,
-                                    )
-                                    response_body = next_proxy_response.response
-                                    if isinstance(response_body, (bytes, bytearray)):
-                                        yield bytes(response_body)
-                                    else:
-                                        yield from response_body
-                                    return
-                            error_packet = format_openai_sse_payload(
-                                build_openai_malformed_success_payload(issue=issue, retry_count=retry_count)
-                            )
+                                    "content_type": upstream_response.headers.get("Content-Type", ""),
+                                    "heartbeat_count": heartbeat_count,
+                                    "raw_line_count": raw_line_count,
+                                    "nonempty_line_count": nonempty_line_count,
+                                    "first_upstream_event_ms": first_upstream_event_ms,
+                                    "first_data_event_ms": first_data_event_ms,
+                                    "last_nonempty_line": last_nonempty_line,
+                                },
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            ),
+                        }
+                        mark_route_failure(upstream_url, issue["code"])
+                        if total_bytes == 0 and empty_stream_fallbacks < 2 and isinstance(request_payload, dict):
                             stream_error = issue["code"]
-                            total_bytes += len(error_packet)
-                            yield error_packet
+                            proxy_logger.warning(
+                                "request_id=%s 流式空载成功，生成阶段同请求切换线路 次数=%s 当前线路=%s",
+                                request_id,
+                                empty_stream_fallbacks + 1,
+                                upstream_url,
+                            )
+                            close_response_quietly(upstream_response)
+                            next_execution = execute_upstream_request(route_hint, request_payload, request_id)
+                            if isinstance(next_execution, dict):
+                                next_execution["empty_sse_fallbacks"] = empty_stream_fallbacks + 1
+                            next_response = next_execution.get("upstream_response") if isinstance(next_execution, dict) else None
+                            if next_response is not None:
+                                next_proxy_response = proxy_response(
+                                    next_response,
+                                    sanitize_dsml=sanitize_dsml,
+                                    request_id=request_id,
+                                    upstream_url=str(next_execution.get("upstream_url") or upstream_url),
+                                    started_at=started_at,
+                                    requested_stream=requested_stream,
+                                    route_hint=route_hint,
+                                    tool_schemas=next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else tool_schemas,
+                                    retry_count=int(next_execution.get("retry_count") or retry_count),
+                                    protocol=protocol,
+                                    request_payload=request_payload,
+                                    execution=next_execution,
+                                )
+                                response_body = next_proxy_response.response
+                                if isinstance(response_body, (bytes, bytearray)):
+                                    yield bytes(response_body)
+                                else:
+                                    yield from response_body
+                                return
+                        error_packet = format_openai_sse_payload(
+                            build_openai_malformed_success_payload(issue=issue, retry_count=retry_count)
+                        )
+                        stream_error = issue["code"]
+                        total_bytes += len(error_packet)
+                        yield error_packet
 
                     if upstream_response.status_code < 400 and not saw_done:
                         done_payload = b"data: [DONE]\n\n"
@@ -5998,21 +5997,21 @@ def handle_gemini_stream_response(
                     break
 
             if not emitted_any:
-                fallback_chunk = {
-                    "candidates": [
+                issue = {
+                    "code": "empty_sse_success",
+                    "message": "Upstream returned an empty streaming success payload.",
+                    "preview": json.dumps(
                         {
-                            "index": 0,
-                            "content": {
-                                "role": "model",
-                                "parts": [{"text": ""}],
-                            },
-                            "finishReason": "STOP",
-                        }
-                    ],
+                            "content_type": content_type,
+                            "emitted_any": False,
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
                 }
-                packet = f"data: {json.dumps(fallback_chunk, ensure_ascii=False, separators=(',', ':'))}\n\n".encode("utf-8")
+                packet = f"data: {json.dumps(build_gemini_malformed_success_payload(issue=issue, retry_count=retry_count), ensure_ascii=False, separators=(',', ':'))}\n\n".encode("utf-8")
+                stream_error = issue["code"]
                 total_bytes += len(packet)
-                terminal_chunk_sent = True
                 yield packet
         except GeneratorExit as exc:  # pragma: no cover
             if not terminal_chunk_sent:

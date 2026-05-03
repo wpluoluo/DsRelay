@@ -45,6 +45,16 @@ def _is_deterministic_upstream_failure(status_code: int, reason: str, preview: s
     )
 
 
+def _set_authorization_header(request_kwargs: dict, api_key: str) -> None:
+    headers = dict(request_kwargs.get("headers") or {})
+    headers.pop("Authorization", None)
+    headers.pop("authorization", None)
+    key = str(api_key or "").strip()
+    if key:
+        headers["Authorization"] = key if key.lower().startswith("bearer ") else f"Bearer {key}"
+    request_kwargs["headers"] = headers
+
+
 def request_upstream_with_retries(
     request_kwargs: dict,
     *,
@@ -155,12 +165,12 @@ def request_upstream_with_retries(
                 race_key_choice = choose_api_key_for_url(attempt_url, exclude=route_key_failures.get(attempt_url, set()))
                 race_key = str(race_key_choice.get("key") or "")
                 if race_key:
-                    if race_key.lower().startswith("bearer "):
-                        request_kwargs.setdefault("headers", {})["Authorization"] = race_key
-                    else:
-                        request_kwargs.setdefault("headers", {})["Authorization"] = f"Bearer {race_key}"
+                    race_request_kwargs = dict(request_kwargs)
+                    _set_authorization_header(race_request_kwargs, race_key)
+                else:
+                    race_request_kwargs = request_kwargs
                 race_outcome = race_model_candidate_requests(
-                    request_kwargs=request_kwargs,
+                    request_kwargs=race_request_kwargs,
                     route_url=attempt_url,
                     candidates=race_candidates,
                     logical_model=logical_model,
@@ -234,10 +244,7 @@ def request_upstream_with_retries(
             route_cycle = build_attempt_url_cycle(candidate_urls, blocked_urls)
             continue
         if attempt_key:
-            if attempt_key.lower().startswith("bearer "):
-                current_request_kwargs.setdefault("headers", {})["Authorization"] = attempt_key
-            else:
-                current_request_kwargs.setdefault("headers", {})["Authorization"] = f"Bearer {attempt_key}"
+            _set_authorization_header(current_request_kwargs, attempt_key)
         learned_request_repairs = apply_learned_completion_limit_to_request_kwargs(
             current_request_kwargs,
             logical_model=logical_model,
