@@ -1769,6 +1769,7 @@ def execute_upstream_request(
     *,
     request_method: str = "POST",
     raw_body: bytes | None = None,
+    initial_blocked_urls: set[str] | None = None,
 ) -> dict:
     upstream_urls = build_upstream_url_candidates(subpath)
     requested_stream = bool(isinstance(request_payload, dict) and request_payload.get("stream"))
@@ -1891,6 +1892,7 @@ def execute_upstream_request(
         subpath=subpath,
         request_id=request_id,
         upstream_urls=upstream_urls,
+        initial_blocked_urls=initial_blocked_urls,
         model_candidates=model_candidates,
     )
     selected_upstream_url = next(
@@ -2267,6 +2269,7 @@ def request_upstream_with_retries(
     subpath: str,
     request_id: str,
     upstream_urls: list[str] | None = None,
+    initial_blocked_urls: set[str] | None = None,
     model_candidates: list[str] | None = None,
 ) -> tuple[requests.Response | None, list[dict], requests.RequestException | None]:
     with state_lock:
@@ -2276,6 +2279,7 @@ def request_upstream_with_retries(
         subpath=subpath,
         request_id=request_id,
         upstream_urls=upstream_urls,
+        initial_blocked_urls=initial_blocked_urls,
         model_candidates=model_candidates,
         should_retry_request=should_retry_upstream_request,
         max_retries=UPSTREAM_MAX_RETRIES,
@@ -3214,6 +3218,19 @@ def retry_malformed_success_once(
     if malformed_success_fallbacks >= 2 or not isinstance(request_payload, dict):
         return None
 
+    previous_attempts = list((execution or {}).get("attempts") or [])
+    previous_retry_count = int((execution or {}).get("retry_count") or 0)
+    previous_url_pool = list((execution or {}).get("upstream_url_pool") or [])
+    blocked_urls = {
+        str(item.get("upstream_url") or "")
+        for item in previous_attempts
+        if isinstance(item, dict) and str(item.get("action") or "") == "switch_route"
+    }
+    if upstream_url:
+        blocked_urls.add(upstream_url)
+    if previous_url_pool and len(blocked_urls) >= len(previous_url_pool):
+        blocked_urls = {upstream_url} if upstream_url and len(previous_url_pool) > 1 else set()
+
     proxy_logger.warning(
         "request_id=%s 异常成功体，准备同请求切换线路 次数=%s 当前线路=%s 原因=%s",
         request_id,
@@ -3222,9 +3239,20 @@ def retry_malformed_success_once(
         str(issue.get("code") or "malformed_success"),
     )
     mark_route_failure(upstream_url, str(issue.get("code") or "malformed_success"))
-    next_execution = execute_upstream_request(route_hint, request_payload, request_id)
+    next_execution = execute_upstream_request(
+        route_hint,
+        request_payload,
+        request_id,
+        initial_blocked_urls=blocked_urls,
+    )
     if isinstance(next_execution, dict):
         next_execution["malformed_success_fallbacks"] = malformed_success_fallbacks + 1
+        next_attempts = list(next_execution.get("attempts") or [])
+        if previous_attempts:
+            next_execution["attempts"] = previous_attempts + next_attempts
+            next_execution["retry_count"] = previous_retry_count + len(next_attempts)
+        elif previous_retry_count:
+            next_execution["retry_count"] = previous_retry_count + int(next_execution.get("retry_count") or 0)
     return next_execution if isinstance(next_execution, dict) else None
 
 
@@ -5280,9 +5308,9 @@ def anthropic_messages():
                     retry_count=next_retry_count,
                     observability_meta=build_request_observability_meta(next_execution, openai_payload) | {"_execution": next_execution},
                 )
+            retry_count = next_retry_count
             if "text/event-stream" in str(next_response.headers.get("Content-Type", "")).lower():
                 upstream_response = next_response
-                retry_count = next_retry_count
                 tool_schemas = next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else tool_schemas
                 content_type = upstream_response.headers.get("Content-Type", "")
                 consumed = consume_openai_sse_events(upstream_response, tool_schemas)
@@ -5328,6 +5356,60 @@ def anthropic_messages():
                         request_id,
                         started_at=started_at,
                         status_code=upstream_response.status_code,
+                        bytes_sent=len(body),
+                        stream=False,
+                        sanitized_markers=consumed["sanitized_markers"],
+                        response_preview=None,
+                        repaired_tool_args=consumed["repaired_tool_args"],
+                        extra_meta=build_request_observability_meta(next_execution, openai_payload),
+                    )
+                    return Response(
+                        body,
+                        status=200,
+                        headers={
+                            "Content-Type": "application/json; charset=utf-8",
+                            "X-Proxy-Retries": str(retry_count),
+                        },
+                    )
+            else:
+                consumed = read_upstream_openai_response_body(next_response, tool_schemas)
+                openai_body = consumed["openai_body"]
+                issue = inspect_success_payload(
+                    route_hint="chat/completions",
+                    content_type=str(next_response.headers.get("Content-Type", "")),
+                    body=next_response.content,
+                    response_body=openai_body,
+                    raw_error_lines=consumed.get("raw_error_lines"),
+                )
+                if not issue:
+                    anthropic_body = convert_openai_response_to_anthropic(openai_body, tool_schemas)
+                    body = json.dumps(anthropic_body, ensure_ascii=False).encode("utf-8")
+                    response_preview = build_preview_summary(consumed["preview_parts"])
+                    close_response_quietly(next_response)
+                    proxy_logger.info(
+                        "request_id=%s 上游=%s 状态=%s 协议=anthropic_messages 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
+                        request_id,
+                        str(next_execution.get("upstream_url") or upstream_url),
+                        next_response.status_code,
+                        len(body),
+                        int((time.perf_counter() - started_at) * 1000),
+                        consumed["sanitized_markers"],
+                        consumed["repaired_tool_args"],
+                        retry_count,
+                        response_preview or "",
+                    )
+                    save_request_cache_entry(
+                        execution=next_execution,
+                        protocol="anthropic_messages",
+                        path="chat/completions",
+                        request_payload=openai_payload,
+                        response_body=anthropic_body,
+                        upstream_url=str(next_execution.get("upstream_url") or upstream_url),
+                    )
+                    finalize_request_record(
+                        request_id,
+                        started_at=started_at,
+                        status_code=next_response.status_code,
                         bytes_sent=len(body),
                         stream=False,
                         sanitized_markers=consumed["sanitized_markers"],

@@ -95,6 +95,7 @@ def request_upstream_with_retries(
     model_candidate_race_timeout_seconds: int,
     enable_model_candidate_race: bool,
     request_sender: Any,
+    initial_blocked_urls: set[str] | None = None,
 ) -> tuple[requests.Response | None, list[dict], requests.RequestException | None]:
     retry_allowed = should_retry_request(subpath, str(request_kwargs.get("method", "GET")))
     model_candidates = [
@@ -111,7 +112,13 @@ def request_upstream_with_retries(
     attempts = []
     last_exception = None
     last_response = None
-    blocked_urls = set()
+    blocked_urls = {
+        str(url)
+        for url in (initial_blocked_urls or set())
+        if str(url) in candidate_urls
+    }
+    if len(blocked_urls) >= len(candidate_urls):
+        blocked_urls = set()
     route_model_index = {}
     route_model_orders = {}
     raced_routes = set()
