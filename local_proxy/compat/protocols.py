@@ -91,16 +91,29 @@ def build_anthropic_usage_from_openai(response_body: dict | None, request_payloa
     usage = usage if isinstance(usage, dict) else {}
     input_tokens = coerce_non_negative_int(usage.get("prompt_tokens") or usage.get("input_tokens"))
     output_tokens = coerce_non_negative_int(usage.get("completion_tokens") or usage.get("output_tokens"))
+    cache_read_input_tokens = coerce_non_negative_int(
+        usage.get("cache_read_input_tokens")
+        or ((usage.get("prompt_tokens_details") or {}).get("cached_tokens") if isinstance(usage.get("prompt_tokens_details"), dict) else 0)
+    )
+    cache_creation_input_tokens = coerce_non_negative_int(
+        usage.get("cache_creation_input_tokens")
+        or ((usage.get("prompt_tokens_details") or {}).get("cache_creation_tokens") if isinstance(usage.get("prompt_tokens_details"), dict) else 0)
+    )
 
     if input_tokens <= 0 and isinstance(request_payload, dict):
         input_tokens = estimate_payload_tokens(request_payload)
     if output_tokens <= 0:
         output_tokens = estimate_openai_response_completion_tokens(response_body)
 
-    return {
+    result = {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
     }
+    if cache_read_input_tokens > 0:
+        result["cache_read_input_tokens"] = cache_read_input_tokens
+    if cache_creation_input_tokens > 0:
+        result["cache_creation_input_tokens"] = cache_creation_input_tokens
+    return result
 
 
 def build_openai_usage_from_response(response_body: dict | None, request_payload: dict | None = None) -> dict:
@@ -117,9 +130,31 @@ def build_openai_usage_from_response(response_body: dict | None, request_payload
     if total_tokens <= 0:
         total_tokens = prompt_tokens + completion_tokens
 
+    prompt_tokens_details = usage.get("prompt_tokens_details")
+    if not isinstance(prompt_tokens_details, dict):
+        prompt_tokens_details = {}
+    cached_tokens = coerce_non_negative_int(
+        prompt_tokens_details.get("cached_tokens")
+        or usage.get("cache_read_input_tokens")
+    )
+    cache_creation_tokens = coerce_non_negative_int(
+        prompt_tokens_details.get("cache_creation_tokens")
+        or usage.get("cache_creation_input_tokens")
+    )
+    if cached_tokens > 0:
+        prompt_tokens_details["cached_tokens"] = cached_tokens
+    if cache_creation_tokens > 0:
+        prompt_tokens_details["cache_creation_tokens"] = cache_creation_tokens
+
     usage["prompt_tokens"] = prompt_tokens
     usage["completion_tokens"] = completion_tokens
     usage["total_tokens"] = total_tokens
+    if prompt_tokens_details:
+        usage["prompt_tokens_details"] = prompt_tokens_details
+    if cached_tokens > 0:
+        usage["cache_read_input_tokens"] = cached_tokens
+    if cache_creation_tokens > 0:
+        usage["cache_creation_input_tokens"] = cache_creation_tokens
     return usage
 
 

@@ -3,6 +3,7 @@ import unittest
 import requests
 
 from local_proxy.upstream.orchestrator import request_upstream_with_retries
+from local_proxy.upstream.router import build_attempt_url_cycle, mark_route_failure
 
 
 class NullLogger:
@@ -23,6 +24,39 @@ def make_response(status_code: int, body: str, url: str) -> requests.Response:
 
 
 class GatewayFailoverTests(unittest.TestCase):
+    def test_route_cycle_prefers_session_affinity_route(self):
+        route_health = {}
+        route_selection_state = {
+            "affinity:session-1": {
+                "route_url": "https://b.example/v1/chat/completions",
+                "last_used_at": 1.0,
+            }
+        }
+
+        class DummyLock:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        ordered = build_attempt_url_cycle(
+            [
+                "https://a.example/v1/chat/completions",
+                "https://b.example/v1/chat/completions",
+                "https://c.example/v1/chat/completions",
+            ],
+            set(),
+            route_health=route_health,
+            route_selection_state=route_selection_state,
+            state_lock=DummyLock(),
+            randomize_endpoints=False,
+            route_score_provider=lambda url: 0.0,
+            session_affinity_key="session-1",
+        )
+
+        self.assertEqual(ordered[0], "https://b.example/v1/chat/completions")
+
     def test_html_504_switches_to_next_healthy_route_before_key_rotation(self):
         sent_urls = []
         key_failures = []
@@ -346,6 +380,7 @@ class GatewayFailoverTests(unittest.TestCase):
 
     def test_429_switches_to_next_route_instead_of_retrying_same_limited_route(self):
         sent_urls = []
+        route_failures = []
 
         def sender(**kwargs):
             url = kwargs["url"]
@@ -386,7 +421,7 @@ class GatewayFailoverTests(unittest.TestCase):
             mark_api_key_success=lambda url, key: None,
             mark_api_key_failure=lambda url, key, reason, force_cooldown=False: None,
             mark_route_success=lambda url: None,
-            mark_route_failure=lambda url, reason: None,
+            mark_route_failure=lambda url, reason: route_failures.append((url, reason)),
             response_indicates_model_unavailable=lambda response: False,
             classify_upstream_response=lambda response: (
                 ("switch_route", f"route_switch_{response.status_code}")
@@ -425,7 +460,65 @@ class GatewayFailoverTests(unittest.TestCase):
         )
         self.assertEqual(attempts[0]["status_code"], 429)
         self.assertEqual(attempts[0]["action"], "switch_route")
+        self.assertEqual(route_failures, [("https://limited.example/v1/chat/completions", "route_switch_429")])
 
+    def test_route_failure_cooldown_supports_policy_multiplier_and_cap(self):
+        route_health = {}
+
+        class DummyLock:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        state_lock = DummyLock()
+        route_url = "https://limited.example/v1/chat/completions"
+
+        mark_route_failure(
+            route_health,
+            state_lock,
+            route_url,
+            "route_switch_429",
+            route_cooldown_seconds=10,
+            route_switch_window_seconds=1,
+            route_failure_threshold=1,
+            route_cooldown_multiplier=2.0,
+            route_cooldown_max_seconds=25,
+        )
+        first_until = route_health[route_url]["cooldown_until"]
+        first_failure_at = route_health[route_url]["last_failure_at"]
+        self.assertAlmostEqual(first_until - first_failure_at, 10, delta=2)
+
+        mark_route_failure(
+            route_health,
+            state_lock,
+            route_url,
+            "route_switch_429",
+            route_cooldown_seconds=10,
+            route_switch_window_seconds=1,
+            route_failure_threshold=1,
+            route_cooldown_multiplier=2.0,
+            route_cooldown_max_seconds=25,
+        )
+        second_until = route_health[route_url]["cooldown_until"]
+        second_failure_at = route_health[route_url]["last_failure_at"]
+        self.assertAlmostEqual(second_until - second_failure_at, 20, delta=2)
+
+        mark_route_failure(
+            route_health,
+            state_lock,
+            route_url,
+            "route_switch_429",
+            route_cooldown_seconds=10,
+            route_switch_window_seconds=1,
+            route_failure_threshold=1,
+            route_cooldown_multiplier=2.0,
+            route_cooldown_max_seconds=25,
+        )
+        third_until = route_health[route_url]["cooldown_until"]
+        third_failure_at = route_health[route_url]["last_failure_at"]
+        self.assertAlmostEqual(third_until - third_failure_at, 25, delta=2)
 
 if __name__ == "__main__":
     unittest.main()

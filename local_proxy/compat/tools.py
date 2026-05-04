@@ -4,6 +4,7 @@ import re
 import sys
 import time
 import uuid
+import json
 
 from local_proxy.upstream.capabilities import (
     clamp_payload_output_tokens,
@@ -16,6 +17,38 @@ PROXY_SYSTEM_PROMPT_ZH = ""
 ENABLE_REQUEST_NORMALIZATION = True
 MAX_COMPLETION_TOKENS = 0
 MODEL_CAPABILITIES = {}
+
+
+def _coerce_non_negative_int(value) -> int:
+    if value is None or isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return max(0, int(value))
+    try:
+        return max(0, int(float(str(value).strip())))
+    except Exception:
+        return 0
+
+
+def normalize_openai_usage_payload(usage: dict | None) -> dict:
+    usage = dict(usage) if isinstance(usage, dict) else {}
+    prompt_details = usage.get("prompt_tokens_details")
+    prompt_details = prompt_details if isinstance(prompt_details, dict) else {}
+    cached_tokens = _coerce_non_negative_int(
+        prompt_details.get("cached_tokens") or usage.get("cache_read_input_tokens")
+    )
+    cache_creation_tokens = _coerce_non_negative_int(
+        prompt_details.get("cache_creation_tokens") or usage.get("cache_creation_input_tokens")
+    )
+    if cached_tokens > 0:
+        prompt_details["cached_tokens"] = cached_tokens
+        usage["cache_read_input_tokens"] = cached_tokens
+    if cache_creation_tokens > 0:
+        prompt_details["cache_creation_tokens"] = cache_creation_tokens
+        usage["cache_creation_input_tokens"] = cache_creation_tokens
+    if prompt_details:
+        usage["prompt_tokens_details"] = prompt_details
+    return usage
 
 
 def configure_tool_compat(
@@ -3345,6 +3378,8 @@ def normalize_sse_line(line: str, choice_states: dict, tool_schemas: dict) -> tu
 
     sanitized_markers = 0
     repaired_tool_args = 0
+    if isinstance(event.get("usage"), dict):
+        event["usage"] = normalize_openai_usage_payload(event.get("usage"))
     choices = event.get("choices")
     if isinstance(choices, list):
         normalized_choices = []

@@ -1108,6 +1108,26 @@
             <div id="capPanels"></div>
           </div>
         </div>
+
+        <div class="panel">
+          <div class="panel-head"><h3><svg width="18" height="18" viewBox="0 0 20 20" fill="none" style="vertical-align:-4px;margin-right:6px;"><path d="M3 4h14M3 10h14M3 16h14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="7" cy="4" r="1.5" fill="currentColor"/><circle cx="13" cy="10" r="1.5" fill="currentColor"/><circle cx="9" cy="16" r="1.5" fill="currentColor"/></svg>线路级缓存与粘滞</h3><span class="subtle mono" style="font-size:11px;" id="routeObservabilitySummary">读取中...</span></div>
+          <div class="request-table-wrap">
+            <table class="request-table">
+              <thead>
+                <tr>
+                  <th>线路</th>
+                  <th>池 / 状态</th>
+                  <th>请求</th>
+                  <th>缓存</th>
+                  <th>粘滞</th>
+                  <th>Hint</th>
+                  <th>异常</th>
+                </tr>
+              </thead>
+              <tbody id="routeObservabilityBody"></tbody>
+            </table>
+          </div>
+        </div>
       </section>
 
       <!-- ===== Requests View ===== -->
@@ -1358,6 +1378,11 @@
                   <div class="ic-value" id="configResumeInfo">读取中...</div>
                   <div class="ic-sub" id="configResumeMeta">同步中...</div>
                 </div>
+                <div class="info-card">
+                  <div class="ic-label">前缀缓存</div>
+                  <div class="ic-value" id="configCacheInfo">读取中...</div>
+                  <div class="ic-sub" id="configCacheMeta">同步中...</div>
+                </div>
               </div>
             </div>
           </div>
@@ -1409,6 +1434,8 @@
     const requestSparklineEl = document.getElementById("requestSparkline");
     const sidebarStatusEl = document.getElementById("sidebarStatus");
     const sidebarStatusAltEl = document.getElementById("sidebarStatusAlt");
+    const routeObservabilityBodyEl = document.getElementById("routeObservabilityBody");
+    const routeObservabilitySummaryEl = document.getElementById("routeObservabilitySummary");
     const configTabsEl = document.getElementById("configTabs");
     const configTabPanels = Array.from(document.querySelectorAll("[data-config-panel]"));
 
@@ -1452,6 +1479,8 @@
     const configModelAliasMetaEl = document.getElementById("configModelAliasMeta");
     const configResumeInfoEl = document.getElementById("configResumeInfo");
     const configResumeMetaEl = document.getElementById("configResumeMeta");
+    const configCacheInfoEl = document.getElementById("configCacheInfo");
+    const configCacheMetaEl = document.getElementById("configCacheMeta");
     const refreshNowBtn = document.getElementById("refreshNowBtn");
     const saveConfigBtn = document.getElementById("saveConfigBtn");
     const themeToggle = document.getElementById("themeToggle");
@@ -1728,6 +1757,7 @@
       var config = data.config || {};
       var retry = runtime.retry_config || {};
       var image = runtime.image_generation || {};
+      var cacheObs = data.cache_observability || {};
       var poolsCount = Number(data.pools_count || config.pools_count || 0);
       var enabledPools = Number(data.pools_enabled_count || config.pools_enabled_count || 0);
       var upstreamCount = Number(data.upstream_url_count || (config.upstream_urls || []).length || 0);
@@ -1743,6 +1773,21 @@
       var resumeSaved = Number(cacheStats.interruption_resume_saved || 0);
       var resumeCleared = Number(cacheStats.interruption_resume_cleared || 0);
       var interruptedEntries = Number((runtime.model_routing && runtime.model_routing.interrupted_response_entries) || 0);
+      var hitRate = Number(cacheObs.cache_hit_rate || 0);
+      var avgCacheReadTokens = Number(cacheObs.avg_cache_read_input_tokens || 0);
+      var stickySessionCount = Number(cacheObs.sticky_session_count || 0);
+      var stickySessionTotal = Number(cacheObs.sticky_session_total || 0);
+      var stickySessionRate = Number(cacheObs.sticky_session_rate || 0);
+      var activeAffinityKeys = Number(cacheObs.active_affinity_keys || 0);
+      var pools = Array.isArray(config.pools) ? config.pools : [];
+      var hintEnabledPools = pools.filter(function(pool) {
+        var routePolicy = (pool && pool.route_policy) || {};
+        return String(routePolicy.prompt_cache_hints_mode || "auto") !== "off";
+      });
+      var autoHintPools = hintEnabledPools.filter(function(pool) {
+        var routePolicy = (pool && pool.route_policy) || {};
+        return String(routePolicy.prompt_cache_hints_mode || "auto") === "auto";
+      }).length;
 
       setText(configRouteInfoEl, poolsCount ? (enabledPools + " / " + poolsCount + " 池启用") : (upstreamCount + " 条直连"));
       setText(configRouteMetaEl, upstreamCount + " 条链路 · 冷却 " + Number(retry.cooled_routes || 0));
@@ -1764,6 +1809,46 @@
       setText(configModelAliasMetaEl, capabilityCount + " 条能力 · 路由命中 " + Number((runtime.model_routing && runtime.model_routing.cache_stats && runtime.model_routing.cache_stats.model_route_hits) || 0));
       setText(configResumeInfoEl, resumeEnabled ? "已启用" : "已关闭");
       setText(configResumeMetaEl, "注入 " + resumeInjected + " · 保存 " + resumeSaved + " · 清理 " + resumeCleared + " · 条目 " + interruptedEntries);
+      setText(configCacheInfoEl, "命中率 " + (hitRate * 100).toFixed(1) + "% · 平均读 " + Math.round(avgCacheReadTokens));
+      setText(
+        configCacheMetaEl,
+        "会话粘滞 " + stickySessionCount + "/" + stickySessionTotal +
+        " (" + (stickySessionRate * 100).toFixed(1) + "%) · 粘滞线路 " + activeAffinityKeys +
+        " · Hint 池 " + hintEnabledPools.length + (autoHintPools ? (" · Auto " + autoHintPools) : "")
+      );
+    }
+
+    function renderRouteObservability(data) {
+      if (!routeObservabilityBodyEl) return;
+      var rows = Array.isArray((data || {}).route_observability) ? data.route_observability : [];
+      if (routeObservabilitySummaryEl) {
+        var coolingCount = rows.filter(function(item) { return !!item.cooling; }).length;
+        routeObservabilitySummaryEl.textContent = rows.length ? ("线路 " + rows.length + " · 冷却 " + coolingCount) : "暂无线路数据";
+      }
+      if (!rows.length) {
+        routeObservabilityBodyEl.innerHTML = '<tr><td colspan="7"><div class="request-empty">暂无线路级观测数据。</div></td></tr>';
+        return;
+      }
+      routeObservabilityBodyEl.innerHTML = rows.map(function(item) {
+        var requestCount = Number(item.request_count || 0);
+        var successCount = Number(item.success_count || 0);
+        var errorCount = Number(item.error_count || 0);
+        var status429Count = Number(item.status_429_count || 0);
+        var cacheHitRate = Number(item.cache_hit_rate || 0);
+        var avgCacheRead = Number(item.avg_cache_read_input_tokens || 0);
+        var stickyRate = Number(item.sticky_session_rate || 0);
+        var hintRate = Number(item.hint_applied_rate || 0);
+        var statusBadge = item.cooling ? '<span class="request-chip warn">冷却中</span>' : '<span class="request-chip ok">可用</span>';
+        return '<tr>' +
+          '<td><div class="request-stack"><div class="request-cell-title request-ellipsis">' + escapeHtml(item.route_url || "-") + '</div><div class="request-cell-sub">活跃粘滞 ' + escapeHtml(item.active_affinity_count || 0) + '</div></div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(item.pool_name || "-") + '</div><div class="request-cell-sub">' + statusBadge + '</div></div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(requestCount) + '</div><div class="request-cell-sub">成功 ' + escapeHtml(successCount) + ' · 错误 ' + escapeHtml(errorCount) + '</div></div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml((cacheHitRate * 100).toFixed(1) + "%") + '</div><div class="request-cell-sub">平均读 ' + escapeHtml(Math.round(avgCacheRead)) + ' token</div></div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(item.sticky_session_count || 0) + '/' + escapeHtml(item.session_count || 0) + '</div><div class="request-cell-sub">粘滞率 ' + escapeHtml((stickyRate * 100).toFixed(1) + "%") + '</div></div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(item.hint_applied_count || 0) + '</div><div class="request-cell-sub">生效率 ' + escapeHtml((hintRate * 100).toFixed(1) + "%") + '</div></div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-title">429 ' + escapeHtml(status429Count) + '</div><div class="request-cell-sub">失败链 ' + escapeHtml(item.consecutive_failures || 0) + (item.last_reason ? (' · ' + escapeHtml(item.last_reason)) : '') + '</div></div></td>' +
+        '</tr>';
+      }).join("");
     }
 
     function setProxyKeyStatus(message, type) {
@@ -1883,6 +1968,7 @@
       renderCapabilities(runtime);
       renderSparkline();
       renderConfigSummary(data);
+      renderRouteObservability(data);
     }
 
     function renderConfig(config, force) {
@@ -1974,28 +2060,30 @@
         var statusTone = entry.error || (Number(entry.status_code || 0) >= 400) ? "err" : "ok";
         var poolName = entry.pool_name || "-";
         var keyIndex = entry.api_key_index == null ? "-" : ("Key " + (Number(entry.api_key_index) + 1));
+        var routeIndex = entry.selected_route_index == null ? "-" : ("线路 " + (Number(entry.selected_route_index) + 1));
+        var routePoolSize = Number(entry.route_pool_size || 0);
+        var routeAttemptCount = Number(entry.attempt_route_count || 0);
         var logicalModel = entry.logical_model || "-";
         var resolvedModel = entry.resolved_model || logicalModel || "-";
         var inputBytes = Number(entry.input_bytes || 0);
         var outputBytes = Number(entry.bytes_sent || 0);
         var cacheReadBytes = Number(entry.cache_read_bytes || 0);
+        var promptTokens = Number(entry.prompt_tokens || 0);
+        var completionTokens = Number(entry.completion_tokens || 0);
+        var totalTokens = Number(entry.total_tokens || 0);
+        var cacheReadTokens = Number(entry.cache_read_input_tokens || 0);
+        var cacheCreationTokens = Number(entry.cache_creation_input_tokens || 0);
         var cacheStatus = String(entry.cache_status || (entry.cache_hit ? "hit" : "miss"));
         var cacheNote = String(entry.cache_note || "");
-        var originalMessages = Number(entry.original_message_count || 0);
-        var sentMessages = Number(entry.sent_message_count || 0);
-        var droppedMessages = Number(entry.dropped_message_count || 0);
-        var trimmedContent = Number(entry.trimmed_content_count || 0);
-        var compressionMode = String(entry.compression_mode || "");
-        var policySummary = originalMessages || sentMessages
-          ? ("历史 " + originalMessages + "→" + sentMessages + " · 丢弃 " + droppedMessages)
-          : "历史 -";
-        if (compressionMode) policySummary += " · " + compressionMode;
-        if (trimmedContent) policySummary += " · 截短 " + trimmedContent;
         var cacheSummary = "缓存读 " + cacheReadBytes + " B";
+        var tokenSummary = "Token " + promptTokens + " IN · " + completionTokens + " OUT";
+        if (cacheReadTokens > 0) tokenSummary += " · 缓存读 " + cacheReadTokens;
+        if (cacheCreationTokens > 0) tokenSummary += " · 缓存写 " + cacheCreationTokens;
+        if (totalTokens > 0) tokenSummary += " · 总 " + totalTokens;
         if (entry.cache_hit) {
           cacheSummary += " · 命中";
           if (entry.cache_source) cacheSummary += " · " + entry.cache_source;
-        } else if (cacheStatus === "bypass_stream" || cacheStatus === "bypass_tools" || cacheStatus === "bypass_format" || cacheStatus === "bypass_policy" || cacheStatus === "bypass_payload") {
+        } else if (cacheStatus === "miss_stream" || cacheStatus === "bypass_stream" || cacheStatus === "bypass_tools" || cacheStatus === "bypass_format" || cacheStatus === "bypass_policy" || cacheStatus === "bypass_payload") {
           cacheSummary += " · 跳过";
           if (cacheNote) cacheSummary += " · " + cacheNote;
         } else {
@@ -2004,11 +2092,11 @@
         return '<tr>' +
           '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(entry.started_at || "-") + '</div><div class="request-cell-sub request-mono">' + escapeHtml(entry.request_id || "-") + '</div></div></td>' +
           '<td><div class="request-chip-row"><span class="request-chip accent">' + escapeHtml(entry.protocol || "auto") + '</span>' + (entry.stream ? '<span class="request-chip warn">流</span>' : '<span class="request-chip">非流</span>') + '</div></td>' +
-          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(entry.remote || "-") + '</div><div class="request-cell-sub">重试 ' + escapeHtml(entry.retry_count || 0) + ' · 线路 ' + escapeHtml(entry.route_pool_size || 1) + '</div></div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(entry.remote || "-") + '</div><div class="request-cell-sub">重试 ' + escapeHtml(entry.retry_count || 0) + ' · 候选线路 ' + escapeHtml(routePoolSize || 1) + (routeAttemptCount ? (' · 尝试线路 ' + escapeHtml(routeAttemptCount)) : '') + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml((entry.method || "REQ") + " " + (entry.path || "")) + '</div><div class="request-cell-sub">' + (entry.client_gone ? '客户端断开' : '请求完成') + '</div></div></td>' +
-          '<td><div class="request-stack"><div class="request-cell-title request-ellipsis">' + escapeHtml(logicalModel) + '</div><div class="request-cell-sub request-ellipsis">' + escapeHtml(resolvedModel) + '</div><div class="request-cell-sub">' + escapeHtml(poolName) + ' · ' + escapeHtml(keyIndex) + '</div></div></td>' +
-          '<td><div class="request-chip-row"><span class="request-chip ok">' + escapeHtml(entry.duration_ms || "-") + ' ms</span><span class="request-chip">' + escapeHtml(inputBytes) + ' IN</span><span class="request-chip">' + escapeHtml(outputBytes) + ' OUT</span></div><div class="request-cell-sub">' + escapeHtml(cacheSummary) + '</div></td>' +
-          '<td><div class="request-stack"><div class="request-cell-sub">请求 ' + escapeHtml(entry.request_repairs || 0) + ' · DSML ' + escapeHtml(entry.sanitized_markers || 0) + ' · 工具 ' + escapeHtml(entry.repaired_tool_args || 0) + '</div><div class="request-cell-sub">' + escapeHtml(policySummary) + '</div></div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-title request-ellipsis">' + escapeHtml(logicalModel) + '</div><div class="request-cell-sub request-ellipsis">' + escapeHtml(resolvedModel) + '</div><div class="request-cell-sub">' + escapeHtml(poolName) + ' · ' + escapeHtml(routeIndex) + ' · ' + escapeHtml(keyIndex) + '</div></div></td>' +
+          '<td><div class="request-chip-row"><span class="request-chip ok">' + escapeHtml(entry.duration_ms || "-") + ' ms</span><span class="request-chip">' + escapeHtml(inputBytes) + ' IN</span><span class="request-chip">' + escapeHtml(outputBytes) + ' OUT</span></div><div class="request-cell-sub">' + escapeHtml(tokenSummary) + '</div><div class="request-cell-sub">' + escapeHtml(cacheSummary) + '</div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-sub">请求 ' + escapeHtml(entry.request_repairs || 0) + ' · DSML ' + escapeHtml(entry.sanitized_markers || 0) + ' · 工具 ' + escapeHtml(entry.repaired_tool_args || 0) + '</div><div class="request-cell-sub">缓存 ' + escapeHtml(cacheStatus) + (cacheNote ? (' · ' + escapeHtml(cacheNote)) : '') + '</div></div></td>' +
           '<td><div class="request-chip-row"><span class="request-chip ' + statusTone + '">状态 ' + escapeHtml(entry.status_code || "-") + '</span>' + (entry.error ? '<span class="request-chip err">异常</span>' : '') + '</div></td>' +
           '<td><div class="request-stack">' + (entry.response_preview ? '<div class="request-cell-sub request-mono request-ellipsis">' + escapeHtml(entry.response_preview).slice(0, 220) + '</div>' : '<div class="request-cell-sub">无预览</div>') + (entry.upstream_attempt_chain ? '<div class="request-cell-sub request-ellipsis">链路 ' + escapeHtml(entry.upstream_attempt_chain).slice(0, 160) + '</div>' : '') + (entry.error ? '<div class="request-cell-sub request-ellipsis" style="color:var(--error);">' + escapeHtml(entry.error) + '</div>' : '') + '</div></td>' +
         '</tr>';
@@ -2228,11 +2316,13 @@
         route_policy: {
           reasoning_effort: String(routePolicy.reasoning_effort || "medium"),
           prompt_cache_mode: String(routePolicy.prompt_cache_mode || "exact"),
-          compression_mode: String(routePolicy.compression_mode || "light"),
-          max_history_messages: Number(routePolicy.max_history_messages || 80),
-          max_tool_chars: Number(routePolicy.max_tool_chars || 24000),
-          max_input_chars: Number(routePolicy.max_input_chars || 180000),
+          prompt_cache_hints_mode: String(routePolicy.prompt_cache_hints_mode || "auto"),
+          prompt_cache_provider: String(routePolicy.prompt_cache_provider || "auto"),
+          prompt_cache_retention: String(routePolicy.prompt_cache_retention || ""),
           max_output_tokens: Number(routePolicy.max_output_tokens || 0),
+          route_cooldown_seconds: Number(routePolicy.route_cooldown_seconds || 90),
+          route_cooldown_multiplier: Number(routePolicy.route_cooldown_multiplier || 2),
+          route_cooldown_max_seconds: Number(routePolicy.route_cooldown_max_seconds || 900),
         },
       };
     }
@@ -2333,7 +2423,13 @@
         }).join("") : '<div class="pool-inline-empty">未配置 Key</div>';
         html += '</div>';
         html += '<div class="pool-inline-block"><label>线路策略</label>';
-        html += '<div class="pool-inline-item">' + escapeHtml("思考 " + pool.route_policy.reasoning_effort + " · 缓存 " + pool.route_policy.prompt_cache_mode + " · 压缩 " + pool.route_policy.compression_mode) + '</div>';
+        html += '<div class="pool-inline-item">' + escapeHtml(
+          "思考 " + pool.route_policy.reasoning_effort +
+          " · 缓存 " + pool.route_policy.prompt_cache_mode +
+          " · Hint " + pool.route_policy.prompt_cache_hints_mode + "/" + pool.route_policy.prompt_cache_provider +
+          (pool.route_policy.prompt_cache_retention ? (" · 保留 " + pool.route_policy.prompt_cache_retention) : "") +
+          " · 冷却 " + pool.route_policy.route_cooldown_seconds + "s x" + pool.route_policy.route_cooldown_multiplier
+        ) + '</div>';
         html += '</div>';
         var testData = poolTestResults[String(index)];
         html += '<div class="pool-inline-block" style="grid-column:1 / -1;">';
@@ -2387,11 +2483,13 @@
       html += '<div class="pool-keys"><label>API Keys</label>' + keyRowsHtml(keys, 0) + '</div>';
       html += '<div class="field"><label>思考强度</label><select data-field="reasoning_effort"><option value="low"' + (pool.route_policy.reasoning_effort === "low" ? " selected" : "") + '>低</option><option value="medium"' + (pool.route_policy.reasoning_effort === "medium" ? " selected" : "") + '>中</option><option value="high"' + (pool.route_policy.reasoning_effort === "high" ? " selected" : "") + '>高</option></select></div>';
       html += '<div class="field"><label>缓存模式</label><select data-field="prompt_cache_mode"><option value="off"' + (pool.route_policy.prompt_cache_mode === "off" ? " selected" : "") + '>关闭</option><option value="exact"' + (pool.route_policy.prompt_cache_mode === "exact" ? " selected" : "") + '>精确命中</option></select></div>';
-      html += '<div class="field"><label>压缩模式</label><select data-field="compression_mode"><option value="off"' + (pool.route_policy.compression_mode === "off" ? " selected" : "") + '>关闭</option><option value="light"' + (pool.route_policy.compression_mode === "light" ? " selected" : "") + '>轻度</option><option value="balanced"' + (pool.route_policy.compression_mode === "balanced" ? " selected" : "") + '>平衡</option><option value="aggressive"' + (pool.route_policy.compression_mode === "aggressive" ? " selected" : "") + '>激进</option></select></div>';
-      html += '<div class="field"><label>历史消息上限</label><input type="number" value="' + escapeAttr(pool.route_policy.max_history_messages) + '" min="2" max="200" step="1" data-field="max_history_messages"></div>';
-      html += '<div class="field"><label>工具内容上限</label><input type="number" value="' + escapeAttr(pool.route_policy.max_tool_chars) + '" min="1000" max="500000" step="1000" data-field="max_tool_chars"></div>';
-      html += '<div class="field"><label>总输入字符上限</label><input type="number" value="' + escapeAttr(pool.route_policy.max_input_chars) + '" min="2000" max="2000000" step="1000" data-field="max_input_chars"></div>';
+      html += '<div class="field"><label>显式 Hint 策略</label><select data-field="prompt_cache_hints_mode"><option value="off"' + (pool.route_policy.prompt_cache_hints_mode === "off" ? " selected" : "") + '>关闭</option><option value="auto"' + (pool.route_policy.prompt_cache_hints_mode === "auto" ? " selected" : "") + '>自动判断</option><option value="passthrough"' + (pool.route_policy.prompt_cache_hints_mode === "passthrough" ? " selected" : "") + '>仅透传</option></select></div>';
+      html += '<div class="field"><label>Hint 提供方</label><select data-field="prompt_cache_provider"><option value="auto"' + (pool.route_policy.prompt_cache_provider === "auto" ? " selected" : "") + '>自动识别</option><option value="openai"' + (pool.route_policy.prompt_cache_provider === "openai" ? " selected" : "") + '>OpenAI 兼容</option><option value="none"' + (pool.route_policy.prompt_cache_provider === "none" ? " selected" : "") + '>不支持</option></select></div>';
+      html += '<div class="field"><label>Hint 保留期</label><select data-field="prompt_cache_retention"><option value=""' + (!pool.route_policy.prompt_cache_retention ? " selected" : "") + '>默认</option><option value="in_memory"' + (pool.route_policy.prompt_cache_retention === "in_memory" ? " selected" : "") + '>in_memory</option><option value="24h"' + (pool.route_policy.prompt_cache_retention === "24h" ? " selected" : "") + '>24h</option></select></div>';
       html += '<div class="field"><label>该线路输出上限</label><input type="number" value="' + escapeAttr(pool.route_policy.max_output_tokens) + '" min="0" max="10000000" step="1" data-field="max_output_tokens"></div>';
+      html += '<div class="field"><label>基础冷却秒数</label><input type="number" value="' + escapeAttr(pool.route_policy.route_cooldown_seconds) + '" min="1" max="86400" step="1" data-field="route_cooldown_seconds"></div>';
+      html += '<div class="field"><label>冷却指数</label><input type="number" value="' + escapeAttr(pool.route_policy.route_cooldown_multiplier) + '" min="1" max="8" step="0.1" data-field="route_cooldown_multiplier"></div>';
+      html += '<div class="field"><label>最大冷却秒数</label><input type="number" value="' + escapeAttr(pool.route_policy.route_cooldown_max_seconds) + '" min="1" max="604800" step="1" data-field="route_cooldown_max_seconds"></div>';
       html += '</div></div>';
       poolEditorBody.innerHTML = html;
     }
@@ -2407,11 +2505,13 @@
       var priorityEl = root.querySelector('[data-field="priority"]');
       var reasoningEl = root.querySelector('[data-field="reasoning_effort"]');
       var cacheModeEl = root.querySelector('[data-field="prompt_cache_mode"]');
-      var compressionEl = root.querySelector('[data-field="compression_mode"]');
-      var maxHistoryEl = root.querySelector('[data-field="max_history_messages"]');
-      var maxToolCharsEl = root.querySelector('[data-field="max_tool_chars"]');
-      var maxInputCharsEl = root.querySelector('[data-field="max_input_chars"]');
+      var cacheHintsModeEl = root.querySelector('[data-field="prompt_cache_hints_mode"]');
+      var cacheProviderEl = root.querySelector('[data-field="prompt_cache_provider"]');
+      var cacheRetentionEl = root.querySelector('[data-field="prompt_cache_retention"]');
       var maxOutputTokensEl = root.querySelector('[data-field="max_output_tokens"]');
+      var routeCooldownSecondsEl = root.querySelector('[data-field="route_cooldown_seconds"]');
+      var routeCooldownMultiplierEl = root.querySelector('[data-field="route_cooldown_multiplier"]');
+      var routeCooldownMaxSecondsEl = root.querySelector('[data-field="route_cooldown_max_seconds"]');
       var urlInputs = root.querySelectorAll('[data-field="url"]');
       var keyInputs = root.querySelectorAll('[data-field="key"]');
       var urls = [];
@@ -2439,11 +2539,13 @@
         route_policy: {
           reasoning_effort: reasoningEl ? reasoningEl.value : "medium",
           prompt_cache_mode: cacheModeEl ? cacheModeEl.value : "exact",
-          compression_mode: compressionEl ? compressionEl.value : "light",
-          max_history_messages: Number(maxHistoryEl ? maxHistoryEl.value : 80) || 80,
-          max_tool_chars: Number(maxToolCharsEl ? maxToolCharsEl.value : 24000) || 24000,
-          max_input_chars: Number(maxInputCharsEl ? maxInputCharsEl.value : 180000) || 180000,
+          prompt_cache_hints_mode: cacheHintsModeEl ? cacheHintsModeEl.value : "auto",
+          prompt_cache_provider: cacheProviderEl ? cacheProviderEl.value : "auto",
+          prompt_cache_retention: cacheRetentionEl ? cacheRetentionEl.value : "",
           max_output_tokens: Number(maxOutputTokensEl ? maxOutputTokensEl.value : 0) || 0,
+          route_cooldown_seconds: Number(routeCooldownSecondsEl ? routeCooldownSecondsEl.value : 90) || 90,
+          route_cooldown_multiplier: Number(routeCooldownMultiplierEl ? routeCooldownMultiplierEl.value : 2) || 2,
+          route_cooldown_max_seconds: Number(routeCooldownMaxSecondsEl ? routeCooldownMaxSecondsEl.value : 900) || 900,
         }
       };
     }

@@ -15,11 +15,13 @@
       "route_policy": {
         "reasoning_effort": "high",
         "prompt_cache_mode": "exact",
-        "compression_mode": "light",
-        "max_history_messages": 80,
-        "max_tool_chars": 24000,
-        "max_input_chars": 180000,
-        "max_output_tokens": 0
+        "prompt_cache_hints_mode": "auto",
+        "prompt_cache_provider": "auto",
+        "prompt_cache_retention": "",
+        "max_output_tokens": 0,
+        "route_cooldown_seconds": 90,
+        "route_cooldown_multiplier": 2,
+        "route_cooldown_max_seconds": 900
       }
     }
   ],

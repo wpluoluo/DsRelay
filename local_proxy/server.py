@@ -10,7 +10,8 @@ import uuid
 from collections import deque
 from pathlib import Path
 import logging
-from threading import Lock
+from threading import Event, Lock
+from copy import deepcopy
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -126,6 +127,7 @@ from local_proxy.runtime.request_cache import (
     DEFAULT_REQUEST_CACHE_TTL_SECONDS,
     all_tools_read_only,
     build_cache_key,
+    build_coalescing_key,
     build_cache_record,
     build_cached_execution,
     is_cacheable_request,
@@ -232,6 +234,85 @@ def build_upstream_timeout(*, requested_stream: bool) -> int | tuple[int, int]:
     return (connect_timeout, read_timeout)
 
 
+def freeze_request_context_snapshot() -> dict:
+    return {
+        "headers": {str(key): str(value) for key, value in request.headers.items()},
+        "query_params": [
+            (str(key), str(value))
+            for key, values in request.args.lists()
+            for value in values
+        ],
+    }
+
+
+SESSION_AFFINITY_HEADER_NAMES = (
+    "X-Proxy-Session-Key",
+    "X-Proxy-Conversation-Id",
+    "X-Conversation-Id",
+    "X-Session-Id",
+    "X-Thread-Id",
+)
+OPENAI_PROMPT_CACHE_HOST_MARKERS = (
+    "api.openai.com",
+    "openai.azure.com",
+    "openrouter.ai",
+    "juece.cloud",
+    "siliconflow.cn",
+    "siliconflow.com",
+    "volces.com",
+    "deepseek.com",
+    "nvidia.com",
+)
+
+
+def build_upstream_params_from_snapshot(request_context: dict | None = None) -> list[tuple[str, str]]:
+    if not isinstance(request_context, dict):
+        return build_upstream_params()
+    params = []
+    for key, value in request_context.get("query_params") or []:
+        key_text = str(key or "")
+        if key_text.lower() in {"key", "api_key", "apikey", "access_token", "token", "authorization", "proxy-authorization", "x-forwarded-authorization", "x-api-key", "x-goog-api-key"}:
+            continue
+        params.append((key_text, str(value or "")))
+    return params
+
+
+def build_upstream_headers_from_snapshot(*, upstream_api_key: str, request_context: dict | None = None) -> dict:
+    if not isinstance(request_context, dict):
+        return build_upstream_headers(upstream_api_key=upstream_api_key)
+    headers = {}
+    source_headers = request_context.get("headers") or {}
+    for key, value in source_headers.items():
+        key_text = str(key or "")
+        if key_text.lower() in {
+            "host",
+            "content-length",
+            "accept-encoding",
+            "connection",
+            "authorization",
+            "proxy-authorization",
+            "x-forwarded-authorization",
+            "cookie",
+            "x-api-key",
+            "x-goog-api-key",
+            "anthropic-version",
+            "anthropic-beta",
+        }:
+            continue
+        headers[key_text] = str(value or "")
+
+    if "Content-Type" not in headers:
+        headers["Content-Type"] = "application/json"
+
+    headers.pop("Authorization", None)
+    if upstream_api_key:
+        if upstream_api_key.lower().startswith("bearer "):
+            headers["Authorization"] = upstream_api_key
+        else:
+            headers["Authorization"] = f"Bearer {upstream_api_key}"
+    return headers
+
+
 def openai_stream_expected_choice_count(request_payload: dict | None) -> int:
     if not isinstance(request_payload, dict):
         return 1
@@ -279,6 +360,53 @@ def build_openai_stream_usage_packet(response_body: dict, request_payload: dict 
             "usage": usage,
         }
     )
+
+
+def extract_usage_cache_details(usage: dict | None) -> dict:
+    if not isinstance(usage, dict):
+        return {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+        }
+    prompt_details = usage.get("prompt_tokens_details")
+    prompt_details = prompt_details if isinstance(prompt_details, dict) else {}
+    prompt_tokens = coerce_non_negative_int(usage.get("prompt_tokens") or usage.get("input_tokens"))
+    completion_tokens = coerce_non_negative_int(usage.get("completion_tokens") or usage.get("output_tokens"))
+    total_tokens = coerce_non_negative_int(usage.get("total_tokens"))
+    cache_read_input_tokens = coerce_non_negative_int(
+        usage.get("cache_read_input_tokens") or prompt_details.get("cached_tokens")
+    )
+    cache_creation_input_tokens = coerce_non_negative_int(
+        usage.get("cache_creation_input_tokens") or prompt_details.get("cache_creation_tokens")
+    )
+    if total_tokens <= 0:
+        total_tokens = prompt_tokens + completion_tokens
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "cache_read_input_tokens": cache_read_input_tokens,
+        "cache_creation_input_tokens": cache_creation_input_tokens,
+    }
+
+
+def build_usage_observability_meta(response_body: dict | None) -> dict:
+    if not isinstance(response_body, dict):
+        return {}
+    usage = response_body.get("usage")
+    details = extract_usage_cache_details(usage)
+    if not any(details.values()):
+        return {}
+    return details
+
+
+def attach_execution_response_body(execution: dict | None, response_body: dict | None) -> None:
+    if not isinstance(execution, dict) or not isinstance(response_body, dict):
+        return
+    execution["response_body"] = deepcopy(response_body)
 
 
 def build_context_window_exceeded_error_payload(
@@ -527,6 +655,8 @@ state_lock = Lock()
 config_lock = Lock()
 
 request_recorder = RequestRecorder(MAX_RECENT_REQUESTS, storage=storage, logger=proxy_logger)
+inflight_request_lock = Lock()
+inflight_request_cache: dict[str, dict] = {}
 connection_pool_state = ConnectionPoolState(
     key_failure_threshold=POOL_KEY_FAILURE_THRESHOLD,
     key_cooldown_seconds=POOL_KEY_COOLDOWN_SECONDS,
@@ -1404,6 +1534,131 @@ def get_request_header_value(names: tuple[str, ...]) -> tuple[str, str]:
     return "", ""
 
 
+def build_session_affinity_key(
+    protocol: str,
+    payload: dict | None,
+    request_context: dict | None = None,
+) -> str:
+    header_name = ""
+    header_value = ""
+    source_headers = (request_context or {}).get("headers") if isinstance(request_context, dict) else None
+    if isinstance(source_headers, dict):
+        lowered = {str(key or "").lower(): str(value or "").strip() for key, value in source_headers.items()}
+        for name in SESSION_AFFINITY_HEADER_NAMES:
+            candidate = lowered.get(name.lower(), "")
+            if candidate:
+                header_name = name
+                header_value = candidate
+                break
+    if not header_value:
+        header_name, header_value = get_request_header_value(SESSION_AFFINITY_HEADER_NAMES)
+    if header_value:
+        return "session:v1:explicit:" + stable_resume_hash(
+            {
+                "header": header_name.lower(),
+                "value": header_value,
+            }
+        )
+    model = str((payload or {}).get("model") or "").strip()
+    first_instruction = extract_first_instruction_text(payload)
+    tool_names = extract_tool_names_for_resume(payload)
+    first_user = ""
+    messages = payload.get("messages") if isinstance(payload, dict) else None
+    if isinstance(messages, list):
+        for item in messages:
+            if isinstance(item, dict) and item.get("role") == "user":
+                first_user = extract_text_for_resume(item.get("content"), limit=3000)
+                if first_user:
+                    break
+    return "session:v1:fingerprint:" + stable_resume_hash(
+        {
+            "protocol": protocol,
+            "model": model,
+            "instruction": re.sub(r"\s+", " ", first_instruction).strip()[:1200],
+            "first_user": re.sub(r"\s+", " ", first_user).strip()[:2000],
+            "tools": tool_names,
+        }
+    )
+
+
+def infer_prompt_cache_provider(route_policy: dict | None, upstream_url: str | None) -> str:
+    explicit = str((route_policy or {}).get("prompt_cache_provider") or "auto").strip().lower()
+    if explicit in {"openai", "none"}:
+        return explicit
+
+    route_text = str(upstream_url or "").strip().lower()
+    if not route_text:
+        return "none"
+    if any(marker in route_text for marker in OPENAI_PROMPT_CACHE_HOST_MARKERS):
+        return "openai"
+    return "none"
+
+
+def build_prompt_cache_hint_key(*, session_affinity_key: str, payload: dict | None) -> str:
+    model = str((payload or {}).get("model") or "").strip()
+    return "pcache:v1:" + stable_resume_hash(
+        {
+            "session_affinity_key": session_affinity_key,
+            "model": model,
+        },
+        length=40,
+    )
+
+
+def apply_prompt_cache_hints_to_openai_payload(
+    payload: dict,
+    *,
+    route_policy: dict,
+    upstream_url: str,
+    session_affinity_key: str,
+) -> tuple[dict, int, dict]:
+    hint_mode = str(route_policy.get("prompt_cache_hints_mode") or "off").strip().lower()
+    provider = infer_prompt_cache_provider(route_policy, upstream_url)
+    metrics = {
+        "prompt_cache_hints_mode": hint_mode,
+        "prompt_cache_provider": provider,
+        "prompt_cache_hint_applied": False,
+        "prompt_cache_hint_passthrough": False,
+        "prompt_cache_hint_key_source": "",
+        "prompt_cache_retention": "",
+    }
+    if hint_mode == "off" or provider == "none":
+        return payload, 0, metrics
+
+    next_payload = dict(payload)
+    repairs = 0
+    existing_key = str(next_payload.get("prompt_cache_key") or "").strip()
+    existing_retention = str(next_payload.get("prompt_cache_retention") or "").strip().lower()
+    retention = str(route_policy.get("prompt_cache_retention") or "").strip().lower()
+
+    if hint_mode == "passthrough":
+        if existing_key or existing_retention:
+            metrics["prompt_cache_hint_passthrough"] = True
+            metrics["prompt_cache_retention"] = existing_retention
+        return next_payload, repairs, metrics
+
+    if not session_affinity_key:
+        return next_payload, repairs, metrics
+
+    prompt_cache_key = existing_key or build_prompt_cache_hint_key(
+        session_affinity_key=session_affinity_key,
+        payload=next_payload,
+    )
+    if prompt_cache_key and not existing_key:
+        next_payload["prompt_cache_key"] = prompt_cache_key
+        repairs += 1
+        metrics["prompt_cache_hint_applied"] = True
+        metrics["prompt_cache_hint_key_source"] = "session_affinity"
+    if retention in {"in_memory", "24h"} and retention != existing_retention:
+        next_payload["prompt_cache_retention"] = retention
+        repairs += 1
+        metrics["prompt_cache_hint_applied"] = True
+        metrics["prompt_cache_retention"] = retention
+    elif existing_retention in {"in_memory", "24h"}:
+        metrics["prompt_cache_retention"] = existing_retention
+    return next_payload, repairs, metrics
+
+
 def build_interruption_resume_candidates(protocol: str, payload: dict | None) -> list[dict]:
     if not isinstance(payload, dict):
         return []
@@ -1649,7 +1904,14 @@ def clear_interruption_resume_records(execution: dict | None) -> dict:
     return {"resume_cleared": True}
 
 
-def apply_route_policy_to_payload(subpath: str, upstream_payload: dict | None, route_policy: dict) -> tuple[dict | None, int, dict]:
+def apply_route_policy_to_payload(
+    subpath: str,
+    upstream_payload: dict | None,
+    route_policy: dict,
+    *,
+    upstream_url: str = "",
+    session_affinity_key: str = "",
+) -> tuple[dict | None, int, dict]:
     if not isinstance(upstream_payload, dict):
         return upstream_payload, 0, {}
     if subpath != "chat/completions":
@@ -1657,127 +1919,23 @@ def apply_route_policy_to_payload(subpath: str, upstream_payload: dict | None, r
 
     payload = dict(upstream_payload)
     repairs = 0
+    metrics = {}
 
     reasoning_effort = str(route_policy.get("reasoning_effort") or DEFAULT_ROUTE_POLICY["reasoning_effort"])
     if reasoning_effort and "reasoning_effort" not in payload:
         payload["reasoning_effort"] = reasoning_effort
         repairs += 1
-
-    messages = payload.get("messages")
-    if not isinstance(messages, list):
-        return payload, repairs, {}
-
-    compression_mode = str(route_policy.get("compression_mode") or "off")
-    max_history_messages = int(route_policy.get("max_history_messages") or DEFAULT_ROUTE_POLICY["max_history_messages"])
-    max_tool_chars = int(route_policy.get("max_tool_chars") or DEFAULT_ROUTE_POLICY["max_tool_chars"])
-    max_input_chars = int(route_policy.get("max_input_chars") or DEFAULT_ROUTE_POLICY["max_input_chars"])
-    if compression_mode == "aggressive":
-        max_history_messages = min(max_history_messages, 10)
-        max_tool_chars = min(max_tool_chars, 8000)
-        max_input_chars = min(max_input_chars, 90000)
-
-    def estimate_messages_chars(items):
-        try:
-            return len(json.dumps(items or [], ensure_ascii=False))
-        except Exception:
-            return 0
-
-    metrics = {
-        "compression_mode": compression_mode,
-        "max_history_messages": max_history_messages,
-        "max_tool_chars": max_tool_chars,
-        "max_input_chars": max_input_chars,
-        "original_message_count": len(messages),
-        "sent_message_count": len(messages),
-        "dropped_message_count": 0,
-        "trimmed_content_count": 0,
-        "input_chars_before_policy": estimate_messages_chars(messages),
-        "input_chars_after_policy": estimate_messages_chars(messages),
-    }
-
-    if compression_mode == "off":
-        return payload, repairs, metrics
-
-    normalized_messages = [dict(item) if isinstance(item, dict) else item for item in messages]
-    if len(normalized_messages) > max_history_messages:
-        system_messages = [item for item in normalized_messages if isinstance(item, dict) and item.get("role") == "system"]
-        tail_messages = [item for item in normalized_messages if not (isinstance(item, dict) and item.get("role") == "system")]
-        normalized_messages = system_messages[:2] + tail_messages[-max(0, max_history_messages - len(system_messages[:2])):]
-        repairs += 1
-
-    def trim_content(content):
-        local_repairs = 0
-        if isinstance(content, str):
-            if len(content) > max_tool_chars:
-                return content[:max_tool_chars] + "\n[内容已压缩]", 1
-            return content, 0
-        if isinstance(content, list):
-            trimmed = []
-            for part in content:
-                if isinstance(part, dict):
-                    current = dict(part)
-                    for key in ("text", "content", "input"):
-                        if isinstance(current.get(key), str) and len(current[key]) > max_tool_chars:
-                            current[key] = current[key][:max_tool_chars] + "\n[内容已压缩]"
-                            local_repairs += 1
-                    trimmed.append(current)
-                else:
-                    trimmed.append(part)
-            return trimmed, local_repairs
-        return content, 0
-
-    next_messages = []
-    total_chars = 0
-    trimmed_content_count = 0
-    for item in normalized_messages:
-        if not isinstance(item, dict):
-            next_messages.append(item)
-            continue
-        current = dict(item)
-        if current.get("role") == "assistant" and compression_mode in {"balanced", "aggressive"}:
-            if isinstance(current.get("reasoning"), str) and current.get("reasoning"):
-                current["reasoning"] = ""
-                repairs += 1
-        current_content, content_repairs = trim_content(current.get("content"))
-        repairs += content_repairs
-        trimmed_content_count += content_repairs
-        current["content"] = current_content
-        total_chars += len(json.dumps(current_content, ensure_ascii=False)) if current_content is not None else 0
-        next_messages.append(current)
-
-    while next_messages and total_chars > max_input_chars:
-        removable_index = next((idx for idx, item in enumerate(next_messages) if isinstance(item, dict) and item.get("role") != "system"), None)
-        if removable_index is None:
-            break
-        removed = next_messages.pop(removable_index)
-        total_chars -= len(json.dumps(removed.get("content"), ensure_ascii=False)) if isinstance(removed, dict) else 0
-        repairs += 1
-
-    if compression_mode == "aggressive":
-        compacted_messages = []
-        for item in next_messages:
-            if not isinstance(item, dict):
-                compacted_messages.append(item)
-                continue
-            current = dict(item)
-            if current.get("role") == "assistant":
-                current.pop("reasoning", None)
-                tool_calls = current.get("tool_calls")
-                if isinstance(tool_calls, list) and len(tool_calls) > 2:
-                    current["tool_calls"] = tool_calls[-2:]
-                    repairs += 1
-            compacted_messages.append(current)
-        next_messages = compacted_messages
-
-    payload["messages"] = next_messages
-    metrics["sent_message_count"] = len(next_messages)
-    metrics["dropped_message_count"] = max(0, len(messages) - len(next_messages))
-    metrics["trimmed_content_count"] = trimmed_content_count
-    metrics["input_chars_after_policy"] = estimate_messages_chars(next_messages)
-
     max_output_tokens = int(route_policy.get("max_output_tokens") or 0)
     if max_output_tokens > 0:
         repairs += clamp_payload_output_tokens(payload, max_output_tokens)
+    payload, hint_repairs, hint_metrics = apply_prompt_cache_hints_to_openai_payload(
+        payload,
+        route_policy=route_policy,
+        upstream_url=upstream_url,
+        session_affinity_key=session_affinity_key,
+    )
+    repairs += hint_repairs
+    metrics.update(hint_metrics)
     return payload, repairs, metrics
 
 
@@ -1789,6 +1947,7 @@ def execute_upstream_request(
     request_method: str = "POST",
     raw_body: bytes | None = None,
     initial_blocked_urls: set[str] | None = None,
+    request_context: dict | None = None,
 ) -> dict:
     upstream_urls = build_upstream_url_candidates(subpath)
     requested_stream = bool(isinstance(request_payload, dict) and request_payload.get("stream"))
@@ -1817,9 +1976,25 @@ def execute_upstream_request(
         request_method=request_method,
     )
     request_protocol = "openai_chat_completions" if subpath == "chat/completions" else subpath.replace("/", "_")
+    session_affinity_key = build_session_affinity_key(
+        request_protocol,
+        upstream_payload if isinstance(upstream_payload, dict) else request_payload,
+        request_context=request_context,
+    )
     route_policy = build_route_policy(upstream_url)
-    upstream_payload, route_policy_repairs, route_policy_metrics = apply_route_policy_to_payload(subpath, upstream_payload, route_policy)
+    upstream_payload, route_policy_repairs, route_policy_metrics = apply_route_policy_to_payload(
+        subpath,
+        upstream_payload,
+        route_policy,
+        upstream_url=upstream_url,
+        session_affinity_key=session_affinity_key,
+    )
     request_repairs += route_policy_repairs
+    coalescing_key = build_coalescing_key(
+        protocol=request_protocol,
+        path=subpath,
+        payload=upstream_payload if isinstance(upstream_payload, dict) else None,
+    )
     resume_metrics = {}
     if subpath == "chat/completions" and isinstance(upstream_payload, dict):
         upstream_payload, resume_repairs, resume_metrics = apply_interruption_resume_to_payload(
@@ -1849,6 +2024,9 @@ def execute_upstream_request(
             "route_policy": route_policy,
             "route_policy_metrics": route_policy_metrics,
             "interruption_resume": resume_metrics,
+            "request_context": request_context,
+            "coalescing_key": coalescing_key,
+            "session_affinity_key": session_affinity_key,
             "forced_error_payload": build_context_window_exceeded_error_payload(
                 model_name=logical_model_name,
                 estimated_total_tokens=int(capability_overflow.get("estimated_total_tokens") or 0),
@@ -1888,18 +2066,41 @@ def execute_upstream_request(
                 route_policy_metrics=route_policy_metrics,
             )
             cached_execution["interruption_resume"] = resume_metrics
+            cached_execution["request_context"] = request_context
+            cached_execution["coalescing_key"] = coalescing_key
+            cached_execution["session_affinity_key"] = session_affinity_key
             return cached_execution
         bump_cache_stat("prompt_cache_misses")
+
+    inflight_entry, is_inflight_owner = begin_inflight_request(coalescing_key, request_id)
+    if not is_inflight_owner:
+        try:
+            shared_execution = wait_for_inflight_request(inflight_entry)
+        except BaseException:
+            shared_execution = None
+        if isinstance(shared_execution, dict):
+            shared_execution["request_context"] = request_context
+            shared_execution["coalescing_key"] = coalescing_key
+            shared_execution["coalesced"] = True
+            shared_execution["coalesced_owner_request_id"] = str(inflight_entry.get("owner_request_id") or "")
+            shared_execution["session_affinity_key"] = session_affinity_key
+            return shared_execution
 
     key_choice = choose_api_key_for_url(upstream_url)
     primary_pool_key = str(key_choice.get("key") or UPSTREAM_API_KEY)
     request_kwargs = {
         "method": request_method,
         "url": upstream_url,
-        "headers": build_upstream_headers(upstream_api_key=primary_pool_key),
-        "params": build_upstream_params(),
+        "headers": build_upstream_headers_from_snapshot(
+            upstream_api_key=primary_pool_key,
+            request_context=request_context,
+        ),
+        "params": build_upstream_params_from_snapshot(request_context),
         "stream": True,
         "timeout": build_upstream_timeout(requested_stream=requested_stream),
+        "meta": {
+            "session_affinity_key": session_affinity_key,
+        },
     }
     if upstream_payload is not None:
         request_kwargs["json"] = upstream_payload
@@ -1924,10 +2125,11 @@ def execute_upstream_request(
         if isinstance(attempt, dict)
     )
 
-    return {
+    result = {
         "upstream_url": selected_upstream_url,
         "upstream_url_pool": upstream_urls,
         "route_pool_size": len(upstream_urls),
+        "attempt_route_count": len({str(attempt.get("upstream_url") or "") for attempt in attempts if str(attempt.get("upstream_url") or "")}),
         "tool_schemas": tool_schemas,
         "upstream_payload": upstream_payload,
         "upstream_stream": upstream_stream,
@@ -1940,8 +2142,12 @@ def execute_upstream_request(
         "route_policy": route_policy,
         "route_policy_metrics": route_policy_metrics,
         "interruption_resume": resume_metrics,
+        "request_context": request_context,
         "cache_hit": False,
         "cache_key": cache_key,
+        "coalescing_key": coalescing_key,
+        "coalesced": False,
+        "session_affinity_key": session_affinity_key,
         "initial_key_choice": {
             "pool_name": key_choice.get("pool_name"),
             "key_index": key_choice.get("key_index"),
@@ -1965,7 +2171,17 @@ def execute_upstream_request(
             (attempt.get("api_key_index") for attempt in reversed(attempts) if attempt.get("api_key_index") is not None),
             key_choice.get("key_index"),
         ),
+        "selected_route_index": next(
+            (
+                upstream_urls.index(str(attempt.get("upstream_url") or ""))
+                for attempt in reversed(attempts)
+                if str(attempt.get("upstream_url") or "") in upstream_urls
+            ),
+            0 if upstream_urls else None,
+        ),
     }
+    complete_inflight_request(coalescing_key, result=result)
+    return result
 
 
 def close_execution_upstream_response(execution: dict | None) -> None:
@@ -1977,6 +2193,7 @@ def close_execution_upstream_response(execution: dict | None) -> None:
 def start_background_upstream_execution(subpath: str, request_payload: dict | None, request_id: str) -> BackgroundExecution:
     request_method = request.method
     raw_body = request.get_data(cache=True)
+    request_context = freeze_request_context_snapshot()
 
     @copy_current_request_context
     def run_execution():
@@ -1986,6 +2203,7 @@ def start_background_upstream_execution(subpath: str, request_payload: dict | No
             request_id,
             request_method=request_method,
             raw_body=raw_body,
+            request_context=request_context,
         )
 
     return BackgroundExecution(
@@ -2132,19 +2350,23 @@ def mark_route_success(route_url: str) -> None:
 
 
 def mark_route_failure(route_url: str, reason: str) -> None:
+    route_policy = build_route_policy(route_url)
     router_mark_route_failure(
         route_health,
         state_lock,
         route_url,
         reason,
-        route_cooldown_seconds=UPSTREAM_ROUTE_COOLDOWN_SECONDS,
+        route_cooldown_seconds=int(route_policy.get("route_cooldown_seconds") or UPSTREAM_ROUTE_COOLDOWN_SECONDS),
         route_switch_window_seconds=UPSTREAM_ROUTE_SWITCH_WINDOW_SECONDS,
         route_failure_threshold=UPSTREAM_ROUTE_FAILURE_THRESHOLD,
+        route_cooldown_multiplier=float(route_policy.get("route_cooldown_multiplier") or 1.0),
+        route_cooldown_max_seconds=int(route_policy.get("route_cooldown_max_seconds") or UPSTREAM_ROUTE_COOLDOWN_SECONDS),
     )
 
 
 def build_attempt_url_cycle(candidate_urls: list[str], blocked_urls: set[str]) -> list[str]:
     logical_model = route_selection_state.get("__current_logical_model__")
+    session_affinity_key = route_selection_state.get("__current_session_affinity_key__")
     return router_build_attempt_url_cycle(
         candidate_urls,
         blocked_urls,
@@ -2153,6 +2375,7 @@ def build_attempt_url_cycle(candidate_urls: list[str], blocked_urls: set[str]) -
         state_lock=state_lock,
         randomize_endpoints=UPSTREAM_RANDOMIZE_ENDPOINTS,
         route_score_provider=(lambda route_url: get_route_score(logical_model, route_url)),
+        session_affinity_key=session_affinity_key,
     )
 
 
@@ -2293,6 +2516,9 @@ def request_upstream_with_retries(
 ) -> tuple[requests.Response | None, list[dict], requests.RequestException | None]:
     with state_lock:
         route_selection_state["__current_logical_model__"] = model_candidates[0] if model_candidates else ""
+        route_selection_state["__current_session_affinity_key__"] = str(
+            (request_kwargs.get("meta") or {}).get("session_affinity_key") or ""
+        )
     return orchestrated_request_upstream_with_retries(
         request_kwargs,
         subpath=subpath,
@@ -2362,6 +2588,48 @@ def record_request_cache_hit(
     return duration_ms
 
 
+def begin_inflight_request(coalescing_key: str, owner_request_id: str) -> tuple[dict, bool]:
+    with inflight_request_lock:
+        existing = inflight_request_cache.get(coalescing_key)
+        if isinstance(existing, dict):
+            existing["waiter_count"] = int(existing.get("waiter_count", 0) or 0) + 1
+            return existing, False
+        entry = {
+            "owner_request_id": owner_request_id,
+            "event": Event(),
+            "result": None,
+            "error": None,
+            "waiter_count": 0,
+            "created_at": time.time(),
+        }
+        inflight_request_cache[coalescing_key] = entry
+        return entry, True
+
+
+def complete_inflight_request(coalescing_key: str, *, result: dict | None = None, error: BaseException | None = None) -> None:
+    with inflight_request_lock:
+        entry = inflight_request_cache.pop(coalescing_key, None)
+    if not isinstance(entry, dict):
+        return
+    entry["result"] = deepcopy(result) if isinstance(result, dict) else None
+    entry["error"] = error
+    event = entry.get("event")
+    if isinstance(event, Event):
+        event.set()
+
+
+def wait_for_inflight_request(entry: dict) -> dict | None:
+    event = entry.get("event")
+    if not isinstance(event, Event):
+        return None
+    event.wait()
+    error = entry.get("error")
+    if isinstance(error, BaseException):
+        raise error
+    result = entry.get("result")
+    return deepcopy(result) if isinstance(result, dict) else None
+
+
 def build_cached_openai_stream_response(
     *,
     request_id: str,
@@ -2416,6 +2684,8 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
     upstream_payload = execution.get("upstream_payload")
     effective_payload = upstream_payload if isinstance(upstream_payload, dict) else request_payload
     cached_response_body = execution.get("cached_response_body") if isinstance(execution.get("cached_response_body"), dict) else {}
+    response_body = execution.get("response_body") if isinstance(execution.get("response_body"), dict) else cached_response_body
+    usage_details = build_usage_observability_meta(response_body)
     logical_model = str(
         execution.get("logical_model")
         or (effective_payload.get("model") if isinstance(effective_payload, dict) else "")
@@ -2441,7 +2711,6 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
     route_policy = execution.get("route_policy") if isinstance(execution.get("route_policy"), dict) else {}
     route_policy_metrics = execution.get("route_policy_metrics") if isinstance(execution.get("route_policy_metrics"), dict) else {}
     resume_metrics = execution.get("interruption_resume") if isinstance(execution.get("interruption_resume"), dict) else {}
-    requested_stream = bool((effective_payload or {}).get("stream")) if isinstance(effective_payload, dict) else False
     cache_status = "miss"
     cache_note = ""
     if cache_hit:
@@ -2452,9 +2721,6 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
         if str((route_policy or {}).get("prompt_cache_mode") or "off") != "exact":
             cache_status = "bypass_policy"
             cache_note = "策略未开启"
-        elif requested_stream:
-            cache_status = "miss_stream"
-            cache_note = "流式可缓存"
         elif payload_dict.get("tools") or payload_dict.get("tool_choice"):
             if all_tools_read_only(payload_dict.get("tools")):
                 cache_status = "miss_tools_readonly"
@@ -2468,26 +2734,20 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
         elif not isinstance(payload_dict.get("messages"), list) or not payload_dict.get("messages"):
             cache_status = "bypass_payload"
             cache_note = "请求不支持缓存"
-    return {
+    meta = {
         "logical_model": logical_model,
         "resolved_model": resolved_model,
         "pool_name": pool_name,
         "attempted_pool_names": list(execution.get("attempted_pool_names") or []) or ([pool_name] if pool_name else []),
         "api_key_index": api_key_index,
+        "selected_route_index": execution.get("selected_route_index"),
+        "attempt_route_count": int(execution.get("attempt_route_count") or 0),
         "input_bytes": input_bytes,
         "cache_read_bytes": input_bytes if cache_hit else 0,
         "cache_hit": cache_hit,
         "cache_source": str(execution.get("cache_source") or ""),
         "cache_status": cache_status,
         "cache_note": cache_note,
-        "compression_mode": str(route_policy_metrics.get("compression_mode") or route_policy.get("compression_mode") or ""),
-        "max_history_messages": route_policy_metrics.get("max_history_messages"),
-        "original_message_count": int(route_policy_metrics.get("original_message_count") or 0),
-        "sent_message_count": int(route_policy_metrics.get("sent_message_count") or 0),
-        "dropped_message_count": int(route_policy_metrics.get("dropped_message_count") or 0),
-        "trimmed_content_count": int(route_policy_metrics.get("trimmed_content_count") or 0),
-        "input_chars_before_policy": int(route_policy_metrics.get("input_chars_before_policy") or 0),
-        "input_chars_after_policy": int(route_policy_metrics.get("input_chars_after_policy") or 0),
         "resume_enabled": bool(resume_metrics.get("resume_enabled", ENABLE_INTERRUPTION_RESUME)),
         "resume_key_source": str(resume_metrics.get("resume_key_source") or ""),
         "resume_injected": bool(resume_metrics.get("resume_injected")),
@@ -2496,7 +2756,20 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
         "resume_cleared": bool(execution.get("resume_cleared")),
         "resume_partial_chars": int(execution.get("resume_partial_chars") or resume_metrics.get("resume_partial_chars") or 0),
         "resume_record_age_seconds": int(resume_metrics.get("resume_record_age_seconds") or 0),
+        "session_affinity_key": str(execution.get("session_affinity_key") or ""),
+        "prompt_cache_hints_mode": str(route_policy_metrics.get("prompt_cache_hints_mode") or ""),
+        "prompt_cache_provider": str(route_policy_metrics.get("prompt_cache_provider") or ""),
+        "prompt_cache_hint_applied": bool(route_policy_metrics.get("prompt_cache_hint_applied")),
+        "prompt_cache_hint_passthrough": bool(route_policy_metrics.get("prompt_cache_hint_passthrough")),
+        "prompt_cache_hint_key_source": str(route_policy_metrics.get("prompt_cache_hint_key_source") or ""),
+        "prompt_cache_retention": str(route_policy_metrics.get("prompt_cache_retention") or ""),
     }
+    meta.update(usage_details)
+    if int(meta.get("prompt_tokens") or 0) <= 0 and isinstance(effective_payload, dict):
+        meta["prompt_tokens"] = estimate_payload_tokens(effective_payload)
+    if int(meta.get("total_tokens") or 0) <= 0:
+        meta["total_tokens"] = int(meta.get("prompt_tokens") or 0) + int(meta.get("completion_tokens") or 0)
+    return meta
 
 
 def build_request_meta(
@@ -2958,6 +3231,19 @@ def dashboard_state() -> dict:
             route_url: dict(entry)
             for route_url, entry in route_health.items()
         }
+        active_affinity_keys = sum(
+            1
+            for key in route_selection_state.keys()
+            if str(key).startswith("affinity:")
+        )
+        active_route_affinity_counts = {}
+        for key, value in route_selection_state.items():
+            if not str(key).startswith("affinity:") or not isinstance(value, dict):
+                continue
+            route_url = str(value.get("route_url") or "").strip()
+            if not route_url:
+                continue
+            active_route_affinity_counts[route_url] = int(active_route_affinity_counts.get(route_url, 0) or 0) + 1
     return assemble_dashboard_state(
         {
             "upstream_url": UPSTREAM_URL,
@@ -2969,6 +3255,8 @@ def dashboard_state() -> dict:
             "request_recorder_snapshot": request_recorder.snapshot,
             "route_health": route_health_snapshot,
             "connection_pool_snapshot": connection_pool_state.snapshot,
+            "active_session_affinity_keys": lambda: active_affinity_keys,
+            "active_route_affinity_counts": lambda: dict(active_route_affinity_counts),
             "read_recent_log_lines": read_recent_log_lines,
         }
     )
@@ -3233,6 +3521,7 @@ def retry_malformed_success_once(
     request_payload: dict | None,
     execution: dict | None,
     issue: dict,
+    request_context: dict | None = None,
 ) -> dict | None:
     malformed_success_fallbacks = int((execution or {}).get("malformed_success_fallbacks") or 0)
     if malformed_success_fallbacks >= 2 or not isinstance(request_payload, dict):
@@ -3264,6 +3553,7 @@ def retry_malformed_success_once(
         request_payload,
         request_id,
         initial_blocked_urls=blocked_urls,
+        request_context=request_context or (execution.get("request_context") if isinstance(execution, dict) else None),
     )
     if isinstance(next_execution, dict):
         next_execution["malformed_success_fallbacks"] = malformed_success_fallbacks + 1
@@ -3594,6 +3884,7 @@ def proxy_response(
     response_headers = build_response_headers(upstream_response.headers)
     response_headers["X-Proxy-Retries"] = str(retry_count)
     empty_stream_fallbacks = int((execution or {}).get("empty_sse_fallbacks") or 0)
+    request_context = (execution or {}).get("request_context") if isinstance(execution, dict) else None
 
     if upstream_response.status_code >= 400:
         client_gone = response_indicates_client_gone(upstream_response)
@@ -3647,6 +3938,7 @@ def proxy_response(
                 request_payload=request_payload,
                 execution=execution,
                 issue=issue,
+                request_context=request_context,
             )
             next_response = next_execution.get("upstream_response") if isinstance(next_execution, dict) else None
             if next_response is not None:
@@ -3683,6 +3975,7 @@ def proxy_response(
             return Response(body, status=502, headers=response_headers)
 
         ensure_openai_response_usage(consumed["openai_body"], request_payload)
+        attach_execution_response_body(execution, consumed["openai_body"])
         packets = build_openai_stream_packets_from_chat_completion(consumed["openai_body"])
         total_bytes = sum(len(packet) for packet in packets)
         response_preview = build_preview_summary(consumed["preview_parts"])
@@ -3773,7 +4066,12 @@ def proxy_response(
                         preflight_empty_issue["code"],
                     )
                     close_response_quietly(upstream_response)
-                    next_execution = execute_upstream_request(route_hint, request_payload, request_id)
+                    next_execution = execute_upstream_request(
+                        route_hint,
+                        request_payload,
+                        request_id,
+                        request_context=request_context,
+                    )
                     if isinstance(next_execution, dict):
                         next_execution["empty_sse_fallbacks"] = empty_stream_fallbacks + 1
                     next_response = next_execution.get("upstream_response") if isinstance(next_execution, dict) else None
@@ -3974,7 +4272,12 @@ def proxy_response(
                                 upstream_url,
                             )
                             close_response_quietly(upstream_response)
-                            next_execution = execute_upstream_request(route_hint, request_payload, request_id)
+                            next_execution = execute_upstream_request(
+                                route_hint,
+                                request_payload,
+                                request_id,
+                                request_context=request_context,
+                            )
                             if isinstance(next_execution, dict):
                                 next_execution["empty_sse_fallbacks"] = empty_stream_fallbacks + 1
                             next_response = next_execution.get("upstream_response") if isinstance(next_execution, dict) else None
@@ -4114,6 +4417,7 @@ def proxy_response(
                         and isinstance(aggregated_body := build_chat_completion_from_sse(response_events), dict)
                     ):
                         ensure_openai_response_usage(aggregated_body, request_payload)
+                        attach_execution_response_body(execution, aggregated_body)
                         save_request_cache_entry(
                             execution=execution or {},
                             protocol=protocol or "openai_chat_completions",
@@ -4288,6 +4592,7 @@ def proxy_response(
             response_headers["Content-Type"] = "application/json; charset=utf-8"
             return Response(body, status=502, headers=response_headers)
         ensure_openai_response_usage(aggregated_body, request_payload)
+        attach_execution_response_body(execution, aggregated_body)
         body_bytes = json.dumps(aggregated_body, ensure_ascii=False).encode("utf-8")
         response_preview = build_preview_summary(preview_parts)
         close_response_quietly(upstream_response)
@@ -4349,6 +4654,7 @@ def proxy_response(
                 body = json.dumps(json_body, ensure_ascii=False).encode("utf-8")
         if route_hint == "chat/completions" and isinstance(json_body, dict) and upstream_response.status_code < 400:
             ensure_openai_response_usage(json_body, request_payload)
+            attach_execution_response_body(execution, json_body)
             body = json.dumps(json_body, ensure_ascii=False).encode("utf-8")
 
     issue = inspect_success_payload(
@@ -5425,6 +5731,7 @@ def anthropic_messages():
                         tool_schemas,
                         next_execution.get("upstream_payload") if isinstance(next_execution.get("upstream_payload"), dict) else openai_payload,
                     )
+                    attach_execution_response_body(next_execution, anthropic_body)
                     body = json.dumps(anthropic_body, ensure_ascii=False).encode("utf-8")
                     response_preview = build_preview_summary(consumed["preview_parts"])
                     close_response_quietly(next_response)
@@ -5496,6 +5803,7 @@ def anthropic_messages():
         tool_schemas,
         execution.get("upstream_payload") if isinstance(execution.get("upstream_payload"), dict) else openai_payload,
     )
+    attach_execution_response_body(execution, anthropic_body)
     body = json.dumps(anthropic_body, ensure_ascii=False).encode("utf-8")
     response_preview = build_preview_summary(consumed["preview_parts"])
     close_response_quietly(upstream_response)
@@ -6221,6 +6529,7 @@ def handle_anthropic_stream_response(
     content_type = upstream_response.headers.get("Content-Type", "")
     anthropic_stream_fallbacks = int((observability_meta or {}).get("anthropic_stream_fallbacks") or 0)
     upstream_openai_payload = dict((observability_meta or {}).get("_upstream_openai_payload") or {})
+    request_context = ((observability_meta or {}).get("_execution") or {}).get("request_context")
     if "text/event-stream" not in content_type.lower():
         consumed = read_upstream_openai_response_body(upstream_response, tool_schemas)
         issue = inspect_success_payload(
@@ -6255,6 +6564,7 @@ def handle_anthropic_stream_response(
             )
 
         anthropic_body = convert_openai_response_to_anthropic(consumed["openai_body"], tool_schemas, upstream_openai_payload or request_payload)
+        attach_execution_response_body((observability_meta or {}).get("_execution"), anthropic_body)
         packets = build_anthropic_stream_packets_from_message(anthropic_body)
         total_bytes = sum(len(packet) for packet in packets)
         duration_ms = int((time.perf_counter() - started_at) * 1000)
@@ -6366,7 +6676,12 @@ def handle_anthropic_stream_response(
                     )
                     close_response_quietly(upstream_response)
                     retry_payload = upstream_openai_payload or convert_anthropic_request_to_openai(request_payload)
-                    next_execution = execute_upstream_request("chat/completions", retry_payload, request_id)
+                    next_execution = execute_upstream_request(
+                        "chat/completions",
+                        retry_payload,
+                        request_id,
+                        request_context=request_context,
+                    )
                     if isinstance(next_execution, dict):
                         next_meta = dict(observability_meta or {})
                         next_meta["anthropic_stream_fallbacks"] = anthropic_stream_fallbacks + 1

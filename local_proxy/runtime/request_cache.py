@@ -88,8 +88,17 @@ def all_tools_read_only(tools) -> bool:
     return all(is_read_only_tool_name(name) for name in tool_names)
 
 
+def normalize_cache_payload(payload: dict | None) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+    normalized = deepcopy(payload)
+    normalized.pop("stream", None)
+    normalized.pop("stream_options", None)
+    return normalized
+
+
 def build_cache_key(*, protocol: str, path: str, payload: dict | None, route_policy: dict | None) -> str:
-    canonical_payload = canonical_json(payload or {})
+    canonical_payload = canonical_json(normalize_cache_payload(payload))
     policy = dict(route_policy or {})
     cache_relevant_policy = {
         "prompt_cache_mode": policy.get("prompt_cache_mode"),
@@ -100,6 +109,18 @@ def build_cache_key(*, protocol: str, path: str, payload: dict | None, route_pol
             str(protocol or "").strip().lower(),
             str(path or "").strip().lower(),
             canonical_policy,
+            canonical_payload,
+        ]
+    )
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()
+
+
+def build_coalescing_key(*, protocol: str, path: str, payload: dict | None) -> str:
+    canonical_payload = canonical_json(normalize_cache_payload(payload))
+    base = "|".join(
+        [
+            str(protocol or "").strip().lower(),
+            str(path or "").strip().lower(),
             canonical_payload,
         ]
     )

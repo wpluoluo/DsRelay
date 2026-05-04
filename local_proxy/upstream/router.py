@@ -103,11 +103,15 @@ def mark_route_failure(
     route_cooldown_seconds: int,
     route_switch_window_seconds: int,
     route_failure_threshold: int,
+    route_cooldown_multiplier: float = 1.0,
+    route_cooldown_max_seconds: int | None = None,
 ) -> None:
     if not route_url:
         return
     now = time.time()
-    cooldown_seconds = max(route_cooldown_seconds, route_switch_window_seconds)
+    base_cooldown_seconds = max(route_cooldown_seconds, route_switch_window_seconds)
+    cooldown_max_seconds = max(base_cooldown_seconds, int(route_cooldown_max_seconds or base_cooldown_seconds))
+    cooldown_multiplier = max(1.0, float(route_cooldown_multiplier or 1.0))
     with state_lock:
         entry = route_health.setdefault(
             route_url,
@@ -122,6 +126,11 @@ def mark_route_failure(
         entry["last_reason"] = reason or ""
         entry["last_failure_at"] = now
         if entry["consecutive_failures"] >= route_failure_threshold:
+            exponent = max(0, entry["consecutive_failures"] - route_failure_threshold)
+            cooldown_seconds = min(
+                cooldown_max_seconds,
+                int(round(base_cooldown_seconds * (cooldown_multiplier ** exponent))),
+            )
             entry["cooldown_until"] = max(
                 float(entry.get("cooldown_until", 0.0) or 0.0),
                 now + cooldown_seconds,
@@ -137,6 +146,7 @@ def build_attempt_url_cycle(
     state_lock,
     randomize_endpoints: bool,
     route_score_provider: Callable[[str], float] | None = None,
+    session_affinity_key: str | None = None,
 ) -> list[str]:
     active_urls = [
         url
@@ -173,6 +183,13 @@ def build_attempt_url_cycle(
         ranked_urls.sort()
         ordered = [item[-1] for item in ranked_urls]
 
+        affinity_key = str(session_affinity_key or "").strip()
+        if affinity_key:
+            affinity_entry = route_selection_state.get(f"affinity:{affinity_key}", {})
+            preferred_url = str(affinity_entry.get("route_url") or "")
+            if preferred_url in ordered:
+                ordered = [preferred_url] + [url for url in ordered if url != preferred_url]
+
         group_key = "|".join(ordered)
         cursor_entry = route_selection_state.get(group_key, {})
         cursor_value = int(cursor_entry.get("cursor", 0) or 0) % len(ordered)
@@ -192,6 +209,11 @@ def build_attempt_url_cycle(
             "cursor": (cursor_value + 1) % len(ordered),
             "last_used_at": now,
         }
+        if affinity_key and rotated:
+            route_selection_state[f"affinity:{affinity_key}"] = {
+                "route_url": rotated[0],
+                "last_used_at": now,
+            }
 
     if randomize_endpoints and len(rotated) > 1:
         if len(rotated) == 2:

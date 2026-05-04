@@ -227,7 +227,12 @@ class StreamCompletionTests(unittest.TestCase):
             "created": 1,
             "model": "test-model",
             "choices": [],
-            "usage": {"prompt_tokens": 123, "completion_tokens": 45, "total_tokens": 168},
+            "usage": {
+                "prompt_tokens": 123,
+                "completion_tokens": 45,
+                "total_tokens": 168,
+                "prompt_tokens_details": {"cached_tokens": 77},
+            },
         }
         upstream = SlowAfterTerminalResponse(
             [
@@ -258,7 +263,11 @@ class StreamCompletionTests(unittest.TestCase):
         usage_events = openai_stream_usage_events(body)
 
         self.assertEqual(len(usage_events), 1)
-        self.assertEqual(usage_events[0]["usage"], {"prompt_tokens": 123, "completion_tokens": 45, "total_tokens": 168})
+        self.assertEqual(usage_events[0]["usage"]["prompt_tokens"], 123)
+        self.assertEqual(usage_events[0]["usage"]["completion_tokens"], 45)
+        self.assertEqual(usage_events[0]["usage"]["total_tokens"], 168)
+        self.assertEqual(usage_events[0]["usage"]["prompt_tokens_details"]["cached_tokens"], 77)
+        self.assertEqual(usage_events[0]["usage"]["cache_read_input_tokens"], 77)
 
     def test_consume_openai_sse_events_does_not_wait_for_upstream_close_after_finish(self):
         upstream = SlowAfterTerminalResponse(openai_stream_lines())

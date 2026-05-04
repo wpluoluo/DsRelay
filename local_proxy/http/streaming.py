@@ -7,6 +7,7 @@ from threading import Thread
 import uuid
 
 import requests
+from local_proxy.compat.protocols import ensure_openai_response_usage
 
 
 CLIENT_GONE_MARKERS = (
@@ -68,6 +69,8 @@ def format_openai_sse_payload(payload) -> bytes:
 def build_openai_stream_packets_from_chat_completion(response_body: dict) -> list[bytes]:
     if not isinstance(response_body, dict):
         response_body = {}
+    else:
+        ensure_openai_response_usage(response_body)
 
     chunk_id = response_body.get("id") or f"chatcmpl-{uuid.uuid4().hex[:16]}"
     created = int(response_body.get("created") or time.time())

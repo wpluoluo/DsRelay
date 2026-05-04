@@ -6,11 +6,13 @@ from copy import deepcopy
 DEFAULT_ROUTE_POLICY = {
     "reasoning_effort": "medium",
     "prompt_cache_mode": "exact",
-    "compression_mode": "light",
-    "max_history_messages": 80,
-    "max_tool_chars": 24000,
-    "max_input_chars": 180000,
+    "prompt_cache_hints_mode": "auto",
+    "prompt_cache_provider": "auto",
+    "prompt_cache_retention": "",
     "max_output_tokens": 0,
+    "route_cooldown_seconds": 90,
+    "route_cooldown_multiplier": 2,
+    "route_cooldown_max_seconds": 900,
 }
 
 
@@ -28,11 +30,27 @@ def normalize_prompt_cache_mode(value: object) -> str:
     return str(DEFAULT_ROUTE_POLICY["prompt_cache_mode"])
 
 
-def normalize_compression_mode(value: object) -> str:
+def normalize_prompt_cache_hints_mode(value: object) -> str:
     candidate = str(value or "").strip().lower()
-    if candidate in {"off", "light", "balanced", "aggressive"}:
+    if candidate in {"off", "passthrough", "auto"}:
         return candidate
-    return str(DEFAULT_ROUTE_POLICY["compression_mode"])
+    return str(DEFAULT_ROUTE_POLICY["prompt_cache_hints_mode"])
+
+
+def normalize_prompt_cache_provider(value: object) -> str:
+    candidate = str(value or "").strip().lower()
+    if candidate in {"auto", "openai", "none"}:
+        return candidate
+    return str(DEFAULT_ROUTE_POLICY["prompt_cache_provider"])
+
+
+def normalize_prompt_cache_retention(value: object) -> str:
+    candidate = str(value or "").strip().lower()
+    if candidate in {"", "default", "off", "none"}:
+        return ""
+    if candidate in {"in_memory", "24h"}:
+        return candidate
+    return str(DEFAULT_ROUTE_POLICY["prompt_cache_retention"])
 
 
 def normalize_positive_int(value: object, default: int, *, minimum: int, maximum: int) -> int:
@@ -47,29 +65,31 @@ def normalize_positive_int(value: object, default: int, *, minimum: int, maximum
     return parsed
 
 
+def normalize_positive_float(value: object, default: float, *, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(value)
+    except Exception:
+        parsed = float(default)
+    if parsed < minimum:
+        return minimum
+    if parsed > maximum:
+        return maximum
+    return parsed
+
+
 def normalize_route_policy(raw_policy: object) -> dict:
     policy = deepcopy(DEFAULT_ROUTE_POLICY)
     if isinstance(raw_policy, dict):
         policy["reasoning_effort"] = normalize_reasoning_effort(raw_policy.get("reasoning_effort"))
         policy["prompt_cache_mode"] = normalize_prompt_cache_mode(raw_policy.get("prompt_cache_mode"))
-        policy["compression_mode"] = normalize_compression_mode(raw_policy.get("compression_mode"))
-        policy["max_history_messages"] = normalize_positive_int(
-            raw_policy.get("max_history_messages", policy["max_history_messages"]),
-            int(policy["max_history_messages"]),
-            minimum=2,
-            maximum=200,
+        policy["prompt_cache_hints_mode"] = normalize_prompt_cache_hints_mode(
+            raw_policy.get("prompt_cache_hints_mode")
         )
-        policy["max_tool_chars"] = normalize_positive_int(
-            raw_policy.get("max_tool_chars", policy["max_tool_chars"]),
-            int(policy["max_tool_chars"]),
-            minimum=1000,
-            maximum=500000,
+        policy["prompt_cache_provider"] = normalize_prompt_cache_provider(
+            raw_policy.get("prompt_cache_provider")
         )
-        policy["max_input_chars"] = normalize_positive_int(
-            raw_policy.get("max_input_chars", policy["max_input_chars"]),
-            int(policy["max_input_chars"]),
-            minimum=2000,
-            maximum=2000000,
+        policy["prompt_cache_retention"] = normalize_prompt_cache_retention(
+            raw_policy.get("prompt_cache_retention")
         )
         policy["max_output_tokens"] = normalize_positive_int(
             raw_policy.get("max_output_tokens", policy["max_output_tokens"]),
@@ -77,6 +97,26 @@ def normalize_route_policy(raw_policy: object) -> dict:
             minimum=0,
             maximum=10000000,
         )
+        policy["route_cooldown_seconds"] = normalize_positive_int(
+            raw_policy.get("route_cooldown_seconds", policy["route_cooldown_seconds"]),
+            int(policy["route_cooldown_seconds"]),
+            minimum=1,
+            maximum=86400,
+        )
+        policy["route_cooldown_multiplier"] = normalize_positive_float(
+            raw_policy.get("route_cooldown_multiplier", policy["route_cooldown_multiplier"]),
+            float(policy["route_cooldown_multiplier"]),
+            minimum=1.0,
+            maximum=8.0,
+        )
+        policy["route_cooldown_max_seconds"] = normalize_positive_int(
+            raw_policy.get("route_cooldown_max_seconds", policy["route_cooldown_max_seconds"]),
+            int(policy["route_cooldown_max_seconds"]),
+            minimum=1,
+            maximum=604800,
+        )
+        if policy["route_cooldown_max_seconds"] < policy["route_cooldown_seconds"]:
+            policy["route_cooldown_max_seconds"] = int(policy["route_cooldown_seconds"])
     return policy
 
 

@@ -51,7 +51,12 @@ class PoolConfigTests(unittest.TestCase):
                     "priority": "120",
                     "urls": [" https://api.example.com/v1/chat/completions ", ""],
                     "keys": [{"key": " sk-test-1 "}, {"key": ""}],
-                    "route_policy": {"reasoning_effort": "high"},
+                    "route_policy": {
+                        "reasoning_effort": "high",
+                        "route_cooldown_seconds": 45,
+                        "route_cooldown_multiplier": 1.5,
+                        "route_cooldown_max_seconds": 300,
+                    },
                 }
             ]
         }
@@ -66,6 +71,17 @@ class PoolConfigTests(unittest.TestCase):
         self.assertEqual(pools[0]["keys"], [{"key": "sk-test-1"}])
         self.assertEqual(pools[0]["route_policy"]["reasoning_effort"], "high")
         self.assertEqual(pools[0]["route_policy"]["prompt_cache_mode"], "exact")
+        self.assertEqual(pools[0]["route_policy"]["prompt_cache_hints_mode"], "auto")
+        self.assertEqual(pools[0]["route_policy"]["prompt_cache_provider"], "auto")
+        self.assertEqual(pools[0]["route_policy"]["prompt_cache_retention"], "")
+        self.assertEqual(pools[0]["route_policy"]["route_cooldown_seconds"], 45)
+        self.assertEqual(pools[0]["route_policy"]["route_cooldown_multiplier"], 1.5)
+        self.assertEqual(pools[0]["route_policy"]["route_cooldown_max_seconds"], 300)
+        self.assertNotIn("compression_mode", pools[0]["route_policy"])
+        self.assertNotIn("max_history_messages", pools[0]["route_policy"])
+        self.assertNotIn("max_tool_chars", pools[0]["route_policy"])
+        self.assertNotIn("max_input_chars", pools[0]["route_policy"])
+
 
     def test_pool_state_rebuild_uses_saved_keys(self):
         pools = normalize_proxy_pools(
@@ -88,6 +104,31 @@ class PoolConfigTests(unittest.TestCase):
         self.assertEqual(state.get_api_keys_for_url("https://api.example.com/v1"), ["sk-a", "sk-b"])
         self.assertEqual(choice["key"], "sk-a")
         self.assertEqual(choice["pool_name"], "pool")
+
+    def test_pool_route_policy_keeps_prompt_cache_hint_settings(self):
+        payload = {
+            "pools": [
+                {
+                    "name": "cache-aware",
+                    "enabled": True,
+                    "priority": 100,
+                    "urls": ["https://api.openai.com/v1"],
+                    "keys": [{"key": "sk-test-1"}],
+                    "route_policy": {
+                        "prompt_cache_hints_mode": "passthrough",
+                        "prompt_cache_provider": "openai",
+                        "prompt_cache_retention": "24h",
+                    },
+                }
+            ]
+        }
+
+        normalized = normalize_runtime_config_payload(payload, current=current_runtime_config())
+        route_policy = normalized["proxy_pools"][0]["route_policy"]
+
+        self.assertEqual(route_policy["prompt_cache_hints_mode"], "passthrough")
+        self.assertEqual(route_policy["prompt_cache_provider"], "openai")
+        self.assertEqual(route_policy["prompt_cache_retention"], "24h")
 
 
 if __name__ == "__main__":
