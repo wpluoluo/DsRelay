@@ -853,6 +853,8 @@
     .pool-inline-block { display: grid; gap: 6px; }
     .pool-inline-block label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
     .pool-inline-item { min-height: 34px; display: flex; align-items: center; padding: 8px 10px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); font-size: 12px; color: var(--ink); font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pool-inline-item.multiline { align-items: flex-start; white-space: normal; line-height: 1.45; font-family: inherit; }
+    .pool-inline-note { font-size: 11px; color: var(--muted); line-height: 1.5; }
     .pool-inline-empty { font-size: 12px; color: var(--muted-soft); padding: 6px 2px; }
     .pool-test-inline { display: grid; gap: 8px; padding-top: 2px; }
     .pool-test-inline-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
@@ -2362,6 +2364,27 @@
       return draft;
     }
 
+    function getPromptCacheSummary(routePolicy) {
+      routePolicy = routePolicy || {};
+      var localMode = String(routePolicy.prompt_cache_mode || "exact");
+      var hintMode = String(routePolicy.prompt_cache_hints_mode || "auto");
+      var provider = String(routePolicy.prompt_cache_provider || "auto");
+      var retention = String(routePolicy.prompt_cache_retention || "");
+      var localText = localMode === "off" ? "本地精确缓存关" : "本地精确缓存开";
+      var upstreamText = hintMode === "off" ? "上游前缀缓存 Hint 关" : (
+        hintMode === "passthrough" ? "上游前缀缓存 Hint 透传" : "上游前缀缓存 Hint 自动"
+      );
+      var extra = [];
+      if (hintMode !== "off") {
+        extra.push(provider === "auto" ? "提供方自动" : ("提供方 " + provider));
+        if (retention) extra.push("保留 " + retention);
+      }
+      return {
+        title: localText + " · " + upstreamText,
+        detail: extra.join(" · "),
+      };
+    }
+
     function renderPoolState(pools) {
       if (poolSummaryText) poolSummaryText.textContent = poolSummary(pools);
       renderPoolOverview(pools);
@@ -2420,7 +2443,8 @@
         html += '</button>';
         html += '<div class="pool-overview-main">';
         html += '<div class="pool-overview-title-row"><span class="pool-overview-title">' + title + '</span><span class="pool-badge ' + (pool.enabled ? 'ok' : 'off') + '">' + enabledText + '</span><span class="pool-badge">优先级 ' + escapeHtml(pool.priority) + '</span></div>';
-        html += '<div class="pool-overview-meta">' + pool.urls.length + ' 条地址 · ' + pool.keys.length + ' 个 Key</div>';
+        var promptCacheSummary = getPromptCacheSummary(pool.route_policy);
+        html += '<div class="pool-overview-meta">' + pool.urls.length + ' 条地址 · ' + pool.keys.length + ' 个 Key · ' + escapeHtml(promptCacheSummary.title) + '</div>';
         html += '</div>';
         html += '<div class="pool-overview-actions">';
         html += '<button type="button" class="pool-inline-btn primary" data-action="test-pool" data-pool-idx="' + index + '">测试连接</button>';
@@ -2443,11 +2467,14 @@
         html += '<div class="pool-inline-block"><label>线路策略</label>';
         html += '<div class="pool-inline-item">' + escapeHtml(
           "思考 " + pool.route_policy.reasoning_effort +
-          " · 缓存 " + pool.route_policy.prompt_cache_mode +
-          " · Hint " + pool.route_policy.prompt_cache_hints_mode + "/" + pool.route_policy.prompt_cache_provider +
-          (pool.route_policy.prompt_cache_retention ? (" · 保留 " + pool.route_policy.prompt_cache_retention) : "") +
+          " · 本地缓存 " + pool.route_policy.prompt_cache_mode +
           " · 冷却 " + pool.route_policy.route_cooldown_seconds + "s x" + pool.route_policy.route_cooldown_multiplier
         ) + '</div>';
+        html += '</div>';
+        html += '<div class="pool-inline-block"><label>前缀缓存</label>';
+        html += '<div class="pool-inline-item multiline"><div><div>' + escapeHtml(promptCacheSummary.title) + '</div>' +
+          (promptCacheSummary.detail ? ('<div class="pool-inline-note">' + escapeHtml(promptCacheSummary.detail) + '</div>') : '') +
+          '</div></div>';
         html += '</div>';
         var testData = poolTestResults[String(index)];
         html += '<div class="pool-inline-block" style="grid-column:1 / -1;">';
@@ -2500,8 +2527,8 @@
       html += '<div class="pool-urls"><label>上游地址</label>' + urlRowsHtml(urls, 0) + '</div>';
       html += '<div class="pool-keys"><label>API Keys</label>' + keyRowsHtml(keys, 0) + '</div>';
       html += '<div class="field"><label>思考强度</label><select data-field="reasoning_effort"><option value="low"' + (pool.route_policy.reasoning_effort === "low" ? " selected" : "") + '>低</option><option value="medium"' + (pool.route_policy.reasoning_effort === "medium" ? " selected" : "") + '>中</option><option value="high"' + (pool.route_policy.reasoning_effort === "high" ? " selected" : "") + '>高</option></select></div>';
-      html += '<div class="field"><label>缓存模式</label><select data-field="prompt_cache_mode"><option value="off"' + (pool.route_policy.prompt_cache_mode === "off" ? " selected" : "") + '>关闭</option><option value="exact"' + (pool.route_policy.prompt_cache_mode === "exact" ? " selected" : "") + '>精确命中</option></select></div>';
-      html += '<div class="field"><label>显式 Hint 策略</label><select data-field="prompt_cache_hints_mode"><option value="off"' + (pool.route_policy.prompt_cache_hints_mode === "off" ? " selected" : "") + '>关闭</option><option value="auto"' + (pool.route_policy.prompt_cache_hints_mode === "auto" ? " selected" : "") + '>自动判断</option><option value="passthrough"' + (pool.route_policy.prompt_cache_hints_mode === "passthrough" ? " selected" : "") + '>仅透传</option></select></div>';
+      html += '<div class="field"><label>本地精确缓存</label><select data-field="prompt_cache_mode"><option value="off"' + (pool.route_policy.prompt_cache_mode === "off" ? " selected" : "") + '>关闭</option><option value="exact"' + (pool.route_policy.prompt_cache_mode === "exact" ? " selected" : "") + '>开启</option></select></div>';
+      html += '<div class="field"><label>上游前缀缓存 Hint</label><select data-field="prompt_cache_hints_mode"><option value="off"' + (pool.route_policy.prompt_cache_hints_mode === "off" ? " selected" : "") + '>关闭</option><option value="auto"' + (pool.route_policy.prompt_cache_hints_mode === "auto" ? " selected" : "") + '>自动判断</option><option value="passthrough"' + (pool.route_policy.prompt_cache_hints_mode === "passthrough" ? " selected" : "") + '>仅透传下游 Hint</option></select><div class="pool-inline-note">这里就是上游前缀缓存开关。自动判断会按线路能力自动补 Hint。</div></div>';
       html += '<div class="field"><label>Hint 提供方</label><select data-field="prompt_cache_provider"><option value="auto"' + (pool.route_policy.prompt_cache_provider === "auto" ? " selected" : "") + '>自动识别</option><option value="openai"' + (pool.route_policy.prompt_cache_provider === "openai" ? " selected" : "") + '>OpenAI 兼容</option><option value="none"' + (pool.route_policy.prompt_cache_provider === "none" ? " selected" : "") + '>不支持</option></select></div>';
       html += '<div class="field"><label>Hint 保留期</label><select data-field="prompt_cache_retention"><option value=""' + (!pool.route_policy.prompt_cache_retention ? " selected" : "") + '>默认</option><option value="in_memory"' + (pool.route_policy.prompt_cache_retention === "in_memory" ? " selected" : "") + '>in_memory</option><option value="24h"' + (pool.route_policy.prompt_cache_retention === "24h" ? " selected" : "") + '>24h</option></select></div>';
       html += '<div class="field"><label>该线路输出上限</label><input type="number" value="' + escapeAttr(pool.route_policy.max_output_tokens) + '" min="0" max="10000000" step="1" data-field="max_output_tokens"></div>';
