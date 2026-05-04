@@ -114,6 +114,7 @@ def mark_route_failure(
     if not route_url:
         return
     now = time.time()
+    reason_text = str(reason or "").strip().lower()
     base_cooldown_seconds = max(route_cooldown_seconds, route_switch_window_seconds)
     cooldown_max_seconds = max(base_cooldown_seconds, int(route_cooldown_max_seconds or base_cooldown_seconds))
     cooldown_multiplier = max(1.0, float(route_cooldown_multiplier or 1.0))
@@ -130,8 +131,11 @@ def mark_route_failure(
         entry["consecutive_failures"] = int(entry.get("consecutive_failures", 0) or 0) + 1
         entry["last_reason"] = reason or ""
         entry["last_failure_at"] = now
-        if entry["consecutive_failures"] >= route_failure_threshold:
-            exponent = max(0, entry["consecutive_failures"] - route_failure_threshold)
+        effective_threshold = route_failure_threshold
+        if reason_text == "request_exception":
+            effective_threshold = 1
+        if entry["consecutive_failures"] >= effective_threshold:
+            exponent = max(0, entry["consecutive_failures"] - effective_threshold)
             cooldown_seconds = min(
                 cooldown_max_seconds,
                 int(round(base_cooldown_seconds * (cooldown_multiplier ** exponent))),

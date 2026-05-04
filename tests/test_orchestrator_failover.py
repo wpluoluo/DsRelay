@@ -2,6 +2,10 @@ import unittest
 
 import requests
 
+from local_proxy.server import (
+    STREAM_FIRST_EVENT_TIMEOUT_SECONDS,
+    prepare_route_switch_stream_request_kwargs,
+)
 from local_proxy.upstream.orchestrator import request_upstream_with_retries
 from local_proxy.upstream.router import build_attempt_url_cycle, mark_route_failure
 
@@ -24,6 +28,27 @@ def make_response(status_code: int, body: str, url: str) -> requests.Response:
 
 
 class GatewayFailoverTests(unittest.TestCase):
+    def test_prepare_route_switch_stream_request_kwargs_uses_shorter_connect_timeout_for_multi_route_streams(self):
+        request_kwargs = {
+            "method": "POST",
+            "url": "https://first.example/v1/chat/completions",
+            "json": {"model": "demo", "stream": True},
+            "stream": True,
+            "timeout": (20, 600),
+        }
+
+        prepared = prepare_route_switch_stream_request_kwargs(
+            request_kwargs,
+            upstream_urls=[
+                "https://first.example/v1/chat/completions",
+                "https://second.example/v1/chat/completions",
+            ],
+        )
+
+        self.assertNotEqual(prepared["timeout"], (20, 600))
+        self.assertLessEqual(prepared["timeout"][0], prepared["timeout"][1])
+        self.assertLess(prepared["timeout"][1], 600)
+
     def test_internal_meta_is_not_forwarded_to_request_sender(self):
         captured_kwargs = {}
 
@@ -205,6 +230,86 @@ class GatewayFailoverTests(unittest.TestCase):
         self.assertEqual(route_failures, [])
         self.assertEqual(key_failures, [])
 
+    def test_404_page_not_found_switches_to_next_healthy_route(self):
+        sent_urls = []
+        route_failures = []
+
+        def sender(**kwargs):
+            url = kwargs["url"]
+            sent_urls.append(url)
+            if url == "https://bad.example/v1/chat/completions":
+                return make_response(404, "404 page not found", url)
+            return make_response(200, '{"ok":true}', url)
+
+        response, attempts, error = request_upstream_with_retries(
+            {"method": "POST", "url": "https://bad.example/v1/chat/completions", "json": {"model": "demo"}},
+            subpath="chat/completions",
+            request_id="test-404-route-switch",
+            upstream_urls=[
+                "https://bad.example/v1/chat/completions",
+                "https://good.example/v1/chat/completions",
+            ],
+            model_candidates=["demo"],
+            should_retry_request=lambda subpath, method: True,
+            max_retries=3,
+            should_enforce_route_switch_window=lambda urls, retry_allowed: True,
+            route_switch_window_seconds=30,
+            build_attempt_url_cycle=lambda urls, blocked: [url for url in urls if url not in blocked],
+            build_model_candidate_order_for_route=lambda route, models, kwargs, request_id: {"candidates": models},
+            should_race_model_candidates_for_route=lambda **kwargs: False,
+            get_api_keys_for_url=lambda url: ["key-a"],
+            choose_api_key_for_url=lambda url, exclude=None: {
+                "key": "key-a",
+                "from_pool": True,
+                "pool_name": "pool",
+                "key_index": 0,
+                "key_count": 1,
+                "key_id": "key-a",
+            },
+            mark_api_key_success=lambda url, key: None,
+            mark_api_key_failure=lambda url, key, reason, force_cooldown=False: None,
+            mark_route_success=lambda url: None,
+            mark_route_failure=lambda url, reason: route_failures.append((url, reason)),
+            response_indicates_model_unavailable=lambda response: False,
+            classify_upstream_response=lambda response: (
+                ("switch_route", "route_not_found_404")
+                if response.status_code == 404 and "page not found" in response.text.lower()
+                else ("return", f"status_{response.status_code}")
+            ),
+            extract_error_preview_from_response=lambda response: response.text[:120],
+            apply_model_candidate_to_request_kwargs=lambda kwargs, model: dict(kwargs),
+            apply_learned_completion_limit_to_request_kwargs=lambda *args, **kwargs: 0,
+            extract_completion_token_limit_from_response=lambda response: None,
+            extract_context_token_limit_from_response=lambda response: (None, None),
+            clamp_payload_output_tokens=lambda payload, limit: 0,
+            record_learned_model_capability=lambda **kwargs: None,
+            record_model_candidate_result=lambda **kwargs: None,
+            compute_retry_delay_ms=lambda attempt, response=None: 0,
+            remaining_retry_window_ms=lambda deadline: 30000,
+            append_race_attempts=lambda attempts, race_attempts, **kwargs: set(),
+            model_candidate_differs_from_logical=lambda logical, candidate: False,
+            logger=NullLogger(),
+            cache_stat_bump=lambda key: None,
+            model_candidate_race_limit=1,
+            model_candidate_race_timeout_seconds=1,
+            enable_model_candidate_race=False,
+            request_sender=sender,
+        )
+
+        self.assertIsNone(error)
+        self.assertIsNotNone(response)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            sent_urls,
+            [
+                "https://bad.example/v1/chat/completions",
+                "https://good.example/v1/chat/completions",
+            ],
+        )
+        self.assertEqual(attempts[0]["status_code"], 404)
+        self.assertEqual(attempts[0]["action"], "switch_route")
+        self.assertEqual(route_failures, [])
+
     def test_request_exception_switches_route_without_marking_failure(self):
         sent_urls = []
         key_failures = []
@@ -281,8 +386,83 @@ class GatewayFailoverTests(unittest.TestCase):
             ],
         )
         self.assertEqual(attempts[0]["kind"], "exception")
-        self.assertEqual(route_failures, [])
+        self.assertEqual(route_failures, [("https://timeout.example/v1/chat/completions", "request_exception")])
         self.assertEqual(key_failures, [])
+
+    def test_request_exception_can_continue_switching_routes_within_short_window(self):
+        sent_urls = []
+
+        def sender(**kwargs):
+            url = kwargs["url"]
+            sent_urls.append(url)
+            if "good.example" in url:
+                return make_response(200, '{"ok":true}', url)
+            raise requests.Timeout("read timed out")
+
+        response, attempts, error = request_upstream_with_retries(
+            {"method": "POST", "url": "https://bad-a.example/v1/chat/completions", "json": {"model": "demo"}, "timeout": (3, 6)},
+            subpath="chat/completions",
+            request_id="test-timeout-budget",
+            upstream_urls=[
+                "https://bad-a.example/v1/chat/completions",
+                "https://bad-b.example/v1/chat/completions",
+                "https://good.example/v1/chat/completions",
+            ],
+            model_candidates=["demo"],
+            should_retry_request=lambda subpath, method: True,
+            max_retries=3,
+            should_enforce_route_switch_window=lambda urls, retry_allowed: True,
+            route_switch_window_seconds=1,
+            build_attempt_url_cycle=lambda urls, blocked: [url for url in urls if url not in blocked],
+            build_model_candidate_order_for_route=lambda route, models, kwargs, request_id: {"candidates": models},
+            should_race_model_candidates_for_route=lambda **kwargs: False,
+            get_api_keys_for_url=lambda url: ["key-a"],
+            choose_api_key_for_url=lambda url, exclude=None: {
+                "key": "key-a",
+                "from_pool": True,
+                "pool_name": "pool",
+                "key_index": 0,
+                "key_count": 1,
+                "key_id": "key-a",
+            },
+            mark_api_key_success=lambda url, key: None,
+            mark_api_key_failure=lambda url, key, reason, force_cooldown=False: None,
+            mark_route_success=lambda url: None,
+            mark_route_failure=lambda url, reason: None,
+            response_indicates_model_unavailable=lambda response: False,
+            classify_upstream_response=lambda response: ("return", f"status_{response.status_code}"),
+            extract_error_preview_from_response=lambda response: response.text[:120],
+            apply_model_candidate_to_request_kwargs=lambda kwargs, model: dict(kwargs),
+            apply_learned_completion_limit_to_request_kwargs=lambda *args, **kwargs: 0,
+            extract_completion_token_limit_from_response=lambda response: None,
+            extract_context_token_limit_from_response=lambda response: (None, None),
+            clamp_payload_output_tokens=lambda payload, limit: 0,
+            record_learned_model_capability=lambda **kwargs: None,
+            record_model_candidate_result=lambda **kwargs: None,
+            compute_retry_delay_ms=lambda attempt, response=None: 0,
+            remaining_retry_window_ms=lambda deadline: 0,
+            append_race_attempts=lambda attempts, race_attempts, **kwargs: set(),
+            model_candidate_differs_from_logical=lambda logical, candidate: False,
+            logger=NullLogger(),
+            cache_stat_bump=lambda key: None,
+            model_candidate_race_limit=1,
+            model_candidate_race_timeout_seconds=1,
+            enable_model_candidate_race=False,
+            request_sender=sender,
+        )
+
+        self.assertIsNone(error)
+        self.assertIsNotNone(response)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            sent_urls,
+            [
+                "https://bad-a.example/v1/chat/completions",
+                "https://bad-b.example/v1/chat/completions",
+                "https://good.example/v1/chat/completions",
+            ],
+        )
+        self.assertEqual(len(attempts), 3)
 
     def test_route_switch_replaces_authorization_in_isolated_headers(self):
         sent_headers = []
@@ -657,6 +837,35 @@ class GatewayFailoverTests(unittest.TestCase):
         third_until = route_health[route_url]["cooldown_until"]
         third_failure_at = route_health[route_url]["last_failure_at"]
         self.assertAlmostEqual(third_until - third_failure_at, 25, delta=2)
+
+    def test_request_exception_cools_route_on_first_failure(self):
+        route_health = {}
+
+        class DummyLock:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        state_lock = DummyLock()
+        route_url = "https://timeout.example/v1/chat/completions"
+
+        mark_route_failure(
+            route_health,
+            state_lock,
+            route_url,
+            "request_exception",
+            route_cooldown_seconds=10,
+            route_switch_window_seconds=1,
+            route_failure_threshold=3,
+            route_cooldown_multiplier=2.0,
+            route_cooldown_max_seconds=25,
+        )
+
+        entry = route_health[route_url]
+        self.assertEqual(entry["consecutive_failures"], 1)
+        self.assertGreater(entry["cooldown_until"], entry["last_failure_at"])
 
 if __name__ == "__main__":
     unittest.main()

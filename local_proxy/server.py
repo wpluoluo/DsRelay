@@ -244,6 +244,24 @@ def build_upstream_timeout(*, requested_stream: bool) -> int | tuple[int, int]:
     return (connect_timeout, read_timeout)
 
 
+def build_stream_route_switch_timeout(*, route_pool_size: int) -> tuple[int, int]:
+    connect_timeout = min(
+        max(1, STREAM_ROUTE_SWITCH_CONNECT_TIMEOUT_SECONDS),
+        max(1, UPSTREAM_ROUTE_SWITCH_WINDOW_SECONDS),
+    )
+    if route_pool_size <= 1:
+        connect_timeout = min(connect_timeout, max(1, STREAM_CONNECT_TIMEOUT_SECONDS))
+        read_timeout = max(connect_timeout, STREAM_READ_TIMEOUT_SECONDS)
+        return (connect_timeout, read_timeout)
+
+    read_timeout = min(
+        max(1, STREAM_FIRST_EVENT_TIMEOUT_SECONDS),
+        max(1, UPSTREAM_ROUTE_SWITCH_WINDOW_SECONDS),
+        max(1, STREAM_READ_TIMEOUT_SECONDS),
+    )
+    return (connect_timeout, read_timeout)
+
+
 def freeze_request_context_snapshot() -> dict:
     return {
         "headers": {str(key): str(value) for key, value in request.headers.items()},
@@ -608,6 +626,19 @@ try:
     STREAM_OPEN_GRACE_SECONDS = max(0.0, float(os.getenv("STREAM_OPEN_GRACE_SECONDS", "1.5")))
 except Exception:
     STREAM_OPEN_GRACE_SECONDS = 1.5
+STREAM_FIRST_EVENT_TIMEOUT_SECONDS = max(
+    1,
+    int(os.getenv("STREAM_FIRST_EVENT_TIMEOUT_SECONDS", str(max(3, WAITING_STREAM_HEARTBEAT_SECONDS + 1)))),
+)
+STREAM_ROUTE_SWITCH_CONNECT_TIMEOUT_SECONDS = max(
+    1,
+    int(
+        os.getenv(
+            "STREAM_ROUTE_SWITCH_CONNECT_TIMEOUT_SECONDS",
+            str(max(3, min(WAITING_STREAM_HEARTBEAT_SECONDS + 1, STREAM_CONNECT_TIMEOUT_SECONDS, UPSTREAM_ROUTE_SWITCH_WINDOW_SECONDS))),
+        )
+    ),
+)
 
 RETRYABLE_STATUS_CODES = {
     408,
@@ -623,6 +654,8 @@ RETRYABLE_STATUS_CODES = {
 }
 
 ROUTE_SWITCH_UPSTREAM_ERROR_MARKERS = (
+    "404 page not found",
+    "page not found",
     "model_not_found",
     "model not found",
     "no available channel for model",
@@ -2131,6 +2164,10 @@ def execute_upstream_request(
         request_kwargs["json"] = upstream_payload
     else:
         request_kwargs["data"] = raw_body or b""
+    request_kwargs = prepare_route_switch_stream_request_kwargs(
+        request_kwargs,
+        upstream_urls=upstream_urls,
+    )
 
     upstream_response, attempts, request_exception = request_upstream_with_retries(
         request_kwargs,
@@ -2316,6 +2353,9 @@ def extract_upstream_error_searchable_text(response: requests.Response) -> str:
 def classify_upstream_response(response: requests.Response) -> tuple[str, str]:
     status_code = response.status_code
     searchable = extract_upstream_error_searchable_text(response)
+    route_not_found = status_code == 404 and any(
+        marker in searchable for marker in ("404 page not found", "page not found")
+    )
 
     if text_indicates_client_gone(searchable):
         if (
@@ -2331,6 +2371,9 @@ def classify_upstream_response(response: requests.Response) -> tuple[str, str]:
 
     if any(marker in searchable for marker in REQUEST_FATAL_UPSTREAM_ERROR_MARKERS):
         return "return", f"fatal_{status_code}"
+
+    if route_not_found:
+        return "switch_route", f"route_not_found_{status_code}"
 
     if status_code in {401, 402, 403} or any(
         marker in searchable for marker in ROUTE_SWITCH_UPSTREAM_ERROR_MARKERS
@@ -2699,6 +2742,21 @@ def build_cached_openai_stream_response(
             }
         ),
     )
+
+
+def prepare_route_switch_stream_request_kwargs(
+    request_kwargs: dict | None,
+    *,
+    upstream_urls: list[str] | None,
+) -> dict:
+    next_kwargs = dict(request_kwargs or {})
+    if not bool(next_kwargs.get("stream")):
+        return next_kwargs
+    candidate_urls = [str(item or "").strip() for item in (upstream_urls or []) if str(item or "").strip()]
+    if len(candidate_urls) <= 1:
+        return next_kwargs
+    next_kwargs["timeout"] = build_stream_route_switch_timeout(route_pool_size=len(candidate_urls))
+    return next_kwargs
 
 
 def estimate_request_payload_bytes(payload: dict | None) -> int:
@@ -4095,11 +4153,35 @@ def proxy_response(
             preflight_raw_line_count = 0
             stream_iter = iter_response_lines_with_heartbeat(upstream_response, SSE_HEARTBEAT_SECONDS)
             preflight_empty_issue = None
+            preflight_wait_started_at = time.perf_counter()
             try:
                 while True:
                     raw_line = next(stream_iter)
                     if raw_line is None:
                         preflight_heartbeat_count += 1
+                        if (
+                            int((time.perf_counter() - preflight_wait_started_at) * 1000)
+                            >= STREAM_FIRST_EVENT_TIMEOUT_SECONDS * 1000
+                        ):
+                            preflight_empty_issue = {
+                                "code": "empty_sse_success",
+                                "message": "Upstream stream produced only keepalive heartbeats before the first data event.",
+                                "preview": json.dumps(
+                                    {
+                                        "content_type": upstream_response.headers.get("Content-Type", ""),
+                                        "heartbeat_count": preflight_heartbeat_count,
+                                        "raw_line_count": preflight_raw_line_count,
+                                        "nonempty_line_count": 0,
+                                        "first_upstream_event_ms": None,
+                                        "first_data_event_ms": None,
+                                        "last_nonempty_line": "",
+                                        "first_event_timeout_seconds": STREAM_FIRST_EVENT_TIMEOUT_SECONDS,
+                                    },
+                                    ensure_ascii=False,
+                                    separators=(",", ":"),
+                                ),
+                            }
+                            break
                         continue
                     preflight_raw_line_count += 1
                     prebuffered_raw_lines.append(raw_line)

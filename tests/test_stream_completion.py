@@ -1,6 +1,7 @@
 import json
 import time
 import unittest
+from unittest import mock
 
 import requests
 
@@ -10,6 +11,7 @@ from local_proxy.compat.protocols import (
 )
 from local_proxy.http.validation import inspect_success_payload
 from local_proxy.server import (
+    classify_upstream_response,
     consume_openai_sse_events,
     handle_anthropic_stream_response,
     handle_gemini_stream_response,
@@ -62,6 +64,15 @@ def make_json_response(payload: dict) -> requests.Response:
     response.url = "https://upstream.example/v1/chat/completions"
     response.headers["Content-Type"] = "application/json"
     response._content = json.dumps(payload).encode("utf-8")
+    return response
+
+
+def make_error_response(status_code: int, body: str, *, content_type: str = "text/plain") -> requests.Response:
+    response = requests.Response()
+    response.status_code = status_code
+    response.url = "https://upstream.example/v1/chat/completions"
+    response.headers["Content-Type"] = content_type
+    response._content = body.encode("utf-8")
     return response
 
 
@@ -118,6 +129,14 @@ def openai_stream_usage_events(body: str) -> list[dict]:
 
 
 class StreamCompletionTests(unittest.TestCase):
+    def test_classify_404_page_not_found_as_route_switch(self):
+        response = make_error_response(404, "404 page not found")
+
+        action, reason = classify_upstream_response(response)
+
+        self.assertEqual(action, "switch_route")
+        self.assertEqual(reason, "route_not_found_404")
+
     def test_openai_stream_stops_after_finish_reason_and_adds_done(self):
         upstream = SlowAfterTerminalResponse(openai_stream_lines())
         request_payload = {"model": "test-model", "stream": True, "messages": [{"role": "user", "content": "hello"}]}
@@ -627,6 +646,61 @@ class StreamCompletionTests(unittest.TestCase):
         self.assertIn("no usable output", body)
         self.assertNotIn('"finish_reason":"stop"', body)
         self.assertTrue(upstream.closed_by_proxy)
+
+    def test_openai_stream_heartbeat_only_preflight_switches_route_quickly(self):
+        upstream = FiniteStreamResponse([])
+        fallback_upstream = FiniteStreamResponse(openai_stream_lines())
+        request_payload = {"model": "test-model", "stream": True, "messages": [{"role": "user", "content": "hello"}]}
+
+        def fake_iter_response_lines_with_heartbeat(response, heartbeat_seconds):
+            if response is upstream:
+                return iter([None, None, None])
+            return iter(
+                [
+                    line.encode("utf-8") if isinstance(line, str) else line
+                    for line in openai_stream_lines()
+                ]
+            )
+
+        with mock.patch("local_proxy.server.STREAM_FIRST_EVENT_TIMEOUT_SECONDS", 0), \
+            mock.patch(
+                "local_proxy.server.iter_response_lines_with_heartbeat",
+                side_effect=fake_iter_response_lines_with_heartbeat,
+            ), \
+            mock.patch(
+                "local_proxy.server.execute_upstream_request",
+                return_value={
+                    "upstream_response": fallback_upstream,
+                    "upstream_url": fallback_upstream.url,
+                    "tool_schemas": {},
+                    "retry_count": 1,
+                    "attempts": [{"route_url": "https://fallback.example/v1/chat/completions"}],
+                    "request_context": {},
+                    "route_url": "https://fallback.example/v1/chat/completions",
+                },
+            ) as execute_mock:
+            response = proxy_response(
+                upstream,
+                sanitize_dsml=True,
+                request_id="heartbeatfallback",
+                upstream_url=upstream.url,
+                started_at=time.perf_counter(),
+                requested_stream=True,
+                route_hint="chat/completions",
+                tool_schemas={},
+                retry_count=0,
+                protocol="openai_chat_completions",
+                request_payload=request_payload,
+                execution={"empty_sse_fallbacks": 0, "request_context": {}, "route_url": "https://primary.example/v1/chat/completions"},
+            )
+
+        body = collect_response_body(response).decode("utf-8")
+
+        self.assertIn('"content":"ok"', body)
+        self.assertIn("data: [DONE]\n\n", body)
+        execute_mock.assert_called_once()
+        self.assertTrue(upstream.closed_by_proxy)
+        self.assertTrue(fallback_upstream.closed_by_proxy)
 
 
 if __name__ == "__main__":

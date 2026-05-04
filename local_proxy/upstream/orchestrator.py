@@ -290,8 +290,16 @@ def request_upstream_with_retries(
                     "error": str(exc),
                 }
             )
+            mark_route_failure(attempt_url, "request_exception")
+            record_model_candidate_result(
+                logical_model=logical_model,
+                route_url=attempt_url,
+                model_candidate=model_candidate,
+                success=False,
+            )
             if len(candidate_urls) - len(blocked_urls) > 1:
                 blocked_urls.add(attempt_url)
+                immediate_followup_budget += 1
                 logger.warning(
                     "request_id=%s 切换线路 次数=%s 线路=%s 原因=请求异常 剩余线路=%s 错误=%s",
                     request_id,

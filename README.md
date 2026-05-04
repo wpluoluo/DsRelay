@@ -222,6 +222,9 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18765/health"
 | `PORT` | `18765` | 代理监听端口 |
 | `REQUEST_TIMEOUT` | `600` | 请求超时时间（秒） |
 | `SSE_HEARTBEAT_SECONDS` | `12` | SSE 心跳间隔（秒） |
+| `STREAM_OPEN_GRACE_SECONDS` | `1.5` | 流式请求等待上游首包后开始向下游发送连接心跳的宽限时间（秒） |
+| `STREAM_FIRST_EVENT_TIMEOUT_SECONDS` | `6` | 流式请求在收到 `text/event-stream` 后，等待首个有效数据事件的最长时间（秒）；超时会把当前线路视为空流并切换下一条线路 |
+| `STREAM_ROUTE_SWITCH_CONNECT_TIMEOUT_SECONDS` | `6` | 多线路流式请求在切线阶段使用的上游建连/首阶段读取超时（秒），用于尽快放弃坏线路 |
 | `MAX_COMPLETION_TOKENS` | `0` | 全局输出 Token 上限（0 表示关闭） |
 | `FORCE_UPSTREAM_CHAT_STREAM` | `1` | 强制以流式调用上游 |
 | `ENABLE_REQUEST_NORMALIZATION` | `1` | 启用请求格式自动修复 |
