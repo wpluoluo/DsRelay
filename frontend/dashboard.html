@@ -1773,7 +1773,11 @@
       var resumeSaved = Number(cacheStats.interruption_resume_saved || 0);
       var resumeCleared = Number(cacheStats.interruption_resume_cleared || 0);
       var interruptedEntries = Number((runtime.model_routing && runtime.model_routing.interrupted_response_entries) || 0);
-      var hitRate = Number(cacheObs.cache_hit_rate || 0);
+      var localResponseCacheHitRate = Number(cacheObs.local_response_cache_hit_rate || 0);
+      var upstreamPromptCacheHitRate = Number(cacheObs.upstream_prompt_cache_hit_rate || 0);
+      var upstreamPromptCacheHits = Number(cacheObs.upstream_prompt_cache_hits || 0);
+      var upstreamPromptCacheRequests = Number(cacheObs.upstream_prompt_cache_requests || 0);
+      var promptHintRequests = Number(cacheObs.prompt_hint_requests || 0);
       var avgCacheReadTokens = Number(cacheObs.avg_cache_read_input_tokens || 0);
       var stickySessionCount = Number(cacheObs.sticky_session_count || 0);
       var stickySessionTotal = Number(cacheObs.sticky_session_total || 0);
@@ -1792,7 +1796,7 @@
       setText(configRouteInfoEl, poolsCount ? (enabledPools + " / " + poolsCount + " 池启用") : (upstreamCount + " 条直连"));
       setText(configRouteMetaEl, upstreamCount + " 条链路 · 冷却 " + Number(retry.cooled_routes || 0));
 
-      setText(configPolicyInfoEl, "重试 " + Number(retry.max_retries || config.max_retries || 0) + " 次 · 缓存 " + promptHits);
+      setText(configPolicyInfoEl, "重试 " + Number(retry.max_retries || config.max_retries || 0) + " 次 · 本地缓存 " + promptHits);
       setText(
         configPolicyMetaEl,
         "探测" + (probeOn ? "开" : "关") + " · 竞速" + (raceOn ? "开" : "关") + " · 轮换" + (retry.randomize_endpoints ? "开" : "关") + " · 写入 " + promptWrites
@@ -1809,9 +1813,16 @@
       setText(configModelAliasMetaEl, capabilityCount + " 条能力 · 路由命中 " + Number((runtime.model_routing && runtime.model_routing.cache_stats && runtime.model_routing.cache_stats.model_route_hits) || 0));
       setText(configResumeInfoEl, resumeEnabled ? "已启用" : "已关闭");
       setText(configResumeMetaEl, "注入 " + resumeInjected + " · 保存 " + resumeSaved + " · 清理 " + resumeCleared + " · 条目 " + interruptedEntries);
-      setText(configCacheInfoEl, "命中率 " + (hitRate * 100).toFixed(1) + "% · 平均读 " + Math.round(avgCacheReadTokens));
+      setText(
+        configCacheInfoEl,
+        "前缀缓存命中率 " + (upstreamPromptCacheHitRate * 100).toFixed(1) + "% · 平均缓存读 " + Math.round(avgCacheReadTokens)
+      );
       setText(
         configCacheMetaEl,
+        "前缀缓存 " + upstreamPromptCacheHits + "/" + upstreamPromptCacheRequests +
+        " · Hint 请求 " + promptHintRequests +
+        " · 本地响应缓存 " + (localResponseCacheHitRate * 100).toFixed(1) + "%" +
+        " · " +
         "会话粘滞 " + stickySessionCount + "/" + stickySessionTotal +
         " (" + (stickySessionRate * 100).toFixed(1) + "%) · 粘滞线路 " + activeAffinityKeys +
         " · Hint 池 " + hintEnabledPools.length + (autoHintPools ? (" · Auto " + autoHintPools) : "")
@@ -1834,7 +1845,10 @@
         var successCount = Number(item.success_count || 0);
         var errorCount = Number(item.error_count || 0);
         var status429Count = Number(item.status_429_count || 0);
-        var cacheHitRate = Number(item.cache_hit_rate || 0);
+        var localCacheHitRate = Number(item.local_cache_hit_rate || 0);
+        var upstreamPromptCacheHitRate = Number(item.upstream_prompt_cache_hit_rate || 0);
+        var upstreamPromptCacheHits = Number(item.upstream_prompt_cache_hit_count || 0);
+        var upstreamPromptCacheRequests = Number(item.upstream_prompt_cache_request_count || 0);
         var avgCacheRead = Number(item.avg_cache_read_input_tokens || 0);
         var stickyRate = Number(item.sticky_session_rate || 0);
         var hintRate = Number(item.hint_applied_rate || 0);
@@ -1843,7 +1857,7 @@
           '<td><div class="request-stack"><div class="request-cell-title request-ellipsis">' + escapeHtml(item.route_url || "-") + '</div><div class="request-cell-sub">活跃粘滞 ' + escapeHtml(item.active_affinity_count || 0) + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(item.pool_name || "-") + '</div><div class="request-cell-sub">' + statusBadge + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(requestCount) + '</div><div class="request-cell-sub">成功 ' + escapeHtml(successCount) + ' · 错误 ' + escapeHtml(errorCount) + '</div></div></td>' +
-          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml((cacheHitRate * 100).toFixed(1) + "%") + '</div><div class="request-cell-sub">平均读 ' + escapeHtml(Math.round(avgCacheRead)) + ' token</div></div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml((upstreamPromptCacheHitRate * 100).toFixed(1) + "%") + '</div><div class="request-cell-sub">前缀缓存 ' + escapeHtml(upstreamPromptCacheHits) + '/' + escapeHtml(upstreamPromptCacheRequests) + ' · 平均读 ' + escapeHtml(Math.round(avgCacheRead)) + ' token</div><div class="request-cell-sub">本地响应缓存 ' + escapeHtml((localCacheHitRate * 100).toFixed(1) + "%") + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(item.sticky_session_count || 0) + '/' + escapeHtml(item.session_count || 0) + '</div><div class="request-cell-sub">粘滞率 ' + escapeHtml((stickyRate * 100).toFixed(1) + "%") + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(item.hint_applied_count || 0) + '</div><div class="request-cell-sub">生效率 ' + escapeHtml((hintRate * 100).toFixed(1) + "%") + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-cell-title">429 ' + escapeHtml(status429Count) + '</div><div class="request-cell-sub">失败链 ' + escapeHtml(item.consecutive_failures || 0) + (item.last_reason ? (' · ' + escapeHtml(item.last_reason)) : '') + '</div></div></td>' +
@@ -2073,14 +2087,16 @@
         var totalTokens = Number(entry.total_tokens || 0);
         var cacheReadTokens = Number(entry.cache_read_input_tokens || 0);
         var cacheCreationTokens = Number(entry.cache_creation_input_tokens || 0);
-        var cacheStatus = String(entry.cache_status || (entry.cache_hit ? "hit" : "miss"));
-        var cacheNote = String(entry.cache_note || "");
-        var cacheSummary = "缓存读 " + cacheReadBytes + " B";
+        var cacheStatus = String(entry.local_response_cache_status || entry.cache_status || (entry.cache_hit ? "hit" : "miss"));
+        var cacheNote = String(entry.local_response_cache_note || entry.cache_note || "");
+        var upstreamPromptCacheStatus = String(entry.upstream_prompt_cache_status || "off");
+        var upstreamPromptCacheNote = String(entry.upstream_prompt_cache_note || "");
+        var cacheSummary = "本地缓存读 " + cacheReadBytes + " B";
         var tokenSummary = "Token " + promptTokens + " IN · " + completionTokens + " OUT";
         if (cacheReadTokens > 0) tokenSummary += " · 缓存读 " + cacheReadTokens;
         if (cacheCreationTokens > 0) tokenSummary += " · 缓存写 " + cacheCreationTokens;
         if (totalTokens > 0) tokenSummary += " · 总 " + totalTokens;
-        if (entry.cache_hit) {
+        if (entry.local_response_cache_hit) {
           cacheSummary += " · 命中";
           if (entry.cache_source) cacheSummary += " · " + entry.cache_source;
         } else if (cacheStatus === "miss_stream" || cacheStatus === "bypass_stream" || cacheStatus === "bypass_tools" || cacheStatus === "bypass_format" || cacheStatus === "bypass_policy" || cacheStatus === "bypass_payload") {
@@ -2089,6 +2105,8 @@
         } else {
           cacheSummary += " · 未命中";
         }
+        cacheSummary += " · 前缀缓存 " + upstreamPromptCacheStatus;
+        if (upstreamPromptCacheNote) cacheSummary += " · " + upstreamPromptCacheNote;
         return '<tr>' +
           '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(entry.started_at || "-") + '</div><div class="request-cell-sub request-mono">' + escapeHtml(entry.request_id || "-") + '</div></div></td>' +
           '<td><div class="request-chip-row"><span class="request-chip accent">' + escapeHtml(entry.protocol || "auto") + '</span>' + (entry.stream ? '<span class="request-chip warn">流</span>' : '<span class="request-chip">非流</span>') + '</div></td>' +
@@ -2096,7 +2114,7 @@
           '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml((entry.method || "REQ") + " " + (entry.path || "")) + '</div><div class="request-cell-sub">' + (entry.client_gone ? '客户端断开' : '请求完成') + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-cell-title request-ellipsis">' + escapeHtml(logicalModel) + '</div><div class="request-cell-sub request-ellipsis">' + escapeHtml(resolvedModel) + '</div><div class="request-cell-sub">' + escapeHtml(poolName) + ' · ' + escapeHtml(routeIndex) + ' · ' + escapeHtml(keyIndex) + '</div></div></td>' +
           '<td><div class="request-chip-row"><span class="request-chip ok">' + escapeHtml(entry.duration_ms || "-") + ' ms</span><span class="request-chip">' + escapeHtml(inputBytes) + ' IN</span><span class="request-chip">' + escapeHtml(outputBytes) + ' OUT</span></div><div class="request-cell-sub">' + escapeHtml(tokenSummary) + '</div><div class="request-cell-sub">' + escapeHtml(cacheSummary) + '</div></td>' +
-          '<td><div class="request-stack"><div class="request-cell-sub">请求 ' + escapeHtml(entry.request_repairs || 0) + ' · DSML ' + escapeHtml(entry.sanitized_markers || 0) + ' · 工具 ' + escapeHtml(entry.repaired_tool_args || 0) + '</div><div class="request-cell-sub">缓存 ' + escapeHtml(cacheStatus) + (cacheNote ? (' · ' + escapeHtml(cacheNote)) : '') + '</div></div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-sub">请求 ' + escapeHtml(entry.request_repairs || 0) + ' · DSML ' + escapeHtml(entry.sanitized_markers || 0) + ' · 工具 ' + escapeHtml(entry.repaired_tool_args || 0) + '</div><div class="request-cell-sub">本地缓存 ' + escapeHtml(cacheStatus) + (cacheNote ? (' · ' + escapeHtml(cacheNote)) : '') + '</div><div class="request-cell-sub">前缀缓存 ' + escapeHtml(upstreamPromptCacheStatus) + (upstreamPromptCacheNote ? (' · ' + escapeHtml(upstreamPromptCacheNote)) : '') + '</div></div></td>' +
           '<td><div class="request-chip-row"><span class="request-chip ' + statusTone + '">状态 ' + escapeHtml(entry.status_code || "-") + '</span>' + (entry.error ? '<span class="request-chip err">异常</span>' : '') + '</div></td>' +
           '<td><div class="request-stack">' + (entry.response_preview ? '<div class="request-cell-sub request-mono request-ellipsis">' + escapeHtml(entry.response_preview).slice(0, 220) + '</div>' : '<div class="request-cell-sub">无预览</div>') + (entry.upstream_attempt_chain ? '<div class="request-cell-sub request-ellipsis">链路 ' + escapeHtml(entry.upstream_attempt_chain).slice(0, 160) + '</div>' : '') + (entry.error ? '<div class="request-cell-sub request-ellipsis" style="color:var(--error);">' + escapeHtml(entry.error) + '</div>' : '') + '</div></td>' +
         '</tr>';

@@ -86,20 +86,46 @@ def estimate_openai_response_completion_tokens(response_body: dict | None) -> in
     return estimate_text_tokens("".join(fragments))
 
 
+def extract_prompt_cache_usage_details(usage: dict | None) -> dict:
+    usage = usage if isinstance(usage, dict) else {}
+    prompt_tokens_details = usage.get("prompt_tokens_details")
+    prompt_tokens_details = prompt_tokens_details if isinstance(prompt_tokens_details, dict) else {}
+
+    cached_tokens = coerce_non_negative_int(
+        prompt_tokens_details.get("cached_tokens")
+        or usage.get("cache_read_input_tokens")
+        or usage.get("prompt_cache_hit_tokens")
+    )
+    cache_creation_tokens = coerce_non_negative_int(
+        prompt_tokens_details.get("cache_creation_tokens")
+        or usage.get("cache_creation_input_tokens")
+    )
+    prompt_cache_hit_tokens = coerce_non_negative_int(
+        usage.get("prompt_cache_hit_tokens") or cached_tokens
+    )
+    prompt_cache_miss_tokens = coerce_non_negative_int(usage.get("prompt_cache_miss_tokens"))
+    return {
+        "prompt_tokens_details": prompt_tokens_details,
+        "cached_tokens": cached_tokens,
+        "cache_creation_tokens": cache_creation_tokens,
+        "prompt_cache_hit_tokens": prompt_cache_hit_tokens,
+        "prompt_cache_miss_tokens": prompt_cache_miss_tokens,
+    }
+
+
 def build_anthropic_usage_from_openai(response_body: dict | None, request_payload: dict | None = None) -> dict:
     usage = response_body.get("usage") if isinstance(response_body, dict) else {}
     usage = usage if isinstance(usage, dict) else {}
     input_tokens = coerce_non_negative_int(usage.get("prompt_tokens") or usage.get("input_tokens"))
     output_tokens = coerce_non_negative_int(usage.get("completion_tokens") or usage.get("output_tokens"))
-    cache_read_input_tokens = coerce_non_negative_int(
-        usage.get("cache_read_input_tokens")
-        or ((usage.get("prompt_tokens_details") or {}).get("cached_tokens") if isinstance(usage.get("prompt_tokens_details"), dict) else 0)
-    )
-    cache_creation_input_tokens = coerce_non_negative_int(
-        usage.get("cache_creation_input_tokens")
-        or ((usage.get("prompt_tokens_details") or {}).get("cache_creation_tokens") if isinstance(usage.get("prompt_tokens_details"), dict) else 0)
-    )
+    cache_details = extract_prompt_cache_usage_details(usage)
+    cache_read_input_tokens = int(cache_details.get("cached_tokens") or 0)
+    cache_creation_input_tokens = int(cache_details.get("cache_creation_tokens") or 0)
+    prompt_cache_hit_tokens = int(cache_details.get("prompt_cache_hit_tokens") or 0)
+    prompt_cache_miss_tokens = int(cache_details.get("prompt_cache_miss_tokens") or 0)
 
+    if input_tokens <= 0 and (prompt_cache_hit_tokens > 0 or prompt_cache_miss_tokens > 0):
+        input_tokens = prompt_cache_hit_tokens + prompt_cache_miss_tokens
     if input_tokens <= 0 and isinstance(request_payload, dict):
         input_tokens = estimate_payload_tokens(request_payload)
     if output_tokens <= 0:
@@ -123,6 +149,15 @@ def build_openai_usage_from_response(response_body: dict | None, request_payload
     completion_tokens = coerce_non_negative_int(usage.get("completion_tokens") or usage.get("output_tokens"))
     total_tokens = coerce_non_negative_int(usage.get("total_tokens"))
 
+    cache_details = extract_prompt_cache_usage_details(usage)
+    prompt_tokens_details = dict(cache_details.get("prompt_tokens_details") or {})
+    cached_tokens = int(cache_details.get("cached_tokens") or 0)
+    cache_creation_tokens = int(cache_details.get("cache_creation_tokens") or 0)
+    prompt_cache_hit_tokens = int(cache_details.get("prompt_cache_hit_tokens") or 0)
+    prompt_cache_miss_tokens = int(cache_details.get("prompt_cache_miss_tokens") or 0)
+
+    if prompt_tokens <= 0 and (prompt_cache_hit_tokens > 0 or prompt_cache_miss_tokens > 0):
+        prompt_tokens = prompt_cache_hit_tokens + prompt_cache_miss_tokens
     if prompt_tokens <= 0 and isinstance(request_payload, dict):
         prompt_tokens = estimate_payload_tokens(request_payload)
     if completion_tokens <= 0:
@@ -130,17 +165,6 @@ def build_openai_usage_from_response(response_body: dict | None, request_payload
     if total_tokens <= 0:
         total_tokens = prompt_tokens + completion_tokens
 
-    prompt_tokens_details = usage.get("prompt_tokens_details")
-    if not isinstance(prompt_tokens_details, dict):
-        prompt_tokens_details = {}
-    cached_tokens = coerce_non_negative_int(
-        prompt_tokens_details.get("cached_tokens")
-        or usage.get("cache_read_input_tokens")
-    )
-    cache_creation_tokens = coerce_non_negative_int(
-        prompt_tokens_details.get("cache_creation_tokens")
-        or usage.get("cache_creation_input_tokens")
-    )
     if cached_tokens > 0:
         prompt_tokens_details["cached_tokens"] = cached_tokens
     if cache_creation_tokens > 0:
@@ -153,8 +177,11 @@ def build_openai_usage_from_response(response_body: dict | None, request_payload
         usage["prompt_tokens_details"] = prompt_tokens_details
     if cached_tokens > 0:
         usage["cache_read_input_tokens"] = cached_tokens
+        usage["prompt_cache_hit_tokens"] = prompt_cache_hit_tokens or cached_tokens
     if cache_creation_tokens > 0:
         usage["cache_creation_input_tokens"] = cache_creation_tokens
+    if prompt_cache_miss_tokens > 0:
+        usage["prompt_cache_miss_tokens"] = prompt_cache_miss_tokens
     return usage
 
 

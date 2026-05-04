@@ -121,10 +121,16 @@ def build_dashboard_state(context: dict) -> dict:
     }
     recent_requests = request_snapshot["recent_requests"]
     cache_stats = (runtime_snapshot.get("model_routing") or {}).get("cache_stats") or {}
-    prompt_hits = int(cache_stats.get("prompt_cache_hits", 0) or 0)
-    prompt_misses = int(cache_stats.get("prompt_cache_misses", 0) or 0)
-    total_cache_attempts = prompt_hits + prompt_misses
-    cache_hit_rate = (prompt_hits / total_cache_attempts) if total_cache_attempts > 0 else 0.0
+    local_response_cache_hits = int(cache_stats.get("prompt_cache_hits", 0) or 0)
+    local_response_cache_misses = int(cache_stats.get("prompt_cache_misses", 0) or 0)
+    total_local_cache_attempts = local_response_cache_hits + local_response_cache_misses
+    local_response_cache_hit_rate = (
+        local_response_cache_hits / total_local_cache_attempts
+        if total_local_cache_attempts > 0 else 0.0
+    )
+    upstream_prompt_cache_requests = 0
+    upstream_prompt_cache_hits = 0
+    prompt_hint_requests = 0
 
     cache_read_samples = [
         int(item.get("cache_read_input_tokens") or 0)
@@ -140,6 +146,12 @@ def build_dashboard_state(context: dict) -> dict:
     route_sessions: dict[str, set[str]] = {}
     sticky_sessions = 0
     for item in recent_requests:
+        if bool(item.get("upstream_prompt_cache_eligible")):
+            upstream_prompt_cache_requests += 1
+        if bool(item.get("upstream_prompt_cache_hit")):
+            upstream_prompt_cache_hits += 1
+        if bool(item.get("prompt_cache_hint_applied")) or bool(item.get("prompt_cache_hint_passthrough")):
+            prompt_hint_requests += 1
         affinity_key = str(item.get("session_affinity_key") or "").strip()
         route_url = str(item.get("upstream_url") or "").strip()
         if not affinity_key or not route_url:
@@ -163,7 +175,9 @@ def build_dashboard_state(context: dict) -> dict:
             "success_count": 0,
             "error_count": 0,
             "status_429_count": 0,
-            "cache_hit_count": 0,
+            "local_cache_hit_count": 0,
+            "upstream_prompt_cache_hit_count": 0,
+            "upstream_prompt_cache_request_count": 0,
             "cache_read_input_tokens": 0,
             "cache_read_samples": 0,
             "hint_applied_count": 0,
@@ -185,7 +199,9 @@ def build_dashboard_state(context: dict) -> dict:
                 "success_count": 0,
                 "error_count": 0,
                 "status_429_count": 0,
-                "cache_hit_count": 0,
+                "local_cache_hit_count": 0,
+                "upstream_prompt_cache_hit_count": 0,
+                "upstream_prompt_cache_request_count": 0,
                 "cache_read_input_tokens": 0,
                 "cache_read_samples": 0,
                 "hint_applied_count": 0,
@@ -211,7 +227,9 @@ def build_dashboard_state(context: dict) -> dict:
                 "success_count": 0,
                 "error_count": 0,
                 "status_429_count": 0,
-                "cache_hit_count": 0,
+                "local_cache_hit_count": 0,
+                "upstream_prompt_cache_hit_count": 0,
+                "upstream_prompt_cache_request_count": 0,
                 "cache_read_input_tokens": 0,
                 "cache_read_samples": 0,
                 "hint_applied_count": 0,
@@ -231,8 +249,12 @@ def build_dashboard_state(context: dict) -> dict:
             entry["error_count"] += 1
         elif status_code > 0 and status_code < 400:
             entry["success_count"] += 1
-        if bool(item.get("cache_hit")):
-            entry["cache_hit_count"] += 1
+        if bool(item.get("local_response_cache_hit")):
+            entry["local_cache_hit_count"] += 1
+        if bool(item.get("upstream_prompt_cache_eligible")):
+            entry["upstream_prompt_cache_request_count"] += 1
+        if bool(item.get("upstream_prompt_cache_hit")):
+            entry["upstream_prompt_cache_hit_count"] += 1
         cache_read_tokens = int(item.get("cache_read_input_tokens") or 0)
         if cache_read_tokens > 0:
             entry["cache_read_input_tokens"] += cache_read_tokens
@@ -251,7 +273,9 @@ def build_dashboard_state(context: dict) -> dict:
                 "success_count": 0,
                 "error_count": 0,
                 "status_429_count": 0,
-                "cache_hit_count": 0,
+                "local_cache_hit_count": 0,
+                "upstream_prompt_cache_hit_count": 0,
+                "upstream_prompt_cache_request_count": 0,
                 "cache_read_input_tokens": 0,
                 "cache_read_samples": 0,
                 "hint_applied_count": 0,
@@ -285,7 +309,9 @@ def build_dashboard_state(context: dict) -> dict:
                 "success_count": 0,
                 "error_count": 0,
                 "status_429_count": 0,
-                "cache_hit_count": 0,
+                "local_cache_hit_count": 0,
+                "upstream_prompt_cache_hit_count": 0,
+                "upstream_prompt_cache_request_count": 0,
                 "cache_read_input_tokens": 0,
                 "cache_read_samples": 0,
                 "hint_applied_count": 0,
@@ -315,8 +341,17 @@ def build_dashboard_state(context: dict) -> dict:
                 "success_count": int(entry.get("success_count") or 0),
                 "error_count": int(entry.get("error_count") or 0),
                 "status_429_count": int(entry.get("status_429_count") or 0),
-                "cache_hit_count": int(entry.get("cache_hit_count") or 0),
-                "cache_hit_rate": (int(entry.get("cache_hit_count") or 0) / request_count) if request_count > 0 else 0.0,
+                "local_cache_hit_count": int(entry.get("local_cache_hit_count") or 0),
+                "local_cache_hit_rate": (
+                    int(entry.get("local_cache_hit_count") or 0) / request_count
+                    if request_count > 0 else 0.0
+                ),
+                "upstream_prompt_cache_hit_count": int(entry.get("upstream_prompt_cache_hit_count") or 0),
+                "upstream_prompt_cache_request_count": int(entry.get("upstream_prompt_cache_request_count") or 0),
+                "upstream_prompt_cache_hit_rate": (
+                    int(entry.get("upstream_prompt_cache_hit_count") or 0) / int(entry.get("upstream_prompt_cache_request_count") or 0)
+                    if int(entry.get("upstream_prompt_cache_request_count") or 0) > 0 else 0.0
+                ),
                 "avg_cache_read_input_tokens": (
                     float(entry.get("cache_read_input_tokens") or 0) / cache_read_samples
                     if cache_read_samples > 0 else 0.0
@@ -358,9 +393,16 @@ def build_dashboard_state(context: dict) -> dict:
         "connection_pool": context["connection_pool_snapshot"](),
         "route_observability": route_observability_rows,
         "cache_observability": {
-            "prompt_cache_hits": prompt_hits,
-            "prompt_cache_misses": prompt_misses,
-            "cache_hit_rate": cache_hit_rate,
+            "local_response_cache_hits": local_response_cache_hits,
+            "local_response_cache_misses": local_response_cache_misses,
+            "local_response_cache_hit_rate": local_response_cache_hit_rate,
+            "upstream_prompt_cache_requests": upstream_prompt_cache_requests,
+            "upstream_prompt_cache_hits": upstream_prompt_cache_hits,
+            "upstream_prompt_cache_hit_rate": (
+                upstream_prompt_cache_hits / upstream_prompt_cache_requests
+                if upstream_prompt_cache_requests > 0 else 0.0
+            ),
+            "prompt_hint_requests": prompt_hint_requests,
             "avg_cache_read_input_tokens": avg_cache_read_tokens,
             "sticky_session_count": sticky_sessions,
             "sticky_session_total": sticky_total,

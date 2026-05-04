@@ -35,17 +35,37 @@ def normalize_openai_usage_payload(usage: dict | None) -> dict:
     prompt_details = usage.get("prompt_tokens_details")
     prompt_details = prompt_details if isinstance(prompt_details, dict) else {}
     cached_tokens = _coerce_non_negative_int(
-        prompt_details.get("cached_tokens") or usage.get("cache_read_input_tokens")
+        prompt_details.get("cached_tokens")
+        or usage.get("cache_read_input_tokens")
+        or usage.get("prompt_cache_hit_tokens")
     )
     cache_creation_tokens = _coerce_non_negative_int(
         prompt_details.get("cache_creation_tokens") or usage.get("cache_creation_input_tokens")
     )
+    prompt_cache_hit_tokens = _coerce_non_negative_int(
+        usage.get("prompt_cache_hit_tokens") or cached_tokens
+    )
+    prompt_cache_miss_tokens = _coerce_non_negative_int(usage.get("prompt_cache_miss_tokens"))
+    prompt_tokens = _coerce_non_negative_int(usage.get("prompt_tokens") or usage.get("input_tokens"))
+    total_tokens = _coerce_non_negative_int(usage.get("total_tokens"))
+    if prompt_tokens <= 0 and (prompt_cache_hit_tokens > 0 or prompt_cache_miss_tokens > 0):
+        prompt_tokens = prompt_cache_hit_tokens + prompt_cache_miss_tokens
+        usage["prompt_tokens"] = prompt_tokens
+    if total_tokens <= 0:
+        completion_tokens = _coerce_non_negative_int(
+            usage.get("completion_tokens") or usage.get("output_tokens")
+        )
+        if prompt_tokens > 0 or completion_tokens > 0:
+            usage["total_tokens"] = prompt_tokens + completion_tokens
     if cached_tokens > 0:
         prompt_details["cached_tokens"] = cached_tokens
         usage["cache_read_input_tokens"] = cached_tokens
+        usage["prompt_cache_hit_tokens"] = prompt_cache_hit_tokens
     if cache_creation_tokens > 0:
         prompt_details["cache_creation_tokens"] = cache_creation_tokens
         usage["cache_creation_input_tokens"] = cache_creation_tokens
+    if prompt_cache_miss_tokens > 0:
+        usage["prompt_cache_miss_tokens"] = prompt_cache_miss_tokens
     if prompt_details:
         usage["prompt_tokens_details"] = prompt_details
     return usage

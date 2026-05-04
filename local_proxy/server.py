@@ -380,6 +380,8 @@ def extract_usage_cache_details(usage: dict | None) -> dict:
             "total_tokens": 0,
             "cache_read_input_tokens": 0,
             "cache_creation_input_tokens": 0,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 0,
         }
     prompt_details = usage.get("prompt_tokens_details")
     prompt_details = prompt_details if isinstance(prompt_details, dict) else {}
@@ -387,11 +389,19 @@ def extract_usage_cache_details(usage: dict | None) -> dict:
     completion_tokens = coerce_non_negative_int(usage.get("completion_tokens") or usage.get("output_tokens"))
     total_tokens = coerce_non_negative_int(usage.get("total_tokens"))
     cache_read_input_tokens = coerce_non_negative_int(
-        usage.get("cache_read_input_tokens") or prompt_details.get("cached_tokens")
+        usage.get("cache_read_input_tokens")
+        or prompt_details.get("cached_tokens")
+        or usage.get("prompt_cache_hit_tokens")
     )
     cache_creation_input_tokens = coerce_non_negative_int(
         usage.get("cache_creation_input_tokens") or prompt_details.get("cache_creation_tokens")
     )
+    prompt_cache_hit_tokens = coerce_non_negative_int(
+        usage.get("prompt_cache_hit_tokens") or cache_read_input_tokens
+    )
+    prompt_cache_miss_tokens = coerce_non_negative_int(usage.get("prompt_cache_miss_tokens"))
+    if prompt_tokens <= 0 and (prompt_cache_hit_tokens > 0 or prompt_cache_miss_tokens > 0):
+        prompt_tokens = prompt_cache_hit_tokens + prompt_cache_miss_tokens
     if total_tokens <= 0:
         total_tokens = prompt_tokens + completion_tokens
     return {
@@ -400,6 +410,8 @@ def extract_usage_cache_details(usage: dict | None) -> dict:
         "total_tokens": total_tokens,
         "cache_read_input_tokens": cache_read_input_tokens,
         "cache_creation_input_tokens": cache_creation_input_tokens,
+        "prompt_cache_hit_tokens": prompt_cache_hit_tokens,
+        "prompt_cache_miss_tokens": prompt_cache_miss_tokens,
     }
 
 
@@ -2730,6 +2742,8 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
     route_policy = execution.get("route_policy") if isinstance(execution.get("route_policy"), dict) else {}
     route_policy_metrics = execution.get("route_policy_metrics") if isinstance(execution.get("route_policy_metrics"), dict) else {}
     resume_metrics = execution.get("interruption_resume") if isinstance(execution.get("interruption_resume"), dict) else {}
+    prompt_cache_hints_mode = str(route_policy_metrics.get("prompt_cache_hints_mode") or "")
+    prompt_cache_provider = str(route_policy_metrics.get("prompt_cache_provider") or "")
     cache_status = "miss"
     cache_note = ""
     if cache_hit:
@@ -2753,6 +2767,30 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
         elif not isinstance(payload_dict.get("messages"), list) or not payload_dict.get("messages"):
             cache_status = "bypass_payload"
             cache_note = "请求不支持缓存"
+    cache_read_input_tokens = int(usage_details.get("cache_read_input_tokens") or 0)
+    prompt_cache_hit_tokens = int(usage_details.get("prompt_cache_hit_tokens") or 0)
+    upstream_prompt_cache_hit = cache_read_input_tokens > 0 or prompt_cache_hit_tokens > 0
+    upstream_prompt_cache_eligible = upstream_prompt_cache_hit or (
+        prompt_cache_hints_mode != "off"
+        and prompt_cache_provider not in {"", "none"}
+    )
+    upstream_prompt_cache_status = "off"
+    upstream_prompt_cache_note = ""
+    if upstream_prompt_cache_hit:
+        upstream_prompt_cache_status = "hit"
+        upstream_prompt_cache_note = f"读入 {max(cache_read_input_tokens, prompt_cache_hit_tokens)} tokens"
+    elif prompt_cache_hints_mode == "off" or prompt_cache_provider in {"", "none"}:
+        upstream_prompt_cache_status = "off"
+        upstream_prompt_cache_note = "未启用前缀缓存 hint"
+    elif bool(route_policy_metrics.get("prompt_cache_hint_passthrough")):
+        upstream_prompt_cache_status = "passthrough"
+        upstream_prompt_cache_note = "沿用下游传入 hint"
+    elif bool(route_policy_metrics.get("prompt_cache_hint_applied")):
+        upstream_prompt_cache_status = "hinted"
+        upstream_prompt_cache_note = "已注入前缀缓存 hint"
+    else:
+        upstream_prompt_cache_status = "eligible"
+        upstream_prompt_cache_note = "线路支持前缀缓存"
     meta = {
         "logical_model": logical_model,
         "resolved_model": resolved_model,
@@ -2767,6 +2805,9 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
         "cache_source": str(execution.get("cache_source") or ""),
         "cache_status": cache_status,
         "cache_note": cache_note,
+        "local_response_cache_hit": cache_hit,
+        "local_response_cache_status": cache_status,
+        "local_response_cache_note": cache_note,
         "resume_enabled": bool(resume_metrics.get("resume_enabled", ENABLE_INTERRUPTION_RESUME)),
         "resume_key_source": str(resume_metrics.get("resume_key_source") or ""),
         "resume_injected": bool(resume_metrics.get("resume_injected")),
@@ -2776,12 +2817,16 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
         "resume_partial_chars": int(execution.get("resume_partial_chars") or resume_metrics.get("resume_partial_chars") or 0),
         "resume_record_age_seconds": int(resume_metrics.get("resume_record_age_seconds") or 0),
         "session_affinity_key": str(execution.get("session_affinity_key") or ""),
-        "prompt_cache_hints_mode": str(route_policy_metrics.get("prompt_cache_hints_mode") or ""),
-        "prompt_cache_provider": str(route_policy_metrics.get("prompt_cache_provider") or ""),
+        "prompt_cache_hints_mode": prompt_cache_hints_mode,
+        "prompt_cache_provider": prompt_cache_provider,
         "prompt_cache_hint_applied": bool(route_policy_metrics.get("prompt_cache_hint_applied")),
         "prompt_cache_hint_passthrough": bool(route_policy_metrics.get("prompt_cache_hint_passthrough")),
         "prompt_cache_hint_key_source": str(route_policy_metrics.get("prompt_cache_hint_key_source") or ""),
         "prompt_cache_retention": str(route_policy_metrics.get("prompt_cache_retention") or ""),
+        "upstream_prompt_cache_hit": upstream_prompt_cache_hit,
+        "upstream_prompt_cache_eligible": upstream_prompt_cache_eligible,
+        "upstream_prompt_cache_status": upstream_prompt_cache_status,
+        "upstream_prompt_cache_note": upstream_prompt_cache_note,
     }
     meta.update(usage_details)
     if int(meta.get("prompt_tokens") or 0) <= 0 and isinstance(effective_payload, dict):

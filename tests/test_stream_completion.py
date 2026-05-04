@@ -273,6 +273,57 @@ class StreamCompletionTests(unittest.TestCase):
         self.assertEqual(usage_events[0]["usage"]["prompt_tokens_details"]["cached_tokens"], 77)
         self.assertEqual(usage_events[0]["usage"]["cache_read_input_tokens"], 77)
 
+    def test_openai_stream_maps_prompt_cache_hit_tokens(self):
+        usage_event = {
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [],
+            "usage": {
+                "completion_tokens": 45,
+                "total_tokens": 168,
+                "prompt_cache_hit_tokens": 77,
+                "prompt_cache_miss_tokens": 46,
+            },
+        }
+        upstream = SlowAfterTerminalResponse(
+            [
+                openai_stream_lines()[0],
+                openai_stream_lines()[1],
+                "data: " + json.dumps(usage_event, separators=(",", ":")),
+                "",
+                openai_stream_lines()[2],
+                openai_stream_lines()[3],
+            ]
+        )
+        response = proxy_response(
+            upstream,
+            sanitize_dsml=True,
+            request_id="streamusagecachehit",
+            upstream_url=upstream.url,
+            started_at=time.perf_counter(),
+            requested_stream=True,
+            route_hint="chat/completions",
+            tool_schemas={},
+            retry_count=0,
+            protocol="openai_chat_completions",
+            request_payload={"model": "test-model", "stream": True, "messages": [{"role": "user", "content": "hello"}]},
+            execution={},
+        )
+
+        body = collect_response_body(response).decode("utf-8")
+        usage_events = openai_stream_usage_events(body)
+
+        self.assertGreaterEqual(len(usage_events), 1)
+        last_usage = usage_events[-1]["usage"]
+        self.assertEqual(last_usage["prompt_tokens"], 123)
+        self.assertEqual(last_usage["completion_tokens"], 45)
+        self.assertEqual(last_usage["prompt_tokens_details"]["cached_tokens"], 77)
+        self.assertEqual(last_usage["cache_read_input_tokens"], 77)
+        self.assertEqual(last_usage["prompt_cache_hit_tokens"], 77)
+        self.assertEqual(last_usage["prompt_cache_miss_tokens"], 46)
+
     def test_consume_openai_sse_events_does_not_wait_for_upstream_close_after_finish(self):
         upstream = SlowAfterTerminalResponse(openai_stream_lines())
 

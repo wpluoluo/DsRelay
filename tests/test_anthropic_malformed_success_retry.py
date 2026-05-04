@@ -403,6 +403,67 @@ class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
         self.assertEqual(payload["usage"]["output_tokens"], 45)
         self.assertEqual(payload["usage"]["cache_read_input_tokens"], 88)
 
+    def test_anthropic_messages_maps_prompt_cache_hit_tokens(self):
+        server = self.load_server()
+        server.ENABLE_MODEL_PROBE = False
+        server.PROXY_POOLS[:] = [
+            {
+                "name": "good",
+                "enabled": True,
+                "priority": 100,
+                "urls": ["https://good.example/v1"],
+                "keys": [{"key": "good-key"}],
+                "route_policy": {},
+            },
+        ]
+        server.rebuild_pool_state()
+        server.route_health.clear()
+        server.route_selection_state.clear()
+        healthy_body = {
+            "id": "chatcmpl-ok",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "demo",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "completion_tokens": 45,
+                "total_tokens": 168,
+                "prompt_cache_hit_tokens": 88,
+                "prompt_cache_miss_tokens": 35,
+            },
+        }
+
+        def fake_request(**kwargs):
+            return make_json_response(kwargs["url"], healthy_body)
+
+        server.UPSTREAM_SESSION.request = fake_request
+        client = server.app.test_client()
+
+        response = client.post(
+            "/v1/messages",
+            headers={
+                "Authorization": "Bearer proxy-secret",
+                "anthropic-version": "2023-06-01",
+            },
+            json={
+                "model": "demo",
+                "max_tokens": 64,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["usage"]["input_tokens"], 123)
+        self.assertEqual(payload["usage"]["output_tokens"], 45)
+        self.assertEqual(payload["usage"]["cache_read_input_tokens"], 88)
+
 
 if __name__ == "__main__":
     unittest.main()
