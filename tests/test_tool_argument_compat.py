@@ -26,6 +26,29 @@ GREP_TOOL_SCHEMAS = {
     }
 }
 
+TASK_TOOL_SCHEMAS = {
+    "Task": {
+        "required": ["task_id", "run_in_background"],
+        "properties": ["task_id", "run_in_background"],
+        "additional_properties": False,
+        "property_types": {
+            "task_id": "string",
+            "run_in_background": "boolean",
+        },
+    }
+}
+
+TASKSTOP_TOOL_SCHEMAS = {
+    "TaskStop": {
+        "required": ["task_id"],
+        "properties": ["task_id"],
+        "additional_properties": False,
+        "property_types": {
+            "task_id": "string",
+        },
+    }
+}
+
 
 class ToolArgumentCompatTests(unittest.TestCase):
     def test_bash_alias_argument_is_normalized_to_command(self):
@@ -223,6 +246,28 @@ class ToolArgumentCompatTests(unittest.TestCase):
             json.loads(normalized_calls[0]["function"]["arguments"]),
             {"pattern": "InputValidationError"},
         )
+
+    def test_task_tool_keeps_required_run_in_background(self):
+        normalized, modified = normalize_tool_arguments_payload(
+            "Task",
+            {"task_id": "bca9cjr2x"},
+            TASK_TOOL_SCHEMAS,
+        )
+
+        self.assertTrue(modified)
+        self.assertEqual(normalized["task_id"], "bca9cjr2x")
+        self.assertIn("run_in_background", normalized)
+        self.assertIs(normalized["run_in_background"], False)
+
+    def test_taskstop_tool_does_not_inject_run_in_background(self):
+        normalized, modified = normalize_tool_arguments_payload(
+            "TaskStop",
+            {"task_id": "bca9cjr2x"},
+            TASKSTOP_TOOL_SCHEMAS,
+        )
+
+        self.assertFalse("run_in_background" in normalized)
+        self.assertEqual(normalized, {"task_id": "bca9cjr2x"})
 
 
 if __name__ == "__main__":

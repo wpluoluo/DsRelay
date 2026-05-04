@@ -364,6 +364,16 @@ TASK_LIKE_TOOL_NAME_MARKERS = (
     "explore",
     "exploration",
 )
+TASK_CONTROL_TOOL_NAME_MARKERS = (
+    "taskstop",
+    "taskcancel",
+    "taskstatus",
+    "taskresult",
+    "taskresults",
+    "tasklist",
+    "stoptask",
+    "canceltask",
+)
 SEARCH_INPUT_FIELD_CANONICALS = {
     "pattern",
     "query",
@@ -1584,16 +1594,32 @@ def infer_run_in_background_value(tool_name: str | None, payload: dict) -> bool:
     return False
 
 
+def is_task_control_tool_name(tool_name: str | None) -> bool:
+    tool_key = canonicalize_name(tool_name)
+    if not tool_key:
+        return False
+    return any(marker == tool_key or marker in tool_key for marker in TASK_CONTROL_TOOL_NAME_MARKERS)
+
+
+def should_infer_run_in_background_without_schema(tool_name: str | None, tool_schemas: dict) -> bool:
+    resolved = resolve_tool_name(tool_name, tool_schemas) or tool_name or ""
+    if is_task_control_tool_name(resolved):
+        return False
+    resolved_key = canonicalize_name(resolved)
+    if not resolved_key:
+        return False
+    return any(
+        canonicalize_name(marker) == resolved_key
+        for marker in TASK_LIKE_TOOL_NAME_MARKERS
+    )
+
+
 def ensure_run_in_background_argument(tool_name: str | None, normalized: dict, tool_schemas: dict) -> bool:
     schema = tool_schemas.get(tool_name or "", {})
     field_name = schema_supports_run_in_background(schema)
 
     if not field_name:
-        resolved = resolve_tool_name(tool_name, tool_schemas) or tool_name or ""
-        if any(
-            canonicalize_name(marker) in canonicalize_name(resolved)
-            for marker in TASK_LIKE_TOOL_NAME_MARKERS
-        ):
+        if should_infer_run_in_background_without_schema(tool_name, tool_schemas):
             for existing_key in list(normalized):
                 if field_is_run_in_background(existing_key):
                     if existing_key != "run_in_background":
