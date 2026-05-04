@@ -4,6 +4,7 @@ import json
 import random
 import time
 from typing import Any, Callable
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
@@ -39,7 +40,11 @@ def build_upstream_url_candidates(upstream_url_pool: list[str], upstream_url: st
     seen = set()
 
     for base_url in upstream_url_pool:
-        full_url = f"{base_url.rstrip('/')}/{normalized_subpath}" if normalized_subpath else base_url.rstrip("/")
+        parts = urlsplit(str(base_url or "").strip())
+        path = parts.path.rstrip("/")
+        if normalized_subpath:
+            path = f"{path}/{normalized_subpath}" if path else f"/{normalized_subpath}"
+        full_url = urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
         if full_url in seen:
             continue
         seen.add(full_url)

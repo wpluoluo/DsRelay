@@ -4,6 +4,10 @@ import unittest
 
 import requests
 
+from local_proxy.compat.protocols import (
+    convert_anthropic_messages_to_openai,
+    convert_openai_response_to_anthropic,
+)
 from local_proxy.http.validation import inspect_success_payload
 from local_proxy.server import (
     consume_openai_sse_events,
@@ -306,6 +310,123 @@ class StreamCompletionTests(unittest.TestCase):
         self.assertGreater(message_start["message"]["usage"]["input_tokens"], 0)
         self.assertGreater(message_delta["usage"]["output_tokens"], 0)
         self.assertTrue(upstream.closed_by_proxy)
+
+    def test_anthropic_stream_does_not_emit_thinking_by_default(self):
+        first = {
+            "id": "chatcmpl-thinking",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [{"index": 0, "delta": {"reasoning_content": "trace", "content": "ok"}, "finish_reason": None}],
+        }
+        terminal = {
+            "id": "chatcmpl-thinking",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
+        upstream = SlowAfterTerminalResponse(
+            [
+                "data: " + json.dumps(first, separators=(",", ":")),
+                "",
+                "data: " + json.dumps(terminal, separators=(",", ":")),
+                "",
+            ]
+        )
+        request_payload = {"model": "test-model", "stream": True, "messages": [{"role": "user", "content": "hello"}]}
+
+        response = handle_anthropic_stream_response(
+            upstream_response=upstream,
+            request_id="anthstream-nothinking",
+            upstream_url=upstream.url,
+            started_at=time.perf_counter(),
+            request_payload=request_payload,
+            tool_schemas={},
+            retry_count=0,
+            observability_meta={"_upstream_openai_payload": request_payload},
+        )
+
+        body = collect_response_body(response).decode("utf-8")
+
+        self.assertIn('"text_delta"', body)
+        self.assertNotIn('"thinking_delta"', body)
+        self.assertNotIn('"type":"thinking"', body)
+        self.assertTrue(upstream.closed_by_proxy)
+
+    def test_anthropic_inbound_thinking_blocks_are_ignored_during_conversion(self):
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "internal trace", "signature": "sig"},
+                    {"type": "text", "text": "done"},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "thinking", "thinking": "echoed trace", "signature": "sig"},
+                    {"type": "text", "text": "next"},
+                ],
+            },
+        ]
+
+        converted = convert_anthropic_messages_to_openai(messages)
+
+        self.assertEqual(
+            converted,
+            [
+                {"role": "assistant", "content": "done"},
+                {"role": "user", "content": "next"},
+            ],
+        )
+
+    def test_anthropic_non_stream_does_not_emit_thinking_by_default(self):
+        anthropic_body = convert_openai_response_to_anthropic(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "ok",
+                            "reasoning": "internal trace",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            },
+            {},
+            {"model": "test-model", "messages": [{"role": "user", "content": "hello"}]},
+        )
+
+        self.assertEqual(anthropic_body["content"], [{"type": "text", "text": "ok"}])
+
+    def test_anthropic_non_stream_emits_thinking_when_explicitly_enabled(self):
+        anthropic_body = convert_openai_response_to_anthropic(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "ok",
+                            "reasoning": "internal trace",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            },
+            {},
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hello"}],
+                "thinking": {"type": "enabled", "budget_tokens": 1024},
+            },
+        )
+
+        self.assertEqual(anthropic_body["content"][0], {"type": "text", "text": "ok"})
+        self.assertEqual(anthropic_body["content"][1]["type"], "thinking")
+        self.assertEqual(anthropic_body["content"][1]["thinking"], "internal trace")
 
     def test_gemini_stream_sends_terminal_chunk_after_openai_finish_reason(self):
         upstream = SlowAfterTerminalResponse(openai_stream_lines())

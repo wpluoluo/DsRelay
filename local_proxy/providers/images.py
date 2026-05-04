@@ -1,6 +1,6 @@
 import re
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 
 OPENAI_IMAGE_SUBPATH = "images/generations"
@@ -413,33 +413,42 @@ def build_dashscope_payload(image_request: dict, model: str) -> tuple[str, dict]
 
 
 def normalize_base_url(base_url: str) -> str:
-    return str(base_url or "").strip().rstrip("/")
+    text = str(base_url or "").strip()
+    if not text:
+        return ""
+    parts = urlsplit(text)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/"), parts.query, parts.fragment))
 
 
 def append_path(base_url: str, path: str) -> str:
-    base = normalize_base_url(base_url)
-    if not base:
+    normalized = normalize_base_url(base_url)
+    if not normalized:
         return path
-    if base.endswith(path):
-        return base
-    return f"{base}{path if path.startswith('/') else '/' + path}"
+    parts = urlsplit(normalized)
+    suffix = path if path.startswith("/") else f"/{path}"
+    current_path = parts.path.rstrip("/")
+    if current_path.endswith(suffix):
+        next_path = current_path
+    else:
+        next_path = f"{current_path}{suffix}" if current_path else suffix
+    return urlunsplit((parts.scheme, parts.netloc, next_path, parts.query, parts.fragment))
 
 
 def openai_image_url(base_url: str) -> str:
-    base = normalize_base_url(base_url)
-    if base.endswith("/images/generations"):
-        return base
-    return f"{base}/{OPENAI_IMAGE_SUBPATH}"
+    return append_path(base_url, OPENAI_IMAGE_SUBPATH)
 
 
 def google_endpoint_url(base_url: str, model: str, mode: str) -> str:
     base = normalize_base_url(base_url)
     if ":predict" in base or ":generateContent" in base:
         return base
-    if not re.search(r"/v1(?:beta|alpha)?$", base):
-        base = f"{base}/v1beta"
+    parts = urlsplit(base)
+    base_path = parts.path.rstrip("/")
+    if not re.search(r"/v1(?:beta|alpha)?$", base_path):
+        base_path = f"{base_path}/v1beta" if base_path else "/v1beta"
     method = "generateContent" if mode == "generate_content" else "predict"
-    return f"{base}/models/{model}:{method}"
+    final_path = f"{base_path}/models/{model}:{method}"
+    return urlunsplit((parts.scheme, parts.netloc, final_path, parts.query, parts.fragment))
 
 
 def dashscope_endpoint_path(model: str, mode: str) -> str:

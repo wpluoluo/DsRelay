@@ -55,6 +55,14 @@ def _set_authorization_header(request_kwargs: dict, api_key: str) -> None:
     request_kwargs["headers"] = headers
 
 
+def _base_request_url(route_url: str) -> str:
+    marker = "#__route="
+    text = str(route_url or "").strip()
+    if marker in text:
+        return text.split(marker, 1)[0]
+    return text
+
+
 def request_upstream_with_retries(
     request_kwargs: dict,
     *,
@@ -146,6 +154,7 @@ def request_upstream_with_retries(
             break
 
         attempt_url = route_cycle.pop(0)
+        request_url = _base_request_url(attempt_url)
         order_info = route_model_orders.setdefault(
             attempt_url,
             build_model_candidate_order_for_route(
@@ -180,7 +189,7 @@ def request_upstream_with_retries(
                     race_request_kwargs = request_kwargs
                 race_outcome = race_model_candidate_requests(
                     request_kwargs=race_request_kwargs,
-                    route_url=attempt_url,
+                    route_url=request_url,
                     candidates=race_candidates,
                     logical_model=logical_model,
                     request_id=request_id,
@@ -219,7 +228,7 @@ def request_upstream_with_retries(
         model_index = route_model_index.get(attempt_url, 0)
         model_candidate = ordered_model_candidates[model_index] if model_index < len(ordered_model_candidates) else None
         current_request_kwargs = apply_model_candidate_to_request_kwargs(request_kwargs, model_candidate)
-        current_request_kwargs["url"] = attempt_url
+        current_request_kwargs["url"] = request_url
         key_choice = choose_api_key_for_url(attempt_url, exclude=route_key_failures.get(attempt_url, set()))
         attempt_key = str(key_choice.get("key") or "")
         available_keys_for_route = get_api_keys_for_url(attempt_url)
@@ -228,7 +237,8 @@ def request_upstream_with_retries(
             attempts.append(
                 {
                     "attempt": len(attempts) + 1,
-                    "upstream_url": attempt_url,
+                    "route_url": attempt_url,
+                    "upstream_url": request_url,
                     "model": model_candidate,
                     "model_alias_applied": model_candidate_differs_from_logical(logical_model, model_candidate),
                     "pool_name": "",
@@ -268,7 +278,8 @@ def request_upstream_with_retries(
             attempts.append(
                 {
                     "attempt": current_attempt_number,
-                    "upstream_url": attempt_url,
+                    "route_url": attempt_url,
+                    "upstream_url": request_url,
                     "model": model_candidate,
                     "model_alias_applied": model_candidate_differs_from_logical(logical_model, model_candidate),
                     "pool_name": key_choice.get("pool_name"),
@@ -315,7 +326,8 @@ def request_upstream_with_retries(
         attempts.append(
             {
                 "attempt": current_attempt_number,
-                "upstream_url": attempt_url,
+                "route_url": attempt_url,
+                "upstream_url": request_url,
                 "model": model_candidate,
                 "model_alias_applied": model_candidate_differs_from_logical(logical_model, model_candidate),
                 "learned_request_repairs": learned_request_repairs,
@@ -372,7 +384,7 @@ def request_upstream_with_retries(
 
         if token_limit_adjustable and retry_allowed and len(attempts) < max_attempts:
             retry_probe_kwargs = apply_model_candidate_to_request_kwargs(request_kwargs, model_candidate)
-            retry_probe_kwargs["url"] = attempt_url
+            retry_probe_kwargs["url"] = request_url
             adjusted = clamp_payload_output_tokens(retry_probe_kwargs.get("json"), learned_output_limit) if isinstance(retry_probe_kwargs.get("json"), dict) else 0
             if adjusted or (learned_context_limit and learned_context_limit > 0):
                 record_learned_model_capability(

@@ -248,9 +248,30 @@ def message_content_looks_anthropic(content) -> bool:
         return False
 
     for block in content:
-        if isinstance(block, dict) and block.get("type") in {"tool_use", "tool_result"}:
+        if isinstance(block, dict) and block.get("type") in {
+            "tool_use",
+            "tool_result",
+            "thinking",
+            "redacted_thinking",
+        }:
             return True
 
+    return False
+
+
+def anthropic_thinking_enabled(request_payload: dict | None) -> bool:
+    if not isinstance(request_payload, dict):
+        return False
+    thinking = request_payload.get("thinking")
+    if isinstance(thinking, bool):
+        return thinking
+    if isinstance(thinking, str):
+        return thinking.strip().lower() not in {"", "0", "false", "off", "disabled", "none"}
+    if isinstance(thinking, dict):
+        thinking_type = str(thinking.get("type") or "").strip().lower()
+        if thinking_type in {"disabled", "off", "none", "false"}:
+            return False
+        return bool(thinking_type or thinking.get("budget_tokens") or thinking.get("effort") or thinking.get("display"))
     return False
 
 
@@ -834,6 +855,8 @@ def convert_anthropic_messages_to_openai(messages: list) -> list:
                 block_type = block.get("type")
                 if block_type == "text":
                     text_parts.append(block.get("text", ""))
+                elif block_type in {"thinking", "redacted_thinking"}:
+                    continue
                 elif block_type == "tool_use":
                     tool_calls.append(
                         {
@@ -872,6 +895,8 @@ def convert_anthropic_messages_to_openai(messages: list) -> list:
                 block_type = block.get("type")
                 if block_type == "text":
                     pending_user_text.append(block.get("text", ""))
+                    continue
+                if block_type in {"thinking", "redacted_thinking"}:
                     continue
 
                 if block_type == "tool_result":
@@ -974,7 +999,7 @@ def convert_openai_response_to_anthropic(
         content_blocks.append({"type": "text", "text": message_content})
 
     reasoning_text = message.get("reasoning")
-    if isinstance(reasoning_text, str) and reasoning_text:
+    if anthropic_thinking_enabled(request_payload) and isinstance(reasoning_text, str) and reasoning_text:
         content_blocks.append(
             {
                 "type": "thinking",

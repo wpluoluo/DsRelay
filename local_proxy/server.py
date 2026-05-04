@@ -34,6 +34,7 @@ from local_proxy.compat.tools import (
     sanitize_dsml_text,
 )
 from local_proxy.compat.protocols import (
+    anthropic_thinking_enabled,
     build_anthropic_error_payload,
     build_gemini_error_payload,
     coerce_non_negative_int,
@@ -214,6 +215,14 @@ def has_explicit_config_value(config_payload: dict, key: str) -> bool:
 
 def parse_upstream_url_pool() -> list[str]:
     return []
+
+
+def base_upstream_url(route_url: str) -> str:
+    return ConnectionPoolState.strip_route_identity(route_url)
+
+
+def is_internal_route_url(route_url: str) -> bool:
+    return ConnectionPoolState.is_route_url(route_url)
 
 
 def build_no_upstream_configured_error_payload() -> dict:
@@ -1094,11 +1103,11 @@ def save_pool_runtime_state_to_storage() -> None:
 
 
 def rebuild_pool_state() -> None:
-    """Rebuild UPSTREAM_URL_POOL and URL_POOL_KEY_MAP from PROXY_POOLS."""
+    """Rebuild internal route pool and key map from PROXY_POOLS."""
     global UPSTREAM_URL_POOL, UPSTREAM_URL, URL_POOL_KEY_MAP
     urls = connection_pool_state.rebuild(PROXY_POOLS)
     UPSTREAM_URL_POOL = urls
-    UPSTREAM_URL = urls[0] if urls else ""
+    UPSTREAM_URL = base_upstream_url(urls[0]) if urls else ""
     URL_POOL_KEY_MAP = {
         url: connection_pool_state.get_api_keys_for_url(url)
         for url in UPSTREAM_URL_POOL
@@ -1111,7 +1120,7 @@ def get_api_keys_for_url(url: str) -> list[str]:
     """Return API keys for a given upstream URL."""
     keys = connection_pool_state.get_api_keys_for_url(url)
     if not keys:
-        normalized_url = normalize_pool_url(url)
+        normalized_url = base_upstream_url(url)
         if normalized_url != str(url or "").strip():
             keys = connection_pool_state.get_api_keys_for_url(normalized_url)
     return keys if keys else []
@@ -1120,7 +1129,7 @@ def get_api_keys_for_url(url: str) -> list[str]:
 def choose_api_key_for_url(url: str, *, exclude: set[str] | None = None) -> dict:
     choice = connection_pool_state.choose_key(url, exclude=exclude)
     if not choice:
-        normalized_url = normalize_pool_url(url)
+        normalized_url = base_upstream_url(url)
         if normalized_url != str(url or "").strip():
             choice = connection_pool_state.choose_key(normalized_url, exclude=exclude)
     return choice or {}
@@ -1970,7 +1979,8 @@ def execute_upstream_request(
             "forced_error_payload": build_no_upstream_configured_error_payload(),
             "forced_error_status": 400,
         }
-    upstream_url = upstream_urls[0]
+    route_url = upstream_urls[0]
+    upstream_url = base_upstream_url(route_url)
     upstream_payload, upstream_stream, request_repairs, model_candidates = build_upstream_json_payload(
         subpath,
         request_payload,
@@ -1982,7 +1992,7 @@ def execute_upstream_request(
         upstream_payload if isinstance(upstream_payload, dict) else request_payload,
         request_context=request_context,
     )
-    route_policy = build_route_policy(upstream_url)
+    route_policy = build_route_policy(route_url)
     upstream_payload, route_policy_repairs, route_policy_metrics = apply_route_policy_to_payload(
         subpath,
         upstream_payload,
@@ -2010,6 +2020,7 @@ def execute_upstream_request(
             logical_model_name = str(upstream_payload.get("model") or "").strip()
         return {
             "upstream_url": upstream_url,
+            "route_url": route_url,
             "upstream_url_pool": upstream_urls,
             "route_pool_size": len(upstream_urls),
             "tool_schemas": extract_tool_schemas(upstream_payload if isinstance(upstream_payload, dict) else request_payload),
@@ -2087,7 +2098,7 @@ def execute_upstream_request(
             shared_execution["session_affinity_key"] = session_affinity_key
             return shared_execution
 
-    key_choice = choose_api_key_for_url(upstream_url)
+    key_choice = choose_api_key_for_url(route_url)
     primary_pool_key = str(key_choice.get("key") or UPSTREAM_API_KEY)
     request_kwargs = {
         "method": request_method,
@@ -2101,6 +2112,7 @@ def execute_upstream_request(
         "timeout": build_upstream_timeout(requested_stream=requested_stream),
         "meta": {
             "session_affinity_key": session_affinity_key,
+            "route_url": route_url,
         },
     }
     if upstream_payload is not None:
@@ -2116,6 +2128,10 @@ def execute_upstream_request(
         initial_blocked_urls=initial_blocked_urls,
         model_candidates=model_candidates,
     )
+    selected_route_url = next(
+        (attempt.get("route_url") for attempt in reversed(attempts) if attempt.get("route_url")),
+        route_url,
+    )
     selected_upstream_url = next(
         (attempt.get("upstream_url") for attempt in reversed(attempts) if attempt.get("upstream_url")),
         upstream_url,
@@ -2128,9 +2144,10 @@ def execute_upstream_request(
 
     result = {
         "upstream_url": selected_upstream_url,
+        "route_url": selected_route_url,
         "upstream_url_pool": upstream_urls,
         "route_pool_size": len(upstream_urls),
-        "attempt_route_count": len({str(attempt.get("upstream_url") or "") for attempt in attempts if str(attempt.get("upstream_url") or "")}),
+        "attempt_route_count": len({str(attempt.get("route_url") or "") for attempt in attempts if str(attempt.get("route_url") or "")}),
         "tool_schemas": tool_schemas,
         "upstream_payload": upstream_payload,
         "upstream_stream": upstream_stream,
@@ -2174,9 +2191,9 @@ def execute_upstream_request(
         ),
         "selected_route_index": next(
             (
-                upstream_urls.index(str(attempt.get("upstream_url") or ""))
+                upstream_urls.index(str(attempt.get("route_url") or ""))
                 for attempt in reversed(attempts)
-                if str(attempt.get("upstream_url") or "") in upstream_urls
+                if str(attempt.get("route_url") or "") in upstream_urls
             ),
             0 if upstream_urls else None,
         ),
@@ -3520,6 +3537,7 @@ def retry_malformed_success_once(
     route_hint: str,
     request_id: str,
     upstream_url: str,
+    route_url: str = "",
     request_payload: dict | None,
     execution: dict | None,
     issue: dict,
@@ -3533,23 +3551,24 @@ def retry_malformed_success_once(
     previous_retry_count = int((execution or {}).get("retry_count") or 0)
     previous_url_pool = list((execution or {}).get("upstream_url_pool") or [])
     blocked_urls = {
-        str(item.get("upstream_url") or "")
+        str(item.get("route_url") or item.get("upstream_url") or "")
         for item in previous_attempts
         if isinstance(item, dict) and str(item.get("action") or "") == "switch_route"
     }
-    if upstream_url:
-        blocked_urls.add(upstream_url)
+    current_route_url = str(route_url or (execution or {}).get("route_url") or "").strip()
+    if current_route_url:
+        blocked_urls.add(current_route_url)
     if previous_url_pool and len(blocked_urls) >= len(previous_url_pool):
-        blocked_urls = {upstream_url} if upstream_url and len(previous_url_pool) > 1 else set()
+        blocked_urls = {current_route_url} if current_route_url and len(previous_url_pool) > 1 else set()
 
     proxy_logger.warning(
         "request_id=%s 异常成功体，准备同请求切换线路 次数=%s 当前线路=%s 原因=%s",
         request_id,
         malformed_success_fallbacks + 1,
-        upstream_url,
+        current_route_url or upstream_url,
         str(issue.get("code") or "malformed_success"),
     )
-    mark_route_failure(upstream_url, str(issue.get("code") or "malformed_success"))
+    mark_route_failure(current_route_url or upstream_url, str(issue.get("code") or "malformed_success"))
     next_execution = execute_upstream_request(
         route_hint,
         request_payload,
@@ -3887,6 +3906,7 @@ def proxy_response(
     response_headers["X-Proxy-Retries"] = str(retry_count)
     empty_stream_fallbacks = int((execution or {}).get("empty_sse_fallbacks") or 0)
     request_context = (execution or {}).get("request_context") if isinstance(execution, dict) else None
+    route_url = str((execution or {}).get("route_url") or upstream_url or "").strip()
 
     if upstream_response.status_code >= 400:
         client_gone = response_indicates_client_gone(upstream_response)
@@ -3937,6 +3957,7 @@ def proxy_response(
                 route_hint=route_hint,
                 request_id=request_id,
                 upstream_url=upstream_url,
+                route_url=route_url,
                 request_payload=request_payload,
                 execution=execution,
                 issue=issue,
@@ -4058,13 +4079,13 @@ def proxy_response(
                 }
 
             if preflight_empty_issue:
-                mark_route_failure(upstream_url, preflight_empty_issue["code"])
+                mark_route_failure(route_url, preflight_empty_issue["code"])
                 if empty_stream_fallbacks < 2 and isinstance(request_payload, dict):
                     proxy_logger.warning(
                         "request_id=%s 流式首包为空，准备同请求切换线路 次数=%s 当前线路=%s 原因=%s",
                         request_id,
                         empty_stream_fallbacks + 1,
-                        upstream_url,
+                        route_url or upstream_url,
                         preflight_empty_issue["code"],
                     )
                     close_response_quietly(upstream_response)
@@ -4072,6 +4093,7 @@ def proxy_response(
                         route_hint,
                         request_payload,
                         request_id,
+                        initial_blocked_urls={route_url} if route_url else None,
                         request_context=request_context,
                     )
                     if isinstance(next_execution, dict):
@@ -4264,20 +4286,21 @@ def proxy_response(
                                 separators=(",", ":"),
                             ),
                         }
-                        mark_route_failure(upstream_url, issue["code"])
+                        mark_route_failure(route_url, issue["code"])
                         if total_bytes == 0 and empty_stream_fallbacks < 2 and isinstance(request_payload, dict):
                             stream_error = issue["code"]
                             proxy_logger.warning(
                                 "request_id=%s 流式空载成功，生成阶段同请求切换线路 次数=%s 当前线路=%s",
                                 request_id,
                                 empty_stream_fallbacks + 1,
-                                upstream_url,
+                                route_url or upstream_url,
                             )
                             close_response_quietly(upstream_response)
                             next_execution = execute_upstream_request(
                                 route_hint,
                                 request_payload,
                                 request_id,
+                                initial_blocked_urls={route_url} if route_url else None,
                                 request_context=request_context,
                             )
                             if isinstance(next_execution, dict):
@@ -5981,7 +6004,8 @@ def image_generation_proxy(subpath: str, request_payload: dict | None):
     aliased_payload = request_payload if isinstance(request_payload, dict) else {}
     model_candidates = build_model_candidates_from_payload(aliased_payload)
     model_alias_repairs = 0
-    pool_keys = get_api_keys_for_url(upstream_url)
+    initial_route_url = UPSTREAM_URL_POOL[0] if UPSTREAM_URL_POOL else ""
+    pool_keys = get_api_keys_for_url(initial_route_url)
     primary_pool_key = pool_keys[0] if pool_keys else UPSTREAM_API_KEY
     plan = build_image_generation_plan(
         subpath=subpath,
@@ -5994,7 +6018,8 @@ def image_generation_proxy(subpath: str, request_payload: dict | None):
     )
     downstream_protocol = plan["downstream_protocol"]
     upstream_urls = plan["upstream_urls"]
-    upstream_url = upstream_urls[0] if upstream_urls else ""
+    initial_route_url = upstream_urls[0] if upstream_urls else initial_route_url
+    upstream_url = base_upstream_url(initial_route_url)
     request_kwargs = {
         "method": "POST",
         "url": upstream_url,
@@ -6003,6 +6028,7 @@ def image_generation_proxy(subpath: str, request_payload: dict | None):
         "json": plan["upstream_payload"],
         "stream": False,
         "timeout": REQUEST_TIMEOUT,
+        "meta": {"route_url": initial_route_url},
     }
     upstream_response, attempts, request_exception = request_upstream_with_retries(
         request_kwargs,
@@ -6017,8 +6043,18 @@ def image_generation_proxy(subpath: str, request_payload: dict | None):
         (attempt.get("upstream_url") for attempt in reversed(attempts) if attempt.get("upstream_url")),
         upstream_url,
     )
+    selected_route_url = next(
+        (attempt.get("route_url") for attempt in reversed(attempts) if attempt.get("route_url")),
+        initial_route_url,
+    )
     attempt_urls, attempt_route_chain = summarize_attempt_routes(attempts)
     sanitized_query = sanitize_query_string(request.query_string, secret_masker=mask_secret)
+    execution = {
+        "route_url": selected_route_url,
+        "upstream_url": selected_upstream_url,
+        "attempts": attempts,
+        "retry_count": retry_count,
+    }
     request_meta = build_request_meta(
         request_id=request_id,
         sanitized_query=sanitized_query,
@@ -6537,7 +6573,10 @@ def handle_anthropic_stream_response(
     content_type = upstream_response.headers.get("Content-Type", "")
     anthropic_stream_fallbacks = int((observability_meta or {}).get("anthropic_stream_fallbacks") or 0)
     upstream_openai_payload = dict((observability_meta or {}).get("_upstream_openai_payload") or {})
-    request_context = ((observability_meta or {}).get("_execution") or {}).get("request_context")
+    thinking_enabled = anthropic_thinking_enabled(upstream_openai_payload or request_payload)
+    execution = (observability_meta or {}).get("_execution")
+    request_context = (execution or {}).get("request_context")
+    route_url = str((execution or {}).get("route_url") or upstream_url or "").strip()
     if "text/event-stream" not in content_type.lower():
         consumed = read_upstream_openai_response_body(upstream_response, tool_schemas)
         issue = inspect_success_payload(
@@ -6673,13 +6712,13 @@ def handle_anthropic_stream_response(
                 }
 
             if preflight_empty_issue:
-                mark_route_failure(upstream_url, preflight_empty_issue["code"])
+                mark_route_failure(route_url, preflight_empty_issue["code"])
                 if anthropic_stream_fallbacks < 2 and isinstance(request_payload, dict):
                     proxy_logger.warning(
                         "request_id=%s Anthropic流首包为空，准备同请求切换线路 次数=%s 当前线路=%s 原因=%s",
                         request_id,
                         anthropic_stream_fallbacks + 1,
-                        upstream_url,
+                        route_url or upstream_url,
                         preflight_empty_issue["code"],
                     )
                     close_response_quietly(upstream_response)
@@ -6688,6 +6727,7 @@ def handle_anthropic_stream_response(
                         "chat/completions",
                         retry_payload,
                         request_id,
+                        initial_blocked_urls={route_url} if route_url else None,
                         request_context=request_context,
                     )
                     if isinstance(next_execution, dict):
@@ -6796,7 +6836,7 @@ def handle_anthropic_stream_response(
                             last_reasoning_text = choice_reasoning
                     elif isinstance(reasoning_text, str) and reasoning_text:
                         last_reasoning_text = f"{last_reasoning_text}{reasoning_text}"
-                    if isinstance(reasoning_text, str) and reasoning_text:
+                    if thinking_enabled and isinstance(reasoning_text, str) and reasoning_text:
                         if active_text_block_index is not None:
                             packet = format_sse_event(
                                 "content_block_stop",

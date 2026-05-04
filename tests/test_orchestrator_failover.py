@@ -522,6 +522,84 @@ class GatewayFailoverTests(unittest.TestCase):
         self.assertEqual(attempts[0]["action"], "switch_route")
         self.assertEqual(route_failures, [("https://limited.example/v1/chat/completions", "route_switch_429")])
 
+    def test_429_switches_between_distinct_routes_even_when_request_url_is_same(self):
+        sent_urls = []
+        route_failures = []
+        route_a = "https://integrate.api.nvidia.com/v1/chat/completions#__route=nv1"
+        route_b = "https://integrate.api.nvidia.com/v1/chat/completions#__route=nv2"
+
+        def sender(**kwargs):
+            sent_urls.append(kwargs["url"])
+            if len(sent_urls) == 1:
+                return make_response(429, '{"status":429,"title":"Too Many Requests"}', kwargs["url"])
+            return make_response(200, '{"ok":true}', kwargs["url"])
+
+        response, attempts, error = request_upstream_with_retries(
+            {"method": "POST", "url": "https://integrate.api.nvidia.com/v1/chat/completions", "json": {"model": "demo"}},
+            subpath="chat/completions",
+            request_id="test-same-url-route-switch",
+            upstream_urls=[route_a, route_b],
+            model_candidates=["demo"],
+            should_retry_request=lambda subpath, method: True,
+            max_retries=3,
+            should_enforce_route_switch_window=lambda urls, retry_allowed: True,
+            route_switch_window_seconds=30,
+            build_attempt_url_cycle=lambda urls, blocked: [url for url in urls if url not in blocked],
+            build_model_candidate_order_for_route=lambda route, models, kwargs, request_id: {"candidates": models},
+            should_race_model_candidates_for_route=lambda **kwargs: False,
+            get_api_keys_for_url=lambda url: ["key-a"] if url == route_a else ["key-b"],
+            choose_api_key_for_url=lambda url, exclude=None: {
+                "key": "key-a" if url == route_a else "key-b",
+                "from_pool": True,
+                "pool_name": "nv1" if url == route_a else "nv2",
+                "key_index": 0,
+                "key_count": 1,
+                "key_id": "key-a" if url == route_a else "key-b",
+            },
+            mark_api_key_success=lambda url, key: None,
+            mark_api_key_failure=lambda url, key, reason, force_cooldown=False: None,
+            mark_route_success=lambda url: None,
+            mark_route_failure=lambda url, reason: route_failures.append((url, reason)),
+            response_indicates_model_unavailable=lambda response: False,
+            classify_upstream_response=lambda response: (
+                ("switch_route", f"route_switch_{response.status_code}")
+                if response.status_code == 429
+                else ("return", f"status_{response.status_code}")
+            ),
+            extract_error_preview_from_response=lambda response: response.text[:120],
+            apply_model_candidate_to_request_kwargs=lambda kwargs, model: dict(kwargs),
+            apply_learned_completion_limit_to_request_kwargs=lambda *args, **kwargs: 0,
+            extract_completion_token_limit_from_response=lambda response: None,
+            extract_context_token_limit_from_response=lambda response: (None, None),
+            clamp_payload_output_tokens=lambda payload, limit: 0,
+            record_learned_model_capability=lambda **kwargs: None,
+            record_model_candidate_result=lambda **kwargs: None,
+            compute_retry_delay_ms=lambda attempt, response=None: 0,
+            remaining_retry_window_ms=lambda deadline: 30000,
+            append_race_attempts=lambda attempts, race_attempts, **kwargs: set(),
+            model_candidate_differs_from_logical=lambda logical, candidate: False,
+            logger=NullLogger(),
+            cache_stat_bump=lambda key: None,
+            model_candidate_race_limit=1,
+            model_candidate_race_timeout_seconds=1,
+            enable_model_candidate_race=False,
+            request_sender=sender,
+        )
+
+        self.assertIsNone(error)
+        self.assertIsNotNone(response)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            sent_urls,
+            [
+                "https://integrate.api.nvidia.com/v1/chat/completions",
+                "https://integrate.api.nvidia.com/v1/chat/completions",
+            ],
+        )
+        self.assertEqual(attempts[0]["route_url"], route_a)
+        self.assertEqual(attempts[1]["route_url"], route_b)
+        self.assertEqual(route_failures, [(route_a, "route_switch_429")])
+
     def test_route_failure_cooldown_supports_policy_multiplier_and_cap(self):
         route_health = {}
 

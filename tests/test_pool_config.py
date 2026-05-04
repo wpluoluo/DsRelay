@@ -100,10 +100,48 @@ class PoolConfigTests(unittest.TestCase):
         urls = state.rebuild(pools)
         choice = state.choose_key("https://api.example.com/v1/chat/completions")
 
-        self.assertEqual(urls, ["https://api.example.com/v1"])
+        self.assertEqual(len(urls), 1)
+        self.assertTrue(urls[0].startswith("https://api.example.com/v1#__route="))
         self.assertEqual(state.get_api_keys_for_url("https://api.example.com/v1"), ["sk-a", "sk-b"])
         self.assertEqual(choice["key"], "sk-a")
         self.assertEqual(choice["pool_name"], "pool")
+
+    def test_pool_state_keeps_same_url_pools_as_distinct_routes(self):
+        pools = normalize_proxy_pools(
+            [
+                {
+                    "name": "nv1",
+                    "enabled": True,
+                    "priority": 100,
+                    "urls": ["https://integrate.api.nvidia.com/v1"],
+                    "keys": [{"key": "nv-key-1"}],
+                },
+                {
+                    "name": "nv2",
+                    "enabled": True,
+                    "priority": 99,
+                    "urls": ["https://integrate.api.nvidia.com/v1"],
+                    "keys": [{"key": "nv-key-2"}],
+                },
+                {
+                    "name": "nv3",
+                    "enabled": True,
+                    "priority": 98,
+                    "urls": ["https://integrate.api.nvidia.com/v1"],
+                    "keys": [{"key": "nv-key-3"}],
+                },
+            ]
+        )
+        state = ConnectionPoolState()
+
+        urls = state.rebuild(pools)
+
+        self.assertEqual(len(urls), 3)
+        self.assertEqual(len(set(urls)), 3)
+        self.assertTrue(all(url.startswith("https://integrate.api.nvidia.com/v1#__route=") for url in urls))
+        self.assertEqual(state.get_api_keys_for_url(urls[0]), ["nv-key-1"])
+        self.assertEqual(state.get_api_keys_for_url(urls[1]), ["nv-key-2"])
+        self.assertEqual(state.get_api_keys_for_url(urls[2]), ["nv-key-3"])
 
     def test_pool_route_policy_keeps_prompt_cache_hint_settings(self):
         payload = {

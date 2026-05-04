@@ -134,10 +134,17 @@ def normalize_pool_route_policies(raw_pools: object) -> list[dict]:
 
 
 def get_route_policy_for_url(pools: list[dict], route_url: str, normalize_pool_url) -> dict:
-    normalized_url = normalize_pool_url(route_url)
+    route_text = str(route_url or "").strip()
+    normalized_url = normalize_pool_url(route_text.split("#__route=", 1)[0] if "#__route=" in route_text else route_text)
     for pool in pools or []:
         if not isinstance(pool, dict) or not pool.get("enabled", True):
             continue
+        pool_name = str(pool.get("name") or "").strip()
+        route_urls = []
+        for route_ordinal, value in enumerate((pool.get("urls") or []), start=1):
+            route_urls.append(f"{normalize_pool_url(value)}#__route={__import__('hashlib').sha1(f'{pool_name}|{normalize_pool_url(value)}|{int(route_ordinal)}'.encode('utf-8')).hexdigest()[:12]}")
+        if route_text and route_text in route_urls:
+            return normalize_route_policy(pool.get("route_policy"))
         urls = [normalize_pool_url(value) for value in (pool.get("urls") or [])]
         if normalized_url and normalized_url in urls:
             return normalize_route_policy(pool.get("route_policy"))

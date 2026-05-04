@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import time
 from threading import Lock
+from urllib.parse import urlsplit, urlunsplit
 
 
 KNOWN_UPSTREAM_SUFFIXES = (
@@ -111,6 +112,56 @@ class ConnectionPoolState:
         self.key_states: dict[str, dict[str, dict]] = {}
         self.round_robin: dict[str, int] = {}
 
+    @staticmethod
+    def route_id_for(pool_name: str, raw_url: str, ordinal: int) -> str:
+        normalized_url = normalize_pool_url(raw_url)
+        base = f"{str(pool_name or '').strip()}|{normalized_url}|{int(ordinal)}"
+        digest = hashlib.sha1(base.encode("utf-8")).hexdigest()[:12]
+        return f"{normalized_url}#__route={digest}"
+
+    @staticmethod
+    def strip_route_identity(url: str) -> str:
+        text = str(url or "").strip()
+        if not text:
+            return ""
+        parts = urlsplit(text)
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
+
+    @classmethod
+    def base_url_from_route_url(cls, url: str) -> str:
+        return normalize_pool_url(cls.strip_route_identity(url))
+
+    @classmethod
+    def is_route_url(cls, url: str) -> bool:
+        parts = urlsplit(str(url or "").strip())
+        return bool(parts.fragment and parts.fragment.startswith("__route="))
+
+    @staticmethod
+    def route_fragment(url: str) -> str:
+        parts = urlsplit(str(url or "").strip())
+        fragment = str(parts.fragment or "").strip()
+        return fragment if fragment.startswith("__route=") else ""
+
+    def _resolve_stored_route_url(self, url: str) -> str:
+        normalized_url = str(url or "").strip()
+        if not normalized_url:
+            return ""
+        if normalized_url in self.url_key_map:
+            return normalized_url
+
+        fragment = self.route_fragment(normalized_url)
+        if fragment:
+            for route_url in self.url_key_map:
+                if self.route_fragment(route_url) == fragment:
+                    return route_url
+
+        if not self.is_route_url(normalized_url):
+            base_url = normalize_pool_url(normalized_url)
+            for route_url in self.url_key_map:
+                if self.base_url_from_route_url(route_url) == base_url:
+                    return route_url
+        return normalized_url
+
     def rebuild(self, pools: list[dict]) -> list[str]:
         normalized = normalize_proxy_pools(pools)
         urls: list[str] = []
@@ -136,8 +187,9 @@ class ConnectionPoolState:
                 }
                 for idx, key in enumerate(keys)
             }
-            for raw_url in pool.get("urls", []):
-                url = normalize_pool_url(raw_url)
+            for route_ordinal, raw_url in enumerate(pool.get("urls", []), start=1):
+                normalized_base_url = normalize_pool_url(raw_url)
+                url = self.route_id_for(pool_name, normalized_base_url, route_ordinal)
                 if not url:
                     continue
                 urls.append(url)
@@ -168,13 +220,14 @@ class ConnectionPoolState:
 
     def get_api_keys_for_url(self, url: str) -> list[str]:
         with self.lock:
-            return list(self.url_key_map.get(normalize_pool_url(url), []))
+            normalized_url = self._resolve_stored_route_url(str(url or "").strip())
+            return list(self.url_key_map.get(normalized_url, []))
 
     def choose_key(self, url: str, *, exclude: set[str] | None = None) -> dict | None:
-        normalized_url = normalize_pool_url(url)
         exclude = set(exclude or ())
         now = time.time()
         with self.lock:
+            normalized_url = self._resolve_stored_route_url(str(url or "").strip())
             keys = list(self.url_key_map.get(normalized_url, []))
             if not keys:
                 return None
@@ -219,11 +272,12 @@ class ConnectionPoolState:
             }
 
     def mark_key_success(self, url: str, key: str) -> None:
-        normalized_url = normalize_pool_url(url)
+        normalized_url = str(url or "").strip()
         if not normalized_url or not key:
             return
         now = time.time()
         with self.lock:
+            normalized_url = self._resolve_stored_route_url(normalized_url)
             state = self.key_states.setdefault(normalized_url, {}).setdefault(
                 key,
                 {
@@ -243,11 +297,12 @@ class ConnectionPoolState:
             state["successes"] = int(state.get("successes", 0) or 0) + 1
 
     def mark_key_failure(self, url: str, key: str, reason: str, *, force_cooldown: bool = False) -> None:
-        normalized_url = normalize_pool_url(url)
+        normalized_url = str(url or "").strip()
         if not normalized_url or not key:
             return
         now = time.time()
         with self.lock:
+            normalized_url = self._resolve_stored_route_url(normalized_url)
             state = self.key_states.setdefault(normalized_url, {}).setdefault(
                 key,
                 {
@@ -286,19 +341,19 @@ class ConnectionPoolState:
         with self.lock:
             if isinstance(key_states, dict):
                 self.key_states = {
-                    normalize_pool_url(url): {
+                    str(url).strip(): {
                         str(key): dict(state)
                         for key, state in states.items()
-                        if normalize_pool_url(url) and isinstance(state, dict)
+                        if str(url).strip() and isinstance(state, dict)
                     }
                     for url, states in key_states.items()
                     if isinstance(states, dict)
                 }
             if isinstance(round_robin, dict):
                 self.round_robin = {
-                    normalize_pool_url(url): max(0, int(value or 0))
+                    str(url).strip(): max(0, int(value or 0))
                     for url, value in round_robin.items()
-                    if normalize_pool_url(url)
+                    if str(url).strip()
                 }
 
     def snapshot(self) -> dict:
