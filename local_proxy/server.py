@@ -3635,6 +3635,79 @@ def build_gemini_malformed_success_payload(*, issue: dict, retry_count: int) -> 
     )
 
 
+def get_same_request_failover_budget(route_hint: str, execution: dict | None = None) -> int:
+    route_pool_size = 0
+    if isinstance(execution, dict):
+        upstream_url_pool = execution.get("upstream_url_pool")
+        if isinstance(upstream_url_pool, list) and upstream_url_pool:
+            route_pool_size = len(upstream_url_pool)
+        else:
+            route_pool_size = int(execution.get("route_pool_size") or 0)
+    if route_pool_size <= 0:
+        route_pool_size = len(build_upstream_url_candidates(route_hint))
+    return max(0, route_pool_size - 1)
+
+
+def can_attempt_same_request_failover(
+    *,
+    route_hint: str,
+    execution: dict | None,
+    fallback_count: int,
+) -> bool:
+    return int(fallback_count or 0) < get_same_request_failover_budget(route_hint, execution)
+
+
+def collect_same_request_blocked_urls(
+    execution: dict | None,
+    *,
+    current_route_url: str = "",
+) -> set[str]:
+    blocked_urls: set[str] = set()
+    for item in (execution or {}).get("blocked_route_urls") or []:
+        candidate = str(item or "").strip()
+        if candidate:
+            blocked_urls.add(candidate)
+    for item in (execution or {}).get("attempts") or []:
+        if not isinstance(item, dict):
+            continue
+        candidate = str(item.get("route_url") or item.get("upstream_url") or "").strip()
+        if candidate:
+            blocked_urls.add(candidate)
+    current_candidate = str(current_route_url or (execution or {}).get("route_url") or "").strip()
+    if current_candidate:
+        blocked_urls.add(current_candidate)
+    return blocked_urls
+
+
+def carry_same_request_execution_history(
+    previous_execution: dict | None,
+    next_execution: dict | None,
+) -> dict | None:
+    if not isinstance(next_execution, dict):
+        return next_execution
+
+    previous_attempts = list((previous_execution or {}).get("attempts") or [])
+    next_attempts = list(next_execution.get("attempts") or [])
+    previous_retry_count = int((previous_execution or {}).get("retry_count") or 0)
+
+    if previous_attempts:
+        next_execution["attempts"] = previous_attempts + next_attempts
+        next_execution["retry_count"] = previous_retry_count + len(next_attempts)
+    elif previous_retry_count:
+        next_execution["retry_count"] = previous_retry_count + int(next_execution.get("retry_count") or 0)
+
+    if not next_execution.get("upstream_url_pool") and (previous_execution or {}).get("upstream_url_pool"):
+        next_execution["upstream_url_pool"] = list((previous_execution or {}).get("upstream_url_pool") or [])
+    if not next_execution.get("route_pool_size") and (previous_execution or {}).get("route_pool_size"):
+        next_execution["route_pool_size"] = int((previous_execution or {}).get("route_pool_size") or 0)
+
+    combined_blocked_urls = collect_same_request_blocked_urls(previous_execution)
+    combined_blocked_urls.update(collect_same_request_blocked_urls(next_execution))
+    if combined_blocked_urls:
+        next_execution["blocked_route_urls"] = sorted(combined_blocked_urls)
+    return next_execution
+
+
 def retry_malformed_success_once(
     *,
     route_hint: str,
@@ -3647,22 +3720,15 @@ def retry_malformed_success_once(
     request_context: dict | None = None,
 ) -> dict | None:
     malformed_success_fallbacks = int((execution or {}).get("malformed_success_fallbacks") or 0)
-    if malformed_success_fallbacks >= 2 or not isinstance(request_payload, dict):
+    if not isinstance(request_payload, dict) or not can_attempt_same_request_failover(
+        route_hint=route_hint,
+        execution=execution,
+        fallback_count=malformed_success_fallbacks,
+    ):
         return None
 
-    previous_attempts = list((execution or {}).get("attempts") or [])
-    previous_retry_count = int((execution or {}).get("retry_count") or 0)
-    previous_url_pool = list((execution or {}).get("upstream_url_pool") or [])
-    blocked_urls = {
-        str(item.get("route_url") or item.get("upstream_url") or "")
-        for item in previous_attempts
-        if isinstance(item, dict) and str(item.get("action") or "") == "switch_route"
-    }
     current_route_url = str(route_url or (execution or {}).get("route_url") or "").strip()
-    if current_route_url:
-        blocked_urls.add(current_route_url)
-    if previous_url_pool and len(blocked_urls) >= len(previous_url_pool):
-        blocked_urls = {current_route_url} if current_route_url and len(previous_url_pool) > 1 else set()
+    blocked_urls = collect_same_request_blocked_urls(execution, current_route_url=current_route_url)
 
     proxy_logger.warning(
         "request_id=%s 异常成功体，准备同请求切换线路 次数=%s 当前线路=%s 原因=%s",
@@ -3681,12 +3747,7 @@ def retry_malformed_success_once(
     )
     if isinstance(next_execution, dict):
         next_execution["malformed_success_fallbacks"] = malformed_success_fallbacks + 1
-        next_attempts = list(next_execution.get("attempts") or [])
-        if previous_attempts:
-            next_execution["attempts"] = previous_attempts + next_attempts
-            next_execution["retry_count"] = previous_retry_count + len(next_attempts)
-        elif previous_retry_count:
-            next_execution["retry_count"] = previous_retry_count + int(next_execution.get("retry_count") or 0)
+        next_execution = carry_same_request_execution_history(execution, next_execution)
     return next_execution if isinstance(next_execution, dict) else None
 
 
@@ -4207,7 +4268,11 @@ def proxy_response(
 
             if preflight_empty_issue:
                 mark_route_failure(route_url, preflight_empty_issue["code"])
-                if empty_stream_fallbacks < 2 and isinstance(request_payload, dict):
+                if isinstance(request_payload, dict) and can_attempt_same_request_failover(
+                    route_hint=route_hint,
+                    execution=execution,
+                    fallback_count=empty_stream_fallbacks,
+                ):
                     proxy_logger.warning(
                         "request_id=%s 流式首包为空，准备同请求切换线路 次数=%s 当前线路=%s 原因=%s",
                         request_id,
@@ -4220,11 +4285,12 @@ def proxy_response(
                         route_hint,
                         request_payload,
                         request_id,
-                        initial_blocked_urls={route_url} if route_url else None,
+                        initial_blocked_urls=collect_same_request_blocked_urls(execution, current_route_url=route_url),
                         request_context=request_context,
                     )
                     if isinstance(next_execution, dict):
                         next_execution["empty_sse_fallbacks"] = empty_stream_fallbacks + 1
+                        next_execution = carry_same_request_execution_history(execution, next_execution)
                     next_response = next_execution.get("upstream_response") if isinstance(next_execution, dict) else None
                     if next_response is not None:
                         return proxy_response(
@@ -4262,6 +4328,7 @@ def proxy_response(
                 total_bytes = 0
                 stream_error = None
                 stream_client_gone = False
+                delegated_response = False
                 sanitized_markers = 0
                 repaired_tool_args = 0
                 preview_parts = []
@@ -4415,7 +4482,11 @@ def proxy_response(
                             ),
                         }
                         mark_route_failure(route_url, issue["code"])
-                        if total_bytes == 0 and empty_stream_fallbacks < 2 and isinstance(request_payload, dict):
+                        if total_bytes == 0 and isinstance(request_payload, dict) and can_attempt_same_request_failover(
+                            route_hint=route_hint,
+                            execution=execution,
+                            fallback_count=empty_stream_fallbacks,
+                        ):
                             stream_error = issue["code"]
                             proxy_logger.warning(
                                 "request_id=%s 流式空载成功，生成阶段同请求切换线路 次数=%s 当前线路=%s",
@@ -4428,13 +4499,15 @@ def proxy_response(
                                 route_hint,
                                 request_payload,
                                 request_id,
-                                initial_blocked_urls={route_url} if route_url else None,
+                        initial_blocked_urls=collect_same_request_blocked_urls(execution, current_route_url=route_url),
                                 request_context=request_context,
                             )
                             if isinstance(next_execution, dict):
                                 next_execution["empty_sse_fallbacks"] = empty_stream_fallbacks + 1
+                                next_execution = carry_same_request_execution_history(execution, next_execution)
                             next_response = next_execution.get("upstream_response") if isinstance(next_execution, dict) else None
                             if next_response is not None:
+                                delegated_response = True
                                 next_proxy_response = proxy_response(
                                     next_response,
                                     sanitize_dsml=sanitize_dsml,
@@ -4487,6 +4560,8 @@ def proxy_response(
                     raise
                 finally:
                     close_response_quietly(upstream_response)
+                    if delegated_response:
+                        return
                     duration_ms = int((time.perf_counter() - started_at) * 1000)
                     response_preview = build_preview_summary(preview_parts)
                     resume_save_meta = {}
@@ -5712,6 +5787,7 @@ def anthropic_messages():
     if upstream_response.status_code >= 400:
         client_gone = response_indicates_client_gone(upstream_response)
         error_message, preview = extract_upstream_error_message(upstream_response)
+        downstream_status = upstream_response.status_code if client_gone else 502
         payload = build_anthropic_error_payload(
             status_code=upstream_response.status_code,
             message=error_message,
@@ -5731,11 +5807,11 @@ def anthropic_messages():
         )
         record_request_finished(
             request_id,
-            status_code=upstream_response.status_code,
+            status_code=downstream_status,
             bytes_sent=len(body),
             duration_ms=duration_ms,
             stream=requested_stream,
-            error="client_gone" if client_gone else (error_message if upstream_response.status_code >= 500 else None),
+            error="client_gone" if client_gone else error_message,
             sanitized_markers=0,
             response_preview=preview,
             repaired_tool_args=0,
@@ -5744,7 +5820,7 @@ def anthropic_messages():
         )
         return Response(
             body,
-            status=upstream_response.status_code,
+            status=downstream_status,
             headers={
                 "Content-Type": "application/json; charset=utf-8",
                 "X-Proxy-Retries": str(retry_count),
@@ -6781,6 +6857,8 @@ def handle_anthropic_stream_response(
         repaired_tool_args = 0
         preview_parts = []
         stream_error = None
+        delegated_response = False
+        response_events: list[dict] = []
         resume_text_parts: list[str] = []
         resume_execution = (observability_meta or {}).get("_execution")
         if not isinstance(resume_execution, dict):
@@ -6807,6 +6885,10 @@ def handle_anthropic_stream_response(
         prebuffered_raw_lines: list[bytes] = []
         preflight_heartbeat_count = 0
         preflight_raw_line_count = 0
+        nonempty_line_count = 0
+        first_upstream_event_ms = None
+        first_data_event_ms = None
+        last_nonempty_line = ""
         stream_iter = iter_response_lines_with_heartbeat(upstream_response, SSE_HEARTBEAT_SECONDS)
 
         try:
@@ -6841,7 +6923,11 @@ def handle_anthropic_stream_response(
 
             if preflight_empty_issue:
                 mark_route_failure(route_url, preflight_empty_issue["code"])
-                if anthropic_stream_fallbacks < 2 and isinstance(request_payload, dict):
+                if isinstance(request_payload, dict) and can_attempt_same_request_failover(
+                    route_hint="chat/completions",
+                    execution=execution,
+                    fallback_count=anthropic_stream_fallbacks,
+                ):
                     proxy_logger.warning(
                         "request_id=%s Anthropic流首包为空，准备同请求切换线路 次数=%s 当前线路=%s 原因=%s",
                         request_id,
@@ -6855,14 +6941,16 @@ def handle_anthropic_stream_response(
                         "chat/completions",
                         retry_payload,
                         request_id,
-                        initial_blocked_urls={route_url} if route_url else None,
+                        initial_blocked_urls=collect_same_request_blocked_urls(execution, current_route_url=route_url),
                         request_context=request_context,
                     )
                     if isinstance(next_execution, dict):
                         next_meta = dict(observability_meta or {})
                         next_meta["anthropic_stream_fallbacks"] = anthropic_stream_fallbacks + 1
+                        next_execution = carry_same_request_execution_history(execution, next_execution)
                         next_response = next_execution.get("upstream_response")
                         if next_response is not None:
+                            delegated_response = True
                             next_stream = handle_anthropic_stream_response(
                                 upstream_response=next_response,
                                 request_id=request_id,
@@ -6871,7 +6959,7 @@ def handle_anthropic_stream_response(
                                 request_payload=request_payload,
                                 tool_schemas=next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else tool_schemas,
                                 retry_count=int(next_execution.get("retry_count") or retry_count),
-                                observability_meta=build_request_observability_meta(next_execution, retry_payload) | {"_upstream_openai_payload": retry_payload, "_execution": next_execution} | next_meta,
+                                observability_meta=next_meta | build_request_observability_meta(next_execution, retry_payload) | {"_upstream_openai_payload": retry_payload, "_execution": next_execution},
                             )
                             yield from next_stream.response
                             return
@@ -6899,6 +6987,11 @@ def handle_anthropic_stream_response(
                     yield heartbeat_payload
                     continue
                 text = raw_line.decode("utf-8", errors="ignore")
+                if first_upstream_event_ms is None:
+                    first_upstream_event_ms = int((time.perf_counter() - started_at) * 1000)
+                if text != "":
+                    nonempty_line_count += 1
+                    last_nonempty_line = text[:400]
                 if text == "" and skip_next_blank:
                     skip_next_blank = False
                     continue
@@ -6921,9 +7014,18 @@ def handle_anthropic_stream_response(
                     finished_choice_indexes,
                     expected_choice_count=expected_choice_count,
                 )
-                if not message_started:
-                    message_id = event.get("id") or message_id
-                    message_model = event.get("model") or message_model
+                response_events.append(event)
+                if first_data_event_ms is None:
+                    first_data_event_ms = int((time.perf_counter() - started_at) * 1000)
+                message_id = event.get("id") or message_id
+                message_model = event.get("model") or message_model
+
+                usage = event.get("usage") or {}
+                if isinstance(usage, dict):
+                    input_tokens = coerce_non_negative_int(usage.get("prompt_tokens") or usage.get("input_tokens")) or input_tokens
+                    output_tokens = coerce_non_negative_int(usage.get("completion_tokens") or usage.get("output_tokens")) or output_tokens
+
+                if not message_started and openai_stream_events_have_meaningful_output(response_events):
                     start_payload = {
                         "type": "message_start",
                         "message": {
@@ -6944,11 +7046,6 @@ def handle_anthropic_stream_response(
                     total_bytes += len(packet)
                     yield packet
                     message_started = True
-
-                usage = event.get("usage") or {}
-                if isinstance(usage, dict):
-                    input_tokens = coerce_non_negative_int(usage.get("prompt_tokens") or usage.get("input_tokens")) or input_tokens
-                    output_tokens = coerce_non_negative_int(usage.get("completion_tokens") or usage.get("output_tokens")) or output_tokens
 
                 for choice in event.get("choices") or []:
                     delta = choice.get("delta") or {}
@@ -7132,6 +7229,88 @@ def handle_anthropic_stream_response(
                     close_response_quietly(upstream_response)
                     break
 
+            if not openai_stream_events_have_meaningful_output(response_events):
+                issue = {
+                    "code": "empty_sse_success",
+                    "message": (
+                        "Upstream returned a streaming success payload with no usable output."
+                        if response_events
+                        else "Upstream returned an empty streaming success payload."
+                    ),
+                    "preview": json.dumps(
+                        {
+                            "content_type": content_type,
+                            "heartbeat_count": preflight_heartbeat_count,
+                            "raw_line_count": preflight_raw_line_count + nonempty_line_count,
+                            "nonempty_line_count": nonempty_line_count,
+                            "first_upstream_event_ms": first_upstream_event_ms,
+                            "first_data_event_ms": first_data_event_ms,
+                            "last_nonempty_line": last_nonempty_line,
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                }
+                mark_route_failure(route_url, issue["code"])
+                if isinstance(request_payload, dict) and can_attempt_same_request_failover(
+                    route_hint="chat/completions",
+                    execution=execution,
+                    fallback_count=anthropic_stream_fallbacks,
+                ):
+                    proxy_logger.warning(
+                        "request_id=%s Anthropic流空载成功，准备同请求切换线路 次数=%s 当前线路=%s 原因=%s",
+                        request_id,
+                        anthropic_stream_fallbacks + 1,
+                        route_url or upstream_url,
+                        issue["code"],
+                    )
+                    close_response_quietly(upstream_response)
+                    retry_payload = upstream_openai_payload or convert_anthropic_request_to_openai(request_payload)
+                    next_execution = execute_upstream_request(
+                        "chat/completions",
+                        retry_payload,
+                        request_id,
+                        initial_blocked_urls=collect_same_request_blocked_urls(execution, current_route_url=route_url),
+                        request_context=request_context,
+                    )
+                    if isinstance(next_execution, dict):
+                        next_meta = dict(observability_meta or {})
+                        next_meta["anthropic_stream_fallbacks"] = anthropic_stream_fallbacks + 1
+                        next_execution = carry_same_request_execution_history(execution, next_execution)
+                        next_response = next_execution.get("upstream_response")
+                        if next_response is not None:
+                            delegated_response = True
+                            next_stream = handle_anthropic_stream_response(
+                                upstream_response=next_response,
+                                request_id=request_id,
+                                upstream_url=str(next_execution.get("upstream_url") or upstream_url),
+                                started_at=started_at,
+                                request_payload=request_payload,
+                                tool_schemas=next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else tool_schemas,
+                                retry_count=int(next_execution.get("retry_count") or retry_count),
+                                observability_meta=next_meta | build_request_observability_meta(next_execution, retry_payload) | {"_upstream_openai_payload": retry_payload, "_execution": next_execution},
+                            )
+                            yield from next_stream.response
+                            return
+
+                payload = build_anthropic_malformed_success_payload(issue=issue, retry_count=retry_count)
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                close_response_quietly(upstream_response)
+                log_and_record_malformed_success(
+                    request_id=request_id,
+                    upstream_url=upstream_url,
+                    route_hint="anthropic_messages",
+                    requested_stream=True,
+                    started_at=started_at,
+                    retry_count=retry_count,
+                    issue=issue,
+                    bytes_sent=len(body),
+                    sanitized_markers=sanitized_markers,
+                    repaired_tool_args=repaired_tool_args,
+                )
+                yield format_sse_event("error", payload)
+                return
+
             final_stop_reason = last_stop_reason
             if saw_tool_use and final_stop_reason in {None, "", "end_turn"}:
                 final_stop_reason = "tool_use"
@@ -7241,6 +7420,8 @@ def handle_anthropic_stream_response(
             raise
         finally:
             close_response_quietly(upstream_response)
+            if delegated_response:
+                return
             duration_ms = int((time.perf_counter() - started_at) * 1000)
             response_preview = build_preview_summary(preview_parts)
             resume_meta = {}

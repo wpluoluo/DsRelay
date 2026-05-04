@@ -137,6 +137,116 @@ class StreamCompletionTests(unittest.TestCase):
         self.assertEqual(action, "switch_route")
         self.assertEqual(reason, "route_not_found_404")
 
+    def test_openai_stream_exhausts_candidate_routes_until_success(self):
+        terminal = {
+            "id": "chatcmpl-empty",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
+        route_pool = [
+            "https://bad1.example/v1/chat/completions",
+            "https://bad2.example/v1/chat/completions",
+            "https://bad3.example/v1/chat/completions",
+            "https://good.example/v1/chat/completions",
+        ]
+        request_payload = {"model": "test-model", "stream": True, "messages": [{"role": "user", "content": "hello"}]}
+        initial_response = FiniteStreamResponse(
+            [
+                "data: " + json.dumps(terminal, separators=(",", ":")),
+                "",
+            ]
+        )
+        initial_response.url = route_pool[0]
+        fallback_executions = [
+            {
+                "upstream_response": FiniteStreamResponse(
+                    [
+                        "data: " + json.dumps(terminal, separators=(",", ":")),
+                        "",
+                    ]
+                ),
+                "upstream_url": route_pool[1],
+                "route_url": route_pool[1],
+                "tool_schemas": {},
+                "retry_count": 1,
+                "upstream_url_pool": list(route_pool),
+                "route_pool_size": len(route_pool),
+                "request_context": {},
+            },
+            {
+                "upstream_response": FiniteStreamResponse(
+                    [
+                        "data: " + json.dumps(terminal, separators=(",", ":")),
+                        "",
+                    ]
+                ),
+                "upstream_url": route_pool[2],
+                "route_url": route_pool[2],
+                "tool_schemas": {},
+                "retry_count": 2,
+                "upstream_url_pool": list(route_pool),
+                "route_pool_size": len(route_pool),
+                "request_context": {},
+            },
+            {
+                "upstream_response": make_json_response(
+                    {
+                        "id": "chatcmpl-ok",
+                        "object": "chat.completion",
+                        "created": 1,
+                        "model": "test-model",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {"role": "assistant", "content": "ok"},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                    }
+                ),
+                "upstream_url": route_pool[3],
+                "route_url": route_pool[3],
+                "tool_schemas": {},
+                "retry_count": 3,
+                "upstream_url_pool": list(route_pool),
+                "route_pool_size": len(route_pool),
+                "request_context": {},
+            },
+        ]
+        fallback_executions[0]["upstream_response"].url = route_pool[1]
+        fallback_executions[1]["upstream_response"].url = route_pool[2]
+        fallback_executions[2]["upstream_response"].url = route_pool[3]
+
+        with mock.patch("local_proxy.server.execute_upstream_request", side_effect=fallback_executions) as execute_mock:
+            response = proxy_response(
+                initial_response,
+                sanitize_dsml=True,
+                request_id="stream-failover-budget",
+                upstream_url=route_pool[0],
+                started_at=time.perf_counter(),
+                requested_stream=True,
+                route_hint="chat/completions",
+                tool_schemas={},
+                retry_count=0,
+                protocol="openai_chat_completions",
+                request_payload=request_payload,
+                execution={
+                    "route_url": route_pool[0],
+                    "upstream_url_pool": list(route_pool),
+                    "route_pool_size": len(route_pool),
+                    "request_context": {},
+                },
+            )
+            body = collect_response_body(response).decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('"content":"ok"', body)
+        self.assertIn("data: [DONE]\n\n", body)
+        self.assertEqual(execute_mock.call_count, 3)
+
     def test_openai_stream_stops_after_finish_reason_and_adds_done(self):
         upstream = SlowAfterTerminalResponse(openai_stream_lines())
         request_payload = {"model": "test-model", "stream": True, "messages": [{"role": "user", "content": "hello"}]}

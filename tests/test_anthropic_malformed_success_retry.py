@@ -33,6 +33,15 @@ def make_json_response(url: str, payload: dict) -> requests.Response:
     return response
 
 
+def make_error_response(url: str, status_code: int, body: str, *, content_type: str = "text/plain; charset=utf-8") -> requests.Response:
+    response = requests.Response()
+    response.status_code = status_code
+    response.url = url
+    response.headers["Content-Type"] = content_type
+    response._content = body.encode("utf-8")
+    return response
+
+
 class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
     def load_server(self):
         os.environ["PROXY_API_KEYS"] = "proxy-secret"
@@ -232,6 +241,167 @@ class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
         self.assertTrue(any("nv-key-1" in auth for _, auth in seen))
         self.assertTrue(any("nv-key-2" in auth for _, auth in seen))
         self.assertEqual(response.headers.get("X-Proxy-Retries"), "1")
+
+    def test_anthropic_messages_returns_proxy_502_instead_of_upstream_404(self):
+        server = self.load_server()
+        server.ENABLE_MODEL_PROBE = False
+        server.UPSTREAM_RANDOMIZE_ENDPOINTS = False
+        server.PROXY_POOLS[:] = [
+            {
+                "name": "bad",
+                "enabled": True,
+                "priority": 100,
+                "urls": ["https://bad.example/v1"],
+                "keys": [{"key": "bad-key"}],
+                "route_policy": {},
+            },
+        ]
+        server.rebuild_pool_state()
+        server.route_health.clear()
+        server.route_selection_state.clear()
+        server.model_route_cache["routes"] = {}
+
+        server.UPSTREAM_SESSION.request = lambda **kwargs: make_error_response(
+            kwargs["url"],
+            404,
+            "404 page not found",
+        )
+        client = server.app.test_client()
+
+        response = client.post(
+            "/v1/messages",
+            headers={
+                "Authorization": "Bearer proxy-secret",
+                "anthropic-version": "2023-06-01",
+            },
+            json={
+                "model": "demo",
+                "max_tokens": 64,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(payload["error"]["type"], "api_error")
+        self.assertEqual(payload["error"]["message"], "Upstream returned HTTP 404.")
+        self.assertEqual(payload["upstream_status"], 404)
+        self.assertIn("404 page not found", payload["upstream_preview"])
+
+    def test_anthropic_messages_exhausts_candidate_routes_until_stream_success(self):
+        server = self.load_server()
+        server.ENABLE_MODEL_PROBE = False
+        server.UPSTREAM_RANDOMIZE_ENDPOINTS = False
+        server.PROXY_POOLS[:] = [
+            {
+                "name": "bad1",
+                "enabled": True,
+                "priority": 400,
+                "urls": ["https://bad1.example/v1"],
+                "keys": [{"key": "bad1-key"}],
+                "route_policy": {},
+            },
+            {
+                "name": "bad2",
+                "enabled": True,
+                "priority": 300,
+                "urls": ["https://bad2.example/v1"],
+                "keys": [{"key": "bad2-key"}],
+                "route_policy": {},
+            },
+            {
+                "name": "bad3",
+                "enabled": True,
+                "priority": 200,
+                "urls": ["https://bad3.example/v1"],
+                "keys": [{"key": "bad3-key"}],
+                "route_policy": {},
+            },
+            {
+                "name": "good",
+                "enabled": True,
+                "priority": 100,
+                "urls": ["https://good.example/v1"],
+                "keys": [{"key": "good-key"}],
+                "route_policy": {},
+            },
+        ]
+        server.rebuild_pool_state()
+        server.route_health.clear()
+        server.route_selection_state.clear()
+        server.model_route_cache["routes"] = {}
+        sent_urls = []
+
+        terminal_only = {
+            "id": "chatcmpl-empty",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "demo",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
+        healthy_body = {
+            "id": "chatcmpl-ok",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "demo",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        }
+
+        def fake_request(**kwargs):
+            url = kwargs["url"]
+            sent_urls.append(url)
+            if "good.example" in url:
+                return make_json_response(url, healthy_body)
+            return FiniteStreamResponse(
+                url,
+                [
+                    "data: " + json.dumps(terminal_only, separators=(",", ":")),
+                    "",
+                ],
+            )
+
+        server.UPSTREAM_SESSION.request = fake_request
+        client = server.app.test_client()
+
+        response = client.post(
+            "/v1/messages",
+            headers={
+                "Authorization": "Bearer proxy-secret",
+                "anthropic-version": "2023-06-01",
+            },
+            json={
+                "model": "demo",
+                "stream": True,
+                "max_tokens": 64,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+
+        body = response.get_data(as_text=True)
+        recent_requests = server.request_recorder.snapshot()["recent_requests"]
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('"text":"ok"', body)
+        self.assertEqual(
+            sent_urls,
+            [
+                "https://bad1.example/v1/chat/completions",
+                "https://bad2.example/v1/chat/completions",
+                "https://bad3.example/v1/chat/completions",
+                "https://good.example/v1/chat/completions",
+            ],
+        )
+        self.assertEqual(len(recent_requests), 1)
+        self.assertEqual(recent_requests[0]["status_code"], 200)
+        self.assertEqual(recent_requests[0]["bytes_sent"] > 0, True)
 
     def test_anthropic_messages_fills_usage_when_upstream_omits_usage(self):
         server = self.load_server()
