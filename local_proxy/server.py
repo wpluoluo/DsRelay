@@ -60,6 +60,7 @@ from local_proxy.http.headers import (
     sanitize_query_string,
 )
 from local_proxy.http.proxy_auth import (
+    build_proxy_api_key_failure_diagnostics,
     make_proxy_api_key_record,
     normalize_proxy_api_key_records,
     parse_proxy_api_keys,
@@ -4774,12 +4775,18 @@ def require_proxy_api_key() -> Response | None:
             "proxy_api_key_not_configured",
         )
 
+    diagnostics = build_proxy_api_key_failure_diagnostics(request, PROXY_API_KEYS, PROXY_API_KEY_RECORDS)
     proxy_logger.warning(
-        "代理入口鉴权失败 path=%s remote=%s reason=%s source=%s",
+        "代理入口鉴权失败 path=%s remote=%s reason=%s source=%s candidate_present=%s candidate_preview=%s candidate_hash_prefix=%s managed_key_previews=%s managed_key_ids=%s",
         request.path,
         request.remote_addr,
         result.reason,
         result.source or "-",
+        diagnostics.get("candidate_present"),
+        diagnostics.get("candidate_preview") or "-",
+        diagnostics.get("candidate_hash_prefix") or "-",
+        json.dumps(diagnostics.get("managed_key_previews") or [], ensure_ascii=False),
+        json.dumps(diagnostics.get("managed_key_ids") or [], ensure_ascii=False),
     )
     return proxy_api_auth_error_response(
         401,

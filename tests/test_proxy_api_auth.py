@@ -4,7 +4,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from local_proxy.http.proxy_auth import generate_proxy_api_key, parse_proxy_api_keys, verify_proxy_api_key
+from local_proxy.http.proxy_auth import (
+    build_proxy_api_key_failure_diagnostics,
+    generate_proxy_api_key,
+    hash_proxy_api_key,
+    parse_proxy_api_keys,
+    preview_proxy_api_key,
+    verify_proxy_api_key,
+)
 
 
 class FakeRuntimeConfigStorage:
@@ -93,6 +100,36 @@ class ProxyApiAuthParserTests(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertEqual(result.source, "key")
+
+    def test_build_proxy_api_key_failure_diagnostics_masks_candidate_and_lists_managed_previews(self):
+        from flask import Flask, request
+
+        app = Flask(__name__)
+        managed_key = "sk-R3FgLkpc3lVrpotlu9tV9rNvvQLRsupzsozwG7pHo11vcbqr"
+        with app.test_request_context(
+            "/v1/messages",
+            headers={"X-API-Key": "wrong-secret"},
+        ):
+            diagnostics = build_proxy_api_key_failure_diagnostics(
+                request,
+                (),
+                [
+                    {
+                        "id": "pak_demo",
+                        "key_hash": hash_proxy_api_key(managed_key),
+                        "key_preview": preview_proxy_api_key(managed_key),
+                        "enabled": True,
+                        "name": "NEWAPI",
+                    }
+                ],
+            )
+
+        self.assertTrue(diagnostics["candidate_present"])
+        self.assertEqual(diagnostics["source"], "x-api-key")
+        self.assertNotEqual(diagnostics["candidate_preview"], "wrong-secret")
+        self.assertEqual(diagnostics["managed_key_ids"], ["pak_demo"])
+        self.assertEqual(len(diagnostics["managed_key_previews"]), 1)
+        self.assertTrue(diagnostics["managed_key_previews"][0].startswith("sk-"))
 
 
 class ProxyEntrypointAuthTests(unittest.TestCase):

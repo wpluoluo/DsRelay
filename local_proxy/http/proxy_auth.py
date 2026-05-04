@@ -181,3 +181,27 @@ def verify_proxy_api_key(
             return ProxyApiAuthResult(True, source=source, key_id=str(record.get("id") or ""))
 
     return ProxyApiAuthResult(False, "proxy_api_key_invalid", source=source)
+
+
+def build_proxy_api_key_failure_diagnostics(
+    request,
+    configured_keys: tuple[str, ...],
+    managed_records: list[dict] | tuple[dict, ...] = (),
+) -> dict:
+    enabled_records = [
+        record
+        for record in (managed_records or [])
+        if isinstance(record, dict) and record.get("enabled") is not False and record.get("key_hash")
+    ]
+    candidate, source = extract_proxy_api_key(request)
+    candidate_hash = hash_proxy_api_key(candidate)[:12] if candidate else ""
+    return {
+        "source": source or "",
+        "candidate_present": bool(candidate),
+        "candidate_preview": preview_proxy_api_key(candidate) if candidate else "",
+        "candidate_hash_prefix": candidate_hash,
+        "env_key_count": len(tuple(configured_keys or ())),
+        "managed_key_count": len(enabled_records),
+        "managed_key_ids": [str(record.get("id") or "") for record in enabled_records],
+        "managed_key_previews": [str(record.get("key_preview") or "") for record in enabled_records],
+    }
