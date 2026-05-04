@@ -4227,9 +4227,6 @@ def proxy_response(
                         if normalized_line is None:
                             skip_next_blank = True
                             continue
-                        if not emitted_data and normalized_line == "":
-                            skip_next_blank = False
-                            continue
                         if normalized_line == "data: [DONE]":
                             if not openai_stream_events_have_meaningful_output(response_events):
                                 close_response_quietly(upstream_response)
@@ -4285,6 +4282,10 @@ def proxy_response(
 
                         payload = f"{normalized_line}\n".encode("utf-8")
                         event_has_output = openai_stream_events_have_meaningful_output(response_events)
+                        should_forward_blank = normalized_line == "" and bool(buffered_sse_payloads or emitted_data)
+                        if normalized_line == "" and not should_forward_blank:
+                            skip_next_blank = False
+                            continue
                         if event_has_output and not emitted_data:
                             emitted_data = True
                             for buffered_payload in buffered_sse_payloads:

@@ -147,6 +147,63 @@ class StreamCompletionTests(unittest.TestCase):
         self.assertGreater(usage_events[0]["usage"]["completion_tokens"], 0)
         self.assertTrue(upstream.closed_by_proxy)
 
+    def test_openai_stream_wraps_bare_json_chunks_into_sse_frames(self):
+        first = {
+            "id": "chatcmpl-bare",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+        }
+        second = {
+            "id": "chatcmpl-bare",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [{"index": 0, "delta": {"content": "好的"}, "finish_reason": None}],
+        }
+        terminal = {
+            "id": "chatcmpl-bare",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
+        upstream = FiniteStreamResponse(
+            [
+                json.dumps(first, separators=(",", ":")),
+                "",
+                json.dumps(second, separators=(",", ":")),
+                "",
+                "data: " + json.dumps(terminal, separators=(",", ":")),
+                "",
+            ]
+        )
+        response = proxy_response(
+            upstream,
+            sanitize_dsml=True,
+            request_id="barejsonstream",
+            upstream_url=upstream.url,
+            started_at=time.perf_counter(),
+            requested_stream=True,
+            route_hint="chat/completions",
+            tool_schemas={},
+            retry_count=0,
+            protocol="openai_chat_completions",
+            request_payload={"model": "test-model", "stream": True, "messages": [{"role": "user", "content": "hello"}]},
+            execution={},
+        )
+
+        body = collect_response_body(response).decode("utf-8")
+        events = parse_sse_events(body)
+
+        self.assertEqual(events[0][1]["choices"][0]["delta"]["role"], "assistant")
+        self.assertEqual(events[1][1]["choices"][0]["delta"]["content"], "好的")
+        self.assertEqual(events[2][1]["choices"][0]["finish_reason"], "stop")
+        self.assertNotIn('\n{"choices":[{"delta":{"content":"好的"},"index":0}]', body)
+        self.assertIn("data: [DONE]\n\n", body)
+        self.assertTrue(upstream.closed_by_proxy)
+
     def test_openai_non_stream_fills_usage_when_upstream_omits_usage(self):
         upstream = make_json_response(
             {

@@ -3378,22 +3378,23 @@ def normalize_stream_choice(choice: dict, choice_states: dict, tool_schemas: dic
     return normalized_choice, sanitized_markers, repaired_tool_args
 
 
-def normalize_sse_line(line: str, choice_states: dict, tool_schemas: dict) -> tuple[str | None, int, int, dict | None]:
-    if not line:
-        return "", 0, 0, None
-
-    if not line.startswith("data:"):
-        sanitized_line, removed = sanitize_dsml_text(line)
-        return sanitized_line, removed, 0, None
-
-    payload = line[5:].strip()
+def _normalize_sse_payload_text(
+    payload: str,
+    choice_states: dict,
+    tool_schemas: dict,
+    *,
+    original_line: str,
+) -> tuple[str | None, int, int, dict | None]:
     if payload == "[DONE]":
         return "data: [DONE]", 0, 0, None
 
     try:
         event = json.loads(payload)
     except json.JSONDecodeError:
-        sanitized_line, removed = sanitize_dsml_text(line)
+        sanitized_line, removed = sanitize_dsml_text(original_line)
+        return sanitized_line, removed, 0, None
+    if not isinstance(event, dict):
+        sanitized_line, removed = sanitize_dsml_text(original_line)
         return sanitized_line, removed, 0, None
 
     sanitized_markers = 0
@@ -3419,6 +3420,31 @@ def normalize_sse_line(line: str, choice_states: dict, tool_schemas: dict) -> tu
         repaired_tool_args,
         event,
     )
+
+
+def normalize_sse_line(line: str, choice_states: dict, tool_schemas: dict) -> tuple[str | None, int, int, dict | None]:
+    if not line:
+        return "", 0, 0, None
+
+    if line.startswith("data:"):
+        return _normalize_sse_payload_text(
+            line[5:].strip(),
+            choice_states,
+            tool_schemas,
+            original_line=line,
+        )
+
+    stripped_line = line.strip()
+    if stripped_line == "[DONE]" or stripped_line.startswith("{") or stripped_line.startswith("["):
+        return _normalize_sse_payload_text(
+            stripped_line,
+            choice_states,
+            tool_schemas,
+            original_line=line,
+        )
+
+    sanitized_line, removed = sanitize_dsml_text(line)
+    return sanitized_line, removed, 0, None
 
 
 def merge_tool_call_delta(message: dict, tool_call_delta: dict) -> None:
