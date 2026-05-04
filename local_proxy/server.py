@@ -2514,10 +2514,11 @@ def request_upstream_with_retries(
     initial_blocked_urls: set[str] | None = None,
     model_candidates: list[str] | None = None,
 ) -> tuple[requests.Response | None, list[dict], requests.RequestException | None]:
+    request_meta = request_kwargs.pop("meta", None)
     with state_lock:
         route_selection_state["__current_logical_model__"] = model_candidates[0] if model_candidates else ""
         route_selection_state["__current_session_affinity_key__"] = str(
-            (request_kwargs.get("meta") or {}).get("session_affinity_key") or ""
+            (request_meta or {}).get("session_affinity_key") or ""
         )
     return orchestrated_request_upstream_with_retries(
         request_kwargs,

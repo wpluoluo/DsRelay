@@ -97,6 +97,8 @@ def request_upstream_with_retries(
     request_sender: Any,
     initial_blocked_urls: set[str] | None = None,
 ) -> tuple[requests.Response | None, list[dict], requests.RequestException | None]:
+    request_kwargs = dict(request_kwargs or {})
+    request_kwargs.pop("meta", None)
     retry_allowed = should_retry_request(subpath, str(request_kwargs.get("method", "GET")))
     model_candidates = [
         str(item or "").strip()

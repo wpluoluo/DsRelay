@@ -11,7 +11,13 @@ from hashlib import sha256
 
 
 AUTH_QUERY_KEYS = ("key", "api_key", "apikey")
-AUTH_HEADER_KEYS = ("X-API-Key", "X-Goog-API-Key")
+AUTH_HEADER_KEYS = (
+    "X-API-Key",
+    "X-Goog-API-Key",
+    "Api-Key",
+    "X-Proxy-API-Key",
+    "Proxy-Authorization",
+)
 MANAGED_KEY_PREFIX = "sk-"
 MANAGED_KEY_RANDOM_LENGTH = 48
 MANAGED_KEY_ALPHABET = string.ascii_letters + string.digits
@@ -125,6 +131,13 @@ def public_proxy_api_key_record(record: dict) -> dict:
 
 
 def extract_proxy_api_key(request) -> tuple[str, str]:
+    for header_name in AUTH_HEADER_KEYS:
+        value = str(request.headers.get(header_name) or "").strip()
+        if value:
+            if header_name.lower() == "proxy-authorization" and value.lower().startswith("bearer "):
+                return value[7:].strip(), header_name.lower()
+            return value, header_name.lower()
+
     auth_header = str(request.headers.get("Authorization") or "").strip()
     if auth_header:
         if auth_header.lower().startswith("bearer "):
@@ -132,11 +145,6 @@ def extract_proxy_api_key(request) -> tuple[str, str]:
         if not any(ch.isspace() for ch in auth_header):
             return auth_header, "authorization"
         return "", "authorization"
-
-    for header_name in AUTH_HEADER_KEYS:
-        value = str(request.headers.get(header_name) or "").strip()
-        if value:
-            return value, header_name.lower()
 
     for query_key in AUTH_QUERY_KEYS:
         value = str(request.args.get(query_key) or "").strip()

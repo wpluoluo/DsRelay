@@ -55,6 +55,35 @@ class ProxyApiAuthParserTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.source, "x-api-key")
 
+    def test_verify_proxy_api_key_prefers_dedicated_header_over_authorization(self):
+        from flask import Flask, request
+
+        app = Flask(__name__)
+        with app.test_request_context(
+            "/v1/messages",
+            headers={
+                "Authorization": "Bearer upstream-secret",
+                "X-API-Key": "proxy-secret",
+            },
+        ):
+            result = verify_proxy_api_key(request, ("proxy-secret",))
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.source, "x-api-key")
+
+    def test_verify_proxy_api_key_accepts_proxy_authorization_bearer(self):
+        from flask import Flask, request
+
+        app = Flask(__name__)
+        with app.test_request_context(
+            "/v1/messages",
+            headers={"Proxy-Authorization": "Bearer proxy-secret"},
+        ):
+            result = verify_proxy_api_key(request, ("proxy-secret",))
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.source, "proxy-authorization")
+
     def test_verify_proxy_api_key_accepts_query_key(self):
         from flask import Flask, request
 

@@ -24,6 +24,66 @@ def make_response(status_code: int, body: str, url: str) -> requests.Response:
 
 
 class GatewayFailoverTests(unittest.TestCase):
+    def test_internal_meta_is_not_forwarded_to_request_sender(self):
+        captured_kwargs = {}
+
+        def sender(**kwargs):
+            captured_kwargs.update(kwargs)
+            return make_response(200, '{"ok":true}', kwargs["url"])
+
+        response, attempts, error = request_upstream_with_retries(
+            {
+                "method": "POST",
+                "url": "https://ok.example/v1/chat/completions",
+                "json": {"model": "demo"},
+                "headers": {"Content-Type": "application/json"},
+                "meta": {"session_affinity_key": "session-1"},
+            },
+            subpath="chat/completions",
+            request_id="test-meta-strip",
+            upstream_urls=["https://ok.example/v1/chat/completions"],
+            model_candidates=["demo"],
+            should_retry_request=lambda subpath, method: True,
+            max_retries=1,
+            should_enforce_route_switch_window=lambda urls, retry_allowed: False,
+            route_switch_window_seconds=30,
+            build_attempt_url_cycle=lambda urls, blocked: [url for url in urls if url not in blocked],
+            build_model_candidate_order_for_route=lambda route, models, kwargs, request_id: {"candidates": models},
+            should_race_model_candidates_for_route=lambda **kwargs: False,
+            get_api_keys_for_url=lambda url: [],
+            choose_api_key_for_url=lambda url, exclude=None: {},
+            mark_api_key_success=lambda url, key: None,
+            mark_api_key_failure=lambda url, key, reason, force_cooldown=False: None,
+            mark_route_success=lambda url: None,
+            mark_route_failure=lambda url, reason: None,
+            response_indicates_model_unavailable=lambda response: False,
+            classify_upstream_response=lambda response: ("return", f"status_{response.status_code}"),
+            extract_error_preview_from_response=lambda response: response.text[:120],
+            apply_model_candidate_to_request_kwargs=lambda kwargs, model: dict(kwargs),
+            apply_learned_completion_limit_to_request_kwargs=lambda *args, **kwargs: 0,
+            extract_completion_token_limit_from_response=lambda response: None,
+            extract_context_token_limit_from_response=lambda response: (None, None),
+            clamp_payload_output_tokens=lambda payload, limit: 0,
+            record_learned_model_capability=lambda **kwargs: None,
+            record_model_candidate_result=lambda **kwargs: None,
+            compute_retry_delay_ms=lambda attempt, response=None: 0,
+            remaining_retry_window_ms=lambda deadline: 30000,
+            append_race_attempts=lambda attempts, race_attempts, **kwargs: set(),
+            model_candidate_differs_from_logical=lambda logical, candidate: False,
+            logger=NullLogger(),
+            cache_stat_bump=lambda key: None,
+            model_candidate_race_limit=1,
+            model_candidate_race_timeout_seconds=1,
+            enable_model_candidate_race=False,
+            request_sender=sender,
+        )
+
+        self.assertIsNone(error)
+        self.assertIsNotNone(response)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("meta", captured_kwargs)
+        self.assertEqual(len(attempts), 1)
+
     def test_route_cycle_prefers_session_affinity_route(self):
         route_health = {}
         route_selection_state = {
