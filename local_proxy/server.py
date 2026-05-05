@@ -3674,6 +3674,33 @@ def bridge_anthropic_sse_response(
     return [format_sse_event("error", payload)]
 
 
+def bridge_openai_sse_response(response: Response) -> list[bytes]:
+    response_status = int(getattr(response, "status_code", 200) or 200)
+    response_body = response.response
+    if response_status == 200:
+        if isinstance(response_body, (bytes, bytearray)):
+            return [bytes(response_body)]
+        return list(response_body)
+
+    if isinstance(response_body, (bytes, bytearray)):
+        body_bytes = bytes(response_body)
+    else:
+        body_bytes = b"".join(response_body)
+
+    upstream_preview = body_bytes.decode("utf-8", errors="ignore")
+    upstream_payload = extract_error_payload_from_text(upstream_preview)
+    payload = upstream_payload if isinstance(upstream_payload, dict) else build_openai_error_payload(
+        status_code=response_status,
+        preview=upstream_preview,
+        retry_count=0,
+        upstream_payload=None,
+    )
+    return [
+        format_openai_sse_payload(payload),
+        b"data: [DONE]\n\n",
+    ]
+
+
 def build_anthropic_response_control_payload(
     *,
     upstream_openai_payload: dict | None,
@@ -6600,7 +6627,7 @@ def openai_stream_response_with_connect_heartbeat(
                         request_payload=request_payload or {},
                         execution=next_execution,
                     )
-                    yield from stream_response.response
+                    yield from bridge_openai_sse_response(stream_response)
                     return
 
                 body, response_preview, error_message, _downstream_status = build_proxy_error_response(
@@ -6634,7 +6661,7 @@ def openai_stream_response_with_connect_heartbeat(
                 request_payload=request_payload or {},
                 execution=execution,
             )
-            yield from stream_response.response
+            yield from bridge_openai_sse_response(stream_response)
         except GeneratorExit:  # pragma: no cover
             background_execution.cancel()
             if not delegated:
@@ -7959,7 +7986,10 @@ def anthropic_stream_response_with_connect_heartbeat(
                         retry_count=int(next_execution.get("retry_count") or retry_count),
                         observability_meta=build_request_observability_meta(next_execution, observability_payload or {}) | {"_upstream_openai_payload": observability_payload or {}, "_downstream_anthropic_payload": response_control_payload or {}, "_execution": next_execution},
                     )
-                    yield from stream_response.response
+                    yield from bridge_anthropic_sse_response(
+                        stream_response,
+                        retry_count=int(next_execution.get("retry_count") or retry_count),
+                    )
                     return
 
                 client_gone = response_indicates_client_gone(upstream_response)
@@ -7991,7 +8021,7 @@ def anthropic_stream_response_with_connect_heartbeat(
                 retry_count=retry_count,
                 observability_meta=build_request_observability_meta(execution, observability_payload or {}) | {"_upstream_openai_payload": observability_payload or {}, "_downstream_anthropic_payload": response_control_payload or {}, "_execution": execution},
             )
-            yield from stream_response.response
+            yield from bridge_anthropic_sse_response(stream_response, retry_count=retry_count)
         except GeneratorExit:  # pragma: no cover
             background_execution.cancel()
             if not delegated:

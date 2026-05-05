@@ -477,6 +477,63 @@ class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
         self.assertNotIn("404 page not found", body)
         execute_mock.assert_called_once()
 
+    def test_anthropic_messages_connect_heartbeat_emits_error_event_when_all_routes_fail(self):
+        server = self.load_server()
+        initial_error = make_error_response(
+            "https://bad.example/v1/chat/completions",
+            404,
+            "404 page not found",
+        )
+
+        class ReadyBackgroundExecution:
+            def wait(self, timeout_seconds):
+                return (
+                    "result",
+                    {
+                        "upstream_response": initial_error,
+                        "upstream_url": initial_error.url,
+                        "tool_schemas": {},
+                        "retry_count": 0,
+                        "attempts": [{"route_url": initial_error.url, "reason": "route_not_found_404"}],
+                        "upstream_url_pool": [initial_error.url],
+                        "route_pool_size": 1,
+                        "request_context": {},
+                        "route_url": initial_error.url,
+                    },
+                )
+
+            def cancel(self):
+                return None
+
+        response = server.anthropic_stream_response_with_connect_heartbeat(
+            background_execution=ReadyBackgroundExecution(),
+            request_id="anth-heartbeat-terminal-404",
+            started_at=0.0,
+            request_payload={
+                "model": "demo",
+                "stream": True,
+                "max_tokens": 64,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+            observability_payload={
+                "model": "demo",
+                "stream": True,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+            response_control_payload={
+                "model": "demo",
+                "stream": True,
+                "max_tokens": 64,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+        body = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("event: error", body)
+        self.assertIn('"upstream_status":404', body)
+        self.assertNotIn('\n{"type":"error"', body)
+
     def test_anthropic_messages_exhausts_candidate_routes_until_stream_success(self):
         server = self.load_server()
         server.ENABLE_MODEL_PROBE = False

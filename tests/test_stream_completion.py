@@ -913,5 +913,44 @@ class StreamCompletionTests(unittest.TestCase):
         self.assertEqual(payload["error"]["message"], "Upstream returned an error.")
         self.assertIn("404 page not found", payload["error"]["upstream_preview"])
 
+    def test_openai_connect_heartbeat_emits_sse_error_packets_when_all_routes_fail(self):
+        initial_error = make_error_response(404, "404 page not found")
+
+        class ReadyBackgroundExecution:
+            def wait(self, timeout_seconds):
+                return (
+                    "result",
+                    {
+                        "upstream_response": initial_error,
+                        "upstream_url": initial_error.url,
+                        "tool_schemas": {},
+                        "retry_count": 0,
+                        "attempts": [{"route_url": initial_error.url, "reason": "route_not_found_404"}],
+                        "upstream_url_pool": [initial_error.url],
+                        "route_pool_size": 1,
+                        "request_context": {},
+                        "route_url": initial_error.url,
+                    },
+                )
+
+            def cancel(self):
+                return None
+
+        response = openai_stream_response_with_connect_heartbeat(
+            background_execution=ReadyBackgroundExecution(),
+            request_id="heartbeat404terminal",
+            started_at=time.perf_counter(),
+            sanitize_dsml=True,
+            route_hint="chat/completions",
+            request_payload={"model": "test-model", "stream": True, "messages": [{"role": "user", "content": "hello"}]},
+        )
+        body = collect_response_body(response).decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('data: {"error"', body)
+        self.assertIn('"upstream_status": 404', body)
+        self.assertIn("data: [DONE]\n\n", body)
+        self.assertNotIn('\n{"error":', body)
+
 if __name__ == "__main__":
     unittest.main()
