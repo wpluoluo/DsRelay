@@ -377,7 +377,9 @@ def request_upstream_with_retries(
             reason,
             preview,
         )
-        route_should_cooldown = deterministic_failure or response.status_code == 429
+        route_should_cooldown = deterministic_failure or response.status_code == 429 or (
+            retry_action == "switch_route" and not client_gone_response
+        )
         if route_should_cooldown:
             mark_route_failure(attempt_url, reason)
 

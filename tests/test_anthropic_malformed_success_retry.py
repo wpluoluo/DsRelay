@@ -369,6 +369,114 @@ class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
         )
         self.assertEqual(response.headers.get("X-Proxy-Retries"), "1")
 
+    def test_anthropic_messages_connect_heartbeat_retries_terminal_404_before_error(self):
+        server = self.load_server()
+        server.ENABLE_MODEL_PROBE = False
+        server.UPSTREAM_RANDOMIZE_ENDPOINTS = False
+
+        initial_error = make_error_response(
+            "https://bad.example/v1/chat/completions",
+            404,
+            "404 page not found",
+        )
+        fallback_upstream = FiniteStreamResponse(
+            "https://good.example/v1/chat/completions",
+            [
+                "data: " + json.dumps(
+                    {
+                        "id": "chatcmpl-ok",
+                        "object": "chat.completion.chunk",
+                        "created": 1,
+                        "model": "demo",
+                        "choices": [{"index": 0, "delta": {"content": "ok"}, "finish_reason": None}],
+                    },
+                    separators=(",", ":"),
+                ),
+                "",
+                "data: " + json.dumps(
+                    {
+                        "id": "chatcmpl-ok",
+                        "object": "chat.completion.chunk",
+                        "created": 1,
+                        "model": "demo",
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                    },
+                    separators=(",", ":"),
+                ),
+                "",
+            ],
+        )
+
+        class ReadyBackgroundExecution:
+            def wait(self, timeout_seconds):
+                return (
+                    "result",
+                    {
+                        "upstream_response": initial_error,
+                        "upstream_url": initial_error.url,
+                        "tool_schemas": {},
+                        "retry_count": 0,
+                        "attempts": [{"route_url": "https://bad.example/v1/chat/completions", "reason": "route_not_found_404"}],
+                        "upstream_url_pool": [
+                            "https://bad.example/v1/chat/completions",
+                            "https://good.example/v1/chat/completions",
+                        ],
+                        "route_pool_size": 2,
+                        "request_context": {},
+                        "route_url": "https://bad.example/v1/chat/completions",
+                    },
+                )
+
+            def cancel(self):
+                return None
+
+        with unittest.mock.patch.object(
+            server,
+            "execute_upstream_request",
+            return_value={
+                "upstream_response": fallback_upstream,
+                "upstream_url": fallback_upstream.url,
+                "tool_schemas": {},
+                "retry_count": 1,
+                "attempts": [{"route_url": "https://good.example/v1/chat/completions"}],
+                "upstream_url_pool": [
+                    "https://bad.example/v1/chat/completions",
+                    "https://good.example/v1/chat/completions",
+                ],
+                "route_pool_size": 2,
+                "request_context": {},
+                "route_url": "https://good.example/v1/chat/completions",
+            },
+        ) as execute_mock:
+            response = server.anthropic_stream_response_with_connect_heartbeat(
+                background_execution=ReadyBackgroundExecution(),
+                request_id="anth-heartbeat-404",
+                started_at=0.0,
+                request_payload={
+                    "model": "demo",
+                    "stream": True,
+                    "max_tokens": 64,
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+                observability_payload={
+                    "model": "demo",
+                    "stream": True,
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+                response_control_payload={
+                    "model": "demo",
+                    "stream": True,
+                    "max_tokens": 64,
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+            )
+            body = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('"text":"ok"', body)
+        self.assertNotIn("404 page not found", body)
+        execute_mock.assert_called_once()
+
     def test_anthropic_messages_exhausts_candidate_routes_until_stream_success(self):
         server = self.load_server()
         server.ENABLE_MODEL_PROBE = False

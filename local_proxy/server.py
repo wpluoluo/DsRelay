@@ -3575,10 +3575,12 @@ def build_proxy_error_response(
     upstream_response: requests.Response,
     requested_stream: bool,
     retry_count: int,
-) -> tuple[bytes, str, str | None]:
+) -> tuple[bytes, str, str | None, int]:
     raw_text = extract_response_text(upstream_response)
     preview = raw_text.replace("\n", "\\n")[:280]
     upstream_payload = extract_error_payload_from_text(raw_text)
+    client_gone = response_indicates_client_gone(upstream_response)
+    downstream_status = upstream_response.status_code if client_gone else 502
 
     if (
         isinstance(upstream_payload, dict)
@@ -3599,6 +3601,7 @@ def build_proxy_error_response(
         json.dumps(response_body, ensure_ascii=False).encode("utf-8"),
         preview,
         response_body.get("error", {}).get("message") if isinstance(response_body, dict) else None,
+        downstream_status,
     )
 
 
@@ -3794,6 +3797,50 @@ def retry_malformed_success_once(
     )
     if isinstance(next_execution, dict):
         next_execution["malformed_success_fallbacks"] = malformed_success_fallbacks + 1
+        next_execution = carry_same_request_execution_history(execution, next_execution)
+    return next_execution if isinstance(next_execution, dict) else None
+
+
+def retry_terminal_upstream_failure_once(
+    *,
+    route_hint: str,
+    request_id: str,
+    upstream_url: str,
+    route_url: str = "",
+    request_payload: dict | None,
+    execution: dict | None,
+    request_context: dict | None = None,
+    fallback_key: str,
+    failure_reason: str,
+) -> dict | None:
+    terminal_failure_fallbacks = int((execution or {}).get(fallback_key) or 0)
+    if not isinstance(request_payload, dict) or not can_attempt_same_request_failover(
+        route_hint=route_hint,
+        execution=execution,
+        fallback_count=terminal_failure_fallbacks,
+    ):
+        return None
+
+    current_route_url = str(route_url or (execution or {}).get("route_url") or "").strip()
+    blocked_urls = collect_same_request_blocked_urls(execution, current_route_url=current_route_url)
+
+    proxy_logger.warning(
+        "request_id=%s 上游终态错误，准备同请求切换线路 次数=%s 当前线路=%s 原因=%s",
+        request_id,
+        terminal_failure_fallbacks + 1,
+        current_route_url or upstream_url,
+        failure_reason,
+    )
+    mark_route_failure(current_route_url or upstream_url, failure_reason)
+    next_execution = execute_upstream_request(
+        route_hint,
+        request_payload,
+        request_id,
+        initial_blocked_urls=blocked_urls,
+        request_context=request_context or (execution.get("request_context") if isinstance(execution, dict) else None),
+    )
+    if isinstance(next_execution, dict):
+        next_execution[fallback_key] = terminal_failure_fallbacks + 1
         next_execution = carry_same_request_execution_history(execution, next_execution)
     return next_execution if isinstance(next_execution, dict) else None
 
@@ -4121,7 +4168,7 @@ def proxy_response(
 
     if upstream_response.status_code >= 400:
         client_gone = response_indicates_client_gone(upstream_response)
-        body, response_preview, error_message = build_proxy_error_response(
+        body, response_preview, error_message, downstream_status = build_proxy_error_response(
             upstream_response=upstream_response,
             requested_stream=requested_stream,
             retry_count=retry_count,
@@ -4142,7 +4189,7 @@ def proxy_response(
         finalize_request_record(
             request_id,
             started_at=started_at,
-            status_code=upstream_response.status_code,
+            status_code=downstream_status,
             bytes_sent=len(body),
             stream=requested_stream,
             error="client_gone" if client_gone else (error_message if upstream_response.status_code >= 500 else None),
@@ -4153,7 +4200,7 @@ def proxy_response(
             extra_meta=build_request_observability_meta(execution, request_payload),
         )
         response_headers["Content-Type"] = "application/json; charset=utf-8"
-        return Response(body, status=upstream_response.status_code, headers=response_headers)
+        return Response(body, status=downstream_status, headers=response_headers)
 
     if requested_stream and "text/event-stream" not in content_type.lower():
         consumed = read_upstream_openai_response_body(upstream_response, tool_schemas)
@@ -6525,7 +6572,38 @@ def openai_stream_response_with_connect_heartbeat(
                 return
 
             if upstream_response.status_code >= 400:
-                body, response_preview, error_message = build_proxy_error_response(
+                next_execution = retry_terminal_upstream_failure_once(
+                    route_hint=route_hint,
+                    request_id=request_id,
+                    upstream_url=upstream_url,
+                    route_url=str(execution.get("route_url") or upstream_url),
+                    request_payload=request_payload,
+                    execution=execution,
+                    request_context=execution.get("request_context") if isinstance(execution, dict) else None,
+                    fallback_key="terminal_error_fallbacks",
+                    failure_reason=classify_upstream_response(upstream_response)[1],
+                )
+                next_response = next_execution.get("upstream_response") if isinstance(next_execution, dict) else None
+                if next_response is not None:
+                    delegated = True
+                    stream_response = proxy_response(
+                        next_response,
+                        sanitize_dsml=sanitize_dsml,
+                        request_id=request_id,
+                        upstream_url=str(next_execution.get("upstream_url") or upstream_url),
+                        started_at=started_at,
+                        requested_stream=True,
+                        route_hint=route_hint,
+                        tool_schemas=next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else {},
+                        retry_count=int(next_execution.get("retry_count") or retry_count),
+                        protocol="openai_chat_completions",
+                        request_payload=request_payload or {},
+                        execution=next_execution,
+                    )
+                    yield from stream_response.response
+                    return
+
+                body, response_preview, error_message, _downstream_status = build_proxy_error_response(
                     upstream_response=upstream_response,
                     requested_stream=True,
                     retry_count=retry_count,
@@ -7652,6 +7730,32 @@ def gemini_stream_response_with_connect_heartbeat(
                 return
 
             if upstream_response.status_code >= 400:
+                next_execution = retry_terminal_upstream_failure_once(
+                    route_hint="generateContent",
+                    request_id=request_id,
+                    upstream_url=upstream_url,
+                    route_url=str(execution.get("route_url") or upstream_url),
+                    request_payload=observability_payload,
+                    execution=execution,
+                    request_context=execution.get("request_context") if isinstance(execution, dict) else None,
+                    fallback_key="gemini_terminal_error_fallbacks",
+                    failure_reason=classify_upstream_response(upstream_response)[1],
+                )
+                next_response = next_execution.get("upstream_response") if isinstance(next_execution, dict) else None
+                if next_response is not None:
+                    delegated = True
+                    stream_response = handle_gemini_stream_response(
+                        upstream_response=next_response,
+                        request_id=request_id,
+                        upstream_url=str(next_execution.get("upstream_url") or upstream_url),
+                        started_at=started_at,
+                        tool_schemas=next_execution.get("tool_schemas") or tool_schemas_fallback or {},
+                        retry_count=int(next_execution.get("retry_count") or retry_count),
+                        observability_meta=build_request_observability_meta(next_execution, observability_payload or {}) | {"_upstream_openai_payload": observability_payload or {}, "_execution": next_execution},
+                    )
+                    yield from stream_response.response
+                    return
+
                 client_gone = response_indicates_client_gone(upstream_response)
                 error_message, preview = extract_upstream_error_message(upstream_response)
                 waiting_error = "client_gone" if client_gone else error_message
@@ -7831,6 +7935,33 @@ def anthropic_stream_response_with_connect_heartbeat(
                 return
 
             if upstream_response.status_code >= 400:
+                next_execution = retry_terminal_upstream_failure_once(
+                    route_hint="chat/completions",
+                    request_id=request_id,
+                    upstream_url=upstream_url,
+                    route_url=str(execution.get("route_url") or upstream_url),
+                    request_payload=observability_payload,
+                    execution=execution,
+                    request_context=execution.get("request_context") if isinstance(execution, dict) else None,
+                    fallback_key="anthropic_terminal_error_fallbacks",
+                    failure_reason=classify_upstream_response(upstream_response)[1],
+                )
+                next_response = next_execution.get("upstream_response") if isinstance(next_execution, dict) else None
+                if next_response is not None:
+                    delegated = True
+                    stream_response = handle_anthropic_stream_response(
+                        upstream_response=next_response,
+                        request_id=request_id,
+                        upstream_url=str(next_execution.get("upstream_url") or upstream_url),
+                        started_at=started_at,
+                        request_payload=request_payload or {},
+                        tool_schemas=next_execution.get("tool_schemas") or tool_schemas_fallback or {},
+                        retry_count=int(next_execution.get("retry_count") or retry_count),
+                        observability_meta=build_request_observability_meta(next_execution, observability_payload or {}) | {"_upstream_openai_payload": observability_payload or {}, "_downstream_anthropic_payload": response_control_payload or {}, "_execution": next_execution},
+                    )
+                    yield from stream_response.response
+                    return
+
                 client_gone = response_indicates_client_gone(upstream_response)
                 error_message, preview = extract_upstream_error_message(upstream_response)
                 waiting_error = "client_gone" if client_gone else error_message

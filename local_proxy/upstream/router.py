@@ -132,7 +132,9 @@ def mark_route_failure(
         entry["last_reason"] = reason or ""
         entry["last_failure_at"] = now
         effective_threshold = route_failure_threshold
-        if reason_text == "request_exception":
+        if reason_text == "request_exception" or reason_text.startswith(
+            ("route_switch_", "route_not_found_", "model_unavailable_", "upstream_canceled_")
+        ):
             effective_threshold = 1
         if entry["consecutive_failures"] >= effective_threshold:
             exponent = max(0, entry["consecutive_failures"] - effective_threshold)

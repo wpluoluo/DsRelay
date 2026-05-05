@@ -15,6 +15,7 @@ from local_proxy.server import (
     consume_openai_sse_events,
     handle_anthropic_stream_response,
     handle_gemini_stream_response,
+    openai_stream_response_with_connect_heartbeat,
     proxy_response,
 )
 
@@ -785,6 +786,11 @@ class StreamCompletionTests(unittest.TestCase):
                     "tool_schemas": {},
                     "retry_count": 1,
                     "attempts": [{"route_url": "https://fallback.example/v1/chat/completions"}],
+                    "upstream_url_pool": [
+                        "https://primary.example/v1/chat/completions",
+                        "https://fallback.example/v1/chat/completions",
+                    ],
+                    "route_pool_size": 2,
                     "request_context": {},
                     "route_url": "https://fallback.example/v1/chat/completions",
                 },
@@ -801,7 +807,16 @@ class StreamCompletionTests(unittest.TestCase):
                 retry_count=0,
                 protocol="openai_chat_completions",
                 request_payload=request_payload,
-                execution={"empty_sse_fallbacks": 0, "request_context": {}, "route_url": "https://primary.example/v1/chat/completions"},
+                execution={
+                    "empty_sse_fallbacks": 0,
+                    "request_context": {},
+                    "route_url": "https://primary.example/v1/chat/completions",
+                    "upstream_url_pool": [
+                        "https://primary.example/v1/chat/completions",
+                        "https://fallback.example/v1/chat/completions",
+                    ],
+                    "route_pool_size": 2,
+                },
             )
 
         body = collect_response_body(response).decode("utf-8")
@@ -811,6 +826,92 @@ class StreamCompletionTests(unittest.TestCase):
         execute_mock.assert_called_once()
         self.assertTrue(upstream.closed_by_proxy)
         self.assertTrue(fallback_upstream.closed_by_proxy)
+
+    def test_openai_connect_heartbeat_retries_terminal_404_before_emitting_error(self):
+        initial_error = make_error_response(404, "404 page not found")
+        fallback_upstream = FiniteStreamResponse(openai_stream_lines())
+        request_payload = {"model": "test-model", "stream": True, "messages": [{"role": "user", "content": "hello"}]}
+
+        class ReadyBackgroundExecution:
+            def wait(self, timeout_seconds):
+                return (
+                    "result",
+                    {
+                        "upstream_response": initial_error,
+                        "upstream_url": initial_error.url,
+                        "tool_schemas": {},
+                        "retry_count": 0,
+                        "attempts": [{"route_url": "https://primary.example/v1/chat/completions", "reason": "route_not_found_404"}],
+                        "upstream_url_pool": [
+                            "https://primary.example/v1/chat/completions",
+                            "https://fallback.example/v1/chat/completions",
+                        ],
+                        "route_pool_size": 2,
+                        "request_context": {},
+                        "route_url": "https://primary.example/v1/chat/completions",
+                    },
+                )
+
+            def cancel(self):
+                return None
+
+        with mock.patch(
+            "local_proxy.server.execute_upstream_request",
+            return_value={
+                "upstream_response": fallback_upstream,
+                "upstream_url": fallback_upstream.url,
+                "tool_schemas": {},
+                "retry_count": 1,
+                "attempts": [{"route_url": "https://fallback.example/v1/chat/completions"}],
+                "upstream_url_pool": [
+                    "https://primary.example/v1/chat/completions",
+                    "https://fallback.example/v1/chat/completions",
+                ],
+                "route_pool_size": 2,
+                "request_context": {},
+                "route_url": "https://fallback.example/v1/chat/completions",
+            },
+        ) as execute_mock:
+            response = openai_stream_response_with_connect_heartbeat(
+                background_execution=ReadyBackgroundExecution(),
+                request_id="heartbeat404fallback",
+                started_at=time.perf_counter(),
+                sanitize_dsml=True,
+                route_hint="chat/completions",
+                request_payload=request_payload,
+            )
+            body = collect_response_body(response).decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('"content":"ok"', body)
+        self.assertIn("data: [DONE]\n\n", body)
+        self.assertNotIn("404 page not found", body)
+        execute_mock.assert_called_once()
+        self.assertTrue(fallback_upstream.closed_by_proxy)
+
+    def test_openai_non_stream_returns_proxy_502_instead_of_upstream_404(self):
+        upstream = make_error_response(404, "404 page not found")
+        response = proxy_response(
+            upstream,
+            sanitize_dsml=True,
+            request_id="json404",
+            upstream_url=upstream.url,
+            started_at=time.perf_counter(),
+            requested_stream=False,
+            route_hint="chat/completions",
+            tool_schemas={},
+            retry_count=0,
+            protocol="openai_chat_completions",
+            request_payload={"model": "test-model", "messages": [{"role": "user", "content": "hello"}]},
+            execution={"route_url": upstream.url, "upstream_url_pool": [upstream.url], "route_pool_size": 1},
+        )
+
+        payload = json.loads(collect_response_body(response).decode("utf-8"))
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(payload["error"]["upstream_status"], 404)
+        self.assertEqual(payload["error"]["message"], "Upstream returned an error.")
+        self.assertIn("404 page not found", payload["error"]["upstream_preview"])
 
 if __name__ == "__main__":
     unittest.main()

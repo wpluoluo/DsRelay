@@ -227,7 +227,7 @@ class GatewayFailoverTests(unittest.TestCase):
         )
         self.assertEqual(attempts[0]["status_code"], 504)
         self.assertEqual(attempts[0]["action"], "switch_route")
-        self.assertEqual(route_failures, [])
+        self.assertEqual(route_failures, [("https://bad.example/v1/chat/completions", "route_switch_504")])
         self.assertEqual(key_failures, [])
 
     def test_404_page_not_found_switches_to_next_healthy_route(self):
@@ -308,7 +308,7 @@ class GatewayFailoverTests(unittest.TestCase):
         )
         self.assertEqual(attempts[0]["status_code"], 404)
         self.assertEqual(attempts[0]["action"], "switch_route")
-        self.assertEqual(route_failures, [])
+        self.assertEqual(route_failures, [("https://bad.example/v1/chat/completions", "route_not_found_404")])
 
     def test_request_exception_switches_route_without_marking_failure(self):
         sent_urls = []
@@ -856,6 +856,35 @@ class GatewayFailoverTests(unittest.TestCase):
             state_lock,
             route_url,
             "request_exception",
+            route_cooldown_seconds=10,
+            route_switch_window_seconds=1,
+            route_failure_threshold=3,
+            route_cooldown_multiplier=2.0,
+            route_cooldown_max_seconds=25,
+        )
+
+        entry = route_health[route_url]
+        self.assertEqual(entry["consecutive_failures"], 1)
+        self.assertGreater(entry["cooldown_until"], entry["last_failure_at"])
+
+    def test_route_not_found_cools_route_on_first_failure(self):
+        route_health = {}
+
+        class DummyLock:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        state_lock = DummyLock()
+        route_url = "https://bad.example/v1/chat/completions"
+
+        mark_route_failure(
+            route_health,
+            state_lock,
+            route_url,
+            "route_not_found_404",
             route_cooldown_seconds=10,
             route_switch_window_seconds=1,
             route_failure_threshold=3,
