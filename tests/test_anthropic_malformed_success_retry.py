@@ -289,6 +289,86 @@ class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
         self.assertEqual(payload["upstream_status"], 404)
         self.assertIn("404 page not found", payload["upstream_preview"])
 
+    def test_anthropic_messages_retries_route_not_found_before_stream_success(self):
+        server = self.load_server()
+        server.ENABLE_MODEL_PROBE = False
+        server.UPSTREAM_RANDOMIZE_ENDPOINTS = False
+        server.PROXY_POOLS[:] = [
+            {
+                "name": "bad",
+                "enabled": True,
+                "priority": 200,
+                "urls": ["https://bad.example/v1"],
+                "keys": [{"key": "bad-key"}],
+                "route_policy": {},
+            },
+            {
+                "name": "good",
+                "enabled": True,
+                "priority": 100,
+                "urls": ["https://good.example/v1"],
+                "keys": [{"key": "good-key"}],
+                "route_policy": {},
+            },
+        ]
+        server.rebuild_pool_state()
+        server.route_health.clear()
+        server.route_selection_state.clear()
+        server.model_route_cache["routes"] = {}
+        sent_urls = []
+
+        healthy_body = {
+            "id": "chatcmpl-ok",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "demo",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        }
+
+        def fake_request(**kwargs):
+            url = kwargs["url"]
+            sent_urls.append(url)
+            if "bad.example" in url:
+                return make_error_response(url, 404, "404 page not found")
+            return make_json_response(url, healthy_body)
+
+        server.UPSTREAM_SESSION.request = fake_request
+        client = server.app.test_client()
+
+        response = client.post(
+            "/v1/messages",
+            headers={
+                "Authorization": "Bearer proxy-secret",
+                "anthropic-version": "2023-06-01",
+            },
+            json={
+                "model": "demo",
+                "stream": True,
+                "max_tokens": 64,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+
+        body = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('"text":"ok"', body)
+        self.assertEqual(
+            sent_urls,
+            [
+                "https://bad.example/v1/chat/completions",
+                "https://good.example/v1/chat/completions",
+            ],
+        )
+        self.assertEqual(response.headers.get("X-Proxy-Retries"), "1")
+
     def test_anthropic_messages_exhausts_candidate_routes_until_stream_success(self):
         server = self.load_server()
         server.ENABLE_MODEL_PROBE = False
@@ -402,6 +482,74 @@ class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
         self.assertEqual(len(recent_requests), 1)
         self.assertEqual(recent_requests[0]["status_code"], 200)
         self.assertEqual(recent_requests[0]["bytes_sent"] > 0, True)
+
+    def test_anthropic_messages_preserves_thinking_stream_blocks_when_enabled(self):
+        server = self.load_server()
+        server.ENABLE_MODEL_PROBE = False
+        server.UPSTREAM_RANDOMIZE_ENDPOINTS = False
+        server.PROXY_POOLS[:] = [
+            {
+                "name": "good",
+                "enabled": True,
+                "priority": 100,
+                "urls": ["https://good.example/v1"],
+                "keys": [{"key": "good-key"}],
+                "route_policy": {},
+            },
+        ]
+        server.rebuild_pool_state()
+        server.route_health.clear()
+        server.route_selection_state.clear()
+        server.model_route_cache["routes"] = {}
+
+        first = {
+            "id": "chatcmpl-thinking",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "demo",
+            "choices": [{"index": 0, "delta": {"reasoning_content": "trace", "content": "ok"}, "finish_reason": None}],
+        }
+        terminal = {
+            "id": "chatcmpl-thinking",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "demo",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
+
+        server.UPSTREAM_SESSION.request = lambda **kwargs: FiniteStreamResponse(
+            kwargs["url"],
+            [
+                "data: " + json.dumps(first, separators=(",", ":")),
+                "",
+                "data: " + json.dumps(terminal, separators=(",", ":")),
+                "",
+            ],
+        )
+        client = server.app.test_client()
+
+        response = client.post(
+            "/v1/messages",
+            headers={
+                "Authorization": "Bearer proxy-secret",
+                "anthropic-version": "2023-06-01",
+            },
+            json={
+                "model": "demo",
+                "stream": True,
+                "thinking": {"type": "enabled", "budget_tokens": 1024},
+                "max_tokens": 64,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+
+        body = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('"thinking_delta"', body)
+        self.assertIn('"text_delta"', body)
+        self.assertIn('"thinking":"trace"', body)
+        self.assertIn('"text":"ok"', body)
 
     def test_anthropic_messages_fills_usage_when_upstream_omits_usage(self):
         server = self.load_server()

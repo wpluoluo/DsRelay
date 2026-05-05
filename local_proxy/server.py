@@ -3671,6 +3671,17 @@ def bridge_anthropic_sse_response(
     return [format_sse_event("error", payload)]
 
 
+def build_anthropic_response_control_payload(
+    *,
+    upstream_openai_payload: dict | None,
+    downstream_request_payload: dict | None,
+) -> dict:
+    payload = dict(upstream_openai_payload or {}) if isinstance(upstream_openai_payload, dict) else {}
+    if isinstance(downstream_request_payload, dict) and downstream_request_payload.get("thinking") is not None:
+        payload["thinking"] = deepcopy(downstream_request_payload.get("thinking"))
+    return payload
+
+
 def get_same_request_failover_budget(route_hint: str, execution: dict | None = None) -> int:
     route_pool_size = 0
     if isinstance(execution, dict):
@@ -5682,6 +5693,10 @@ def anthropic_messages():
     request_payload = request.get_json(silent=True) or {}
     requested_stream = bool(request_payload.get("stream"))
     openai_payload = convert_anthropic_request_to_openai(request_payload)
+    anthropic_response_payload = build_anthropic_response_control_payload(
+        upstream_openai_payload=openai_payload,
+        downstream_request_payload=request_payload,
+    )
     sanitized_query = sanitize_query_string(request.query_string, secret_masker=mask_secret)
     proxy_logger.info(
         "request_id=%s 入站请求 协议=anthropic_messages 方法=%s 路径=%s 来源=%s 查询=%s",
@@ -5727,6 +5742,7 @@ def anthropic_messages():
                 started_at=started_at,
                 request_payload=request_payload,
                 observability_payload=openai_payload,
+                response_control_payload=anthropic_response_payload,
             )
         if async_error is not None:
             initial_urls = build_upstream_url_candidates("chat/completions")
@@ -5872,7 +5888,7 @@ def anthropic_messages():
             request_payload=request_payload,
             tool_schemas=tool_schemas,
             retry_count=retry_count,
-            observability_meta=build_request_observability_meta(execution, openai_payload) | {"_upstream_openai_payload": openai_payload, "_execution": execution},
+            observability_meta=build_request_observability_meta(execution, openai_payload) | {"_upstream_openai_payload": openai_payload, "_downstream_anthropic_payload": anthropic_response_payload, "_execution": execution},
         )
 
     content_type = upstream_response.headers.get("Content-Type", "")
@@ -5917,7 +5933,7 @@ def anthropic_messages():
                     request_payload=request_payload,
                     tool_schemas=next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else tool_schemas,
                     retry_count=next_retry_count,
-                    observability_meta=build_request_observability_meta(next_execution, openai_payload) | {"_execution": next_execution},
+                    observability_meta=build_request_observability_meta(next_execution, openai_payload) | {"_downstream_anthropic_payload": anthropic_response_payload, "_execution": next_execution},
                 )
             retry_count = next_retry_count
             if "text/event-stream" in str(next_response.headers.get("Content-Type", "")).lower():
@@ -5942,7 +5958,7 @@ def anthropic_messages():
                     anthropic_body = convert_openai_response_to_anthropic(
                         openai_body,
                         tool_schemas,
-                        next_execution.get("upstream_payload") if isinstance(next_execution.get("upstream_payload"), dict) else openai_payload,
+                        anthropic_response_payload,
                     )
                     body = json.dumps(anthropic_body, ensure_ascii=False).encode("utf-8")
                     response_preview = build_preview_summary(consumed["preview_parts"])
@@ -6000,7 +6016,7 @@ def anthropic_messages():
                     anthropic_body = convert_openai_response_to_anthropic(
                         openai_body,
                         tool_schemas,
-                        next_execution.get("upstream_payload") if isinstance(next_execution.get("upstream_payload"), dict) else openai_payload,
+                        anthropic_response_payload,
                     )
                     attach_execution_response_body(next_execution, anthropic_body)
                     body = json.dumps(anthropic_body, ensure_ascii=False).encode("utf-8")
@@ -6072,7 +6088,7 @@ def anthropic_messages():
     anthropic_body = convert_openai_response_to_anthropic(
         openai_body,
         tool_schemas,
-        execution.get("upstream_payload") if isinstance(execution.get("upstream_payload"), dict) else openai_payload,
+        anthropic_response_payload,
     )
     attach_execution_response_body(execution, anthropic_body)
     body = json.dumps(anthropic_body, ensure_ascii=False).encode("utf-8")
@@ -6813,7 +6829,12 @@ def handle_anthropic_stream_response(
     content_type = upstream_response.headers.get("Content-Type", "")
     anthropic_stream_fallbacks = int((observability_meta or {}).get("anthropic_stream_fallbacks") or 0)
     upstream_openai_payload = dict((observability_meta or {}).get("_upstream_openai_payload") or {})
-    thinking_enabled = anthropic_thinking_enabled(upstream_openai_payload or request_payload)
+    downstream_anthropic_payload = dict((observability_meta or {}).get("_downstream_anthropic_payload") or {})
+    anthropic_response_payload = downstream_anthropic_payload or build_anthropic_response_control_payload(
+        upstream_openai_payload=upstream_openai_payload,
+        downstream_request_payload=request_payload,
+    )
+    thinking_enabled = anthropic_thinking_enabled(anthropic_response_payload or request_payload)
     execution = (observability_meta or {}).get("_execution")
     request_context = (execution or {}).get("request_context")
     route_url = str((execution or {}).get("route_url") or upstream_url or "").strip()
@@ -6870,7 +6891,7 @@ def handle_anthropic_stream_response(
                 },
             )
 
-        anthropic_body = convert_openai_response_to_anthropic(consumed["openai_body"], tool_schemas, upstream_openai_payload or request_payload)
+        anthropic_body = convert_openai_response_to_anthropic(consumed["openai_body"], tool_schemas, anthropic_response_payload or request_payload)
         attach_execution_response_body((observability_meta or {}).get("_execution"), anthropic_body)
         packets = build_anthropic_stream_packets_from_message(anthropic_body)
         total_bytes = sum(len(packet) for packet in packets)
@@ -7015,7 +7036,7 @@ def handle_anthropic_stream_response(
                                 request_payload=request_payload,
                                 tool_schemas=next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else tool_schemas,
                                 retry_count=int(next_execution.get("retry_count") or retry_count),
-                                observability_meta=next_meta | build_request_observability_meta(next_execution, retry_payload) | {"_upstream_openai_payload": retry_payload, "_execution": next_execution},
+                                observability_meta=next_meta | build_request_observability_meta(next_execution, retry_payload) | {"_upstream_openai_payload": retry_payload, "_downstream_anthropic_payload": anthropic_response_payload, "_execution": next_execution},
                             )
                             yield from bridge_anthropic_sse_response(
                                 next_stream,
@@ -7347,7 +7368,7 @@ def handle_anthropic_stream_response(
                                 request_payload=request_payload,
                                 tool_schemas=next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else tool_schemas,
                                 retry_count=int(next_execution.get("retry_count") or retry_count),
-                                observability_meta=next_meta | build_request_observability_meta(next_execution, retry_payload) | {"_upstream_openai_payload": retry_payload, "_execution": next_execution},
+                                observability_meta=next_meta | build_request_observability_meta(next_execution, retry_payload) | {"_upstream_openai_payload": retry_payload, "_downstream_anthropic_payload": anthropic_response_payload, "_execution": next_execution},
                             )
                             yield from bridge_anthropic_sse_response(
                                 next_stream,
@@ -7742,6 +7763,7 @@ def anthropic_stream_response_with_connect_heartbeat(
     started_at: float,
     request_payload: dict | None,
     observability_payload: dict | None = None,
+    response_control_payload: dict | None = None,
     tool_schemas_fallback: dict | None = None,
 ) -> Response:
     heartbeat_interval = max(1, WAITING_STREAM_HEARTBEAT_SECONDS or 5)
@@ -7836,7 +7858,7 @@ def anthropic_stream_response_with_connect_heartbeat(
                 request_payload=request_payload or {},
                 tool_schemas=execution.get("tool_schemas") or tool_schemas_fallback or {},
                 retry_count=retry_count,
-                observability_meta=build_request_observability_meta(execution, observability_payload or {}) | {"_upstream_openai_payload": observability_payload or {}, "_execution": execution},
+                observability_meta=build_request_observability_meta(execution, observability_payload or {}) | {"_upstream_openai_payload": observability_payload or {}, "_downstream_anthropic_payload": response_control_payload or {}, "_execution": execution},
             )
             yield from stream_response.response
         except GeneratorExit:  # pragma: no cover
