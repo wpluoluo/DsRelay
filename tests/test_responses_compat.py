@@ -65,6 +65,68 @@ class ResponsesCompatTests(unittest.TestCase):
         meta = server.build_request_observability_meta(result, {"model": "demo"})
         self.assertEqual(meta["upstream_subpath"], "chat/completions")
 
+    def test_normalize_downstream_subpath_strips_version_and_openai_prefixes(self):
+        self.assertEqual(server.normalize_downstream_subpath("v1/messages"), "messages")
+        self.assertEqual(server.normalize_downstream_subpath("/v1/v1/chat/completions"), "chat/completions")
+        self.assertEqual(server.normalize_downstream_subpath("openai/chat/completions"), "chat/completions")
+        self.assertEqual(server.normalize_downstream_subpath("/v1/openai/responses"), "responses")
+
+    def test_detect_inbound_protocol_uses_normalized_subpath(self):
+        with server.app.test_request_context("/v1/messages", method="POST", json={"messages": [{"role": "user", "content": "hi"}]}):
+            self.assertEqual(server.detect_inbound_protocol("v1/messages", {"messages": [{"role": "user", "content": "hi"}]}), "anthropic_messages")
+        with server.app.test_request_context("/v1/openai/chat/completions", method="POST", json={"messages": [{"role": "user", "content": "hi"}]}):
+            self.assertEqual(server.detect_inbound_protocol("openai/chat/completions", {"messages": [{"role": "user", "content": "hi"}]}), "openai_chat_completions")
+        with server.app.test_request_context("/v1/responses", method="POST", json={"input": "hi"}):
+            self.assertEqual(server.detect_inbound_protocol("v1/responses", {"input": "hi"}), "openai_responses")
+
+    def test_resolve_upstream_text_subpath_uses_normalized_subpath(self):
+        self.assertEqual(
+            server.resolve_upstream_text_subpath("v1/responses", {"text_upstream_protocol": "openai"}, {"input": "hi"}),
+            "chat/completions",
+        )
+        self.assertEqual(
+            server.resolve_upstream_text_subpath("/v1/openai/responses", {"text_upstream_protocol": "responses"}, {"input": "hi"}),
+            "responses",
+        )
+
+    def test_proxy_entrypoint_normalizes_duplicate_v1_prefix_before_upstream_request(self):
+        seen = {}
+
+        def fake_execute_upstream_request(subpath, request_payload, request_id, **kwargs):
+            seen["subpath"] = subpath
+            return {
+                "upstream_url": "https://line-openai.example/v1/chat/completions",
+                "route_url": "https://line-openai.example/v1/chat/completions#__route=openai",
+                "upstream_subpath": subpath,
+                "upstream_url_pool": ["https://line-openai.example/v1/chat/completions#__route=openai"],
+                "route_pool_size": 1,
+                "tool_schemas": {},
+                "upstream_payload": request_payload,
+                "upstream_stream": False,
+                "upstream_response": None,
+                "attempts": [],
+                "request_exception": RuntimeError("skip"),
+                "retry_count": 0,
+                "request_repairs": 0,
+                "model_candidates": [],
+                "initial_key_choice": {},
+                "forced_error_payload": {"error": {"message": "skip"}},
+                "forced_error_status": 502,
+            }
+
+        with server.app.test_request_context(
+            "/v1/v1/chat/completions",
+            method="POST",
+            json={"model": "demo", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"Authorization": "Bearer proxy-secret"},
+        ):
+            with patch.object(server, "require_proxy_api_key", return_value=None):
+                with patch.object(server, "execute_upstream_request", side_effect=fake_execute_upstream_request):
+                    response = server.proxy_entrypoint("v1/chat/completions")
+
+        self.assertEqual(seen["subpath"], "chat/completions")
+        self.assertEqual(response.status_code, 502)
+
     def test_convert_openai_response_to_responses_payload(self):
         openai_body = {
             "id": "chatcmpl_1",

@@ -1484,12 +1484,33 @@ def should_force_upstream_stream(subpath: str, request_payload: dict | None) -> 
     )
 
 
+def normalize_downstream_subpath(subpath: str) -> str:
+    normalized = str(subpath or "").strip().strip("/")
+    if not normalized:
+        return ""
+
+    while True:
+        lowered = normalized.lower()
+        next_value = None
+        for prefix in ("v1/", "v1beta/", "v1alpha/"):
+            if lowered.startswith(prefix):
+                next_value = normalized[len(prefix):].lstrip("/")
+                break
+        if not next_value or next_value == normalized:
+            break
+        normalized = next_value
+
+    if normalized.lower().startswith("openai/"):
+        normalized = normalized[len("openai/"):].lstrip("/")
+    return normalized
+
+
 def get_text_upstream_protocol(route_policy: dict | None, inbound_subpath: str, request_payload: dict | None) -> str:
     explicit = str((route_policy or {}).get("text_upstream_protocol") or "auto").strip().lower()
     if explicit in {"openai", "responses"}:
         return explicit
 
-    normalized_subpath = str(inbound_subpath or "").strip("/")
+    normalized_subpath = normalize_downstream_subpath(inbound_subpath)
     if normalized_subpath == "responses":
         return "openai"
     return "openai"
@@ -1500,7 +1521,7 @@ def resolve_upstream_text_subpath(
     route_policy: dict | None,
     request_payload: dict | None,
 ) -> str:
-    normalized_subpath = str(inbound_subpath or "").strip("/")
+    normalized_subpath = normalize_downstream_subpath(inbound_subpath)
     if normalized_subpath != "responses":
         return normalized_subpath
     protocol = get_text_upstream_protocol(route_policy, normalized_subpath, request_payload)
@@ -4058,6 +4079,7 @@ def log_and_record_malformed_success(
 
 
 def detect_inbound_protocol(subpath: str, request_payload: dict | None) -> str:
+    subpath = normalize_downstream_subpath(subpath)
     if parse_gemini_generate_subpath(subpath):
         return "gemini_generate_content"
 
@@ -4355,6 +4377,7 @@ def proxy_response(
             str(requested_stream).lower(),
             len(body),
             int((time.perf_counter() - started_at) * 1000),
+            0,
             0,
             retry_count,
             response_preview or "",
@@ -8277,10 +8300,8 @@ def proxy_entrypoint(subpath: str):
         return auth_error
 
     request_payload = request.get_json(silent=True)
-    inbound_subpath = str(subpath or "").strip("/")
+    inbound_subpath = normalize_downstream_subpath(subpath)
     upstream_subpath = inbound_subpath
-    if inbound_subpath.startswith("openai/"):
-        upstream_subpath = inbound_subpath[len("openai/"):]
 
     is_gemini_versioned_path = request.path.startswith("/v1beta/") or request.path.startswith("/v1alpha/")
     if request.method == "GET" and is_gemini_versioned_path and (

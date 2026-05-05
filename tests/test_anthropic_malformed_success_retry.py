@@ -2,6 +2,7 @@ import importlib
 import json
 import os
 import unittest
+from unittest import mock
 
 import requests
 
@@ -430,7 +431,7 @@ class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
             def cancel(self):
                 return None
 
-        with unittest.mock.patch.object(
+        with mock.patch.object(
             server,
             "execute_upstream_request",
             return_value={
