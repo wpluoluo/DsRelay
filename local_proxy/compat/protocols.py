@@ -193,6 +193,99 @@ def ensure_openai_response_usage(response_body: dict | None, request_payload: di
     return usage
 
 
+def extract_openai_message_text(message: dict | None) -> str:
+    if not isinstance(message, dict):
+        return ""
+
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+
+    fragments: list[str] = []
+    if isinstance(content, list):
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if isinstance(item.get("text"), str):
+                fragments.append(item.get("text") or "")
+                continue
+            if item.get("type") == "text" and isinstance(item.get("text"), str):
+                fragments.append(item.get("text") or "")
+    return "".join(fragments)
+
+
+def convert_openai_response_to_responses(
+    response_body: dict | None,
+    request_payload: dict | None = None,
+) -> dict:
+    response_body = response_body if isinstance(response_body, dict) else {}
+    usage = build_openai_usage_from_response(response_body, request_payload)
+    choice = ((response_body.get("choices") or [{}])[0]) if isinstance(response_body, dict) else {}
+    message = choice.get("message") if isinstance(choice, dict) else {}
+    message = message if isinstance(message, dict) else {}
+    output_text = extract_openai_message_text(message)
+    finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+    status = "completed"
+    if finish_reason == "length":
+        status = "incomplete"
+
+    response_id = str(response_body.get("id") or f"resp_{uuid.uuid4().hex[:24]}")
+    model = response_body.get("model")
+    created_at = int(response_body.get("created") or time.time())
+    output_items = []
+    content_items = []
+    if output_text:
+        content_items.append(
+            {
+                "type": "output_text",
+                "text": output_text,
+                "annotations": [],
+            }
+        )
+    if content_items:
+        output_items.append(
+            {
+                "type": "message",
+                "id": f"msg_{uuid.uuid4().hex[:24]}",
+                "role": "assistant",
+                "status": "completed",
+                "content": content_items,
+            }
+        )
+
+    return {
+        "id": response_id,
+        "object": "response",
+        "created_at": created_at,
+        "status": status,
+        "model": model,
+        "output": output_items,
+        "usage": {
+            "input_tokens": int(usage.get("prompt_tokens") or 0),
+            "output_tokens": int(usage.get("completion_tokens") or 0),
+            "total_tokens": int(usage.get("total_tokens") or 0),
+            **(
+                {
+                    "input_tokens_details": {
+                        "cached_tokens": int(
+                            usage.get("cache_read_input_tokens")
+                            or ((usage.get("prompt_tokens_details") or {}).get("cached_tokens"))
+                            or 0
+                        )
+                    }
+                }
+                if int(
+                    usage.get("cache_read_input_tokens")
+                    or ((usage.get("prompt_tokens_details") or {}).get("cached_tokens"))
+                    or 0
+                ) > 0
+                else {}
+            ),
+        },
+        "parallel_tool_calls": bool(message.get("tool_calls")),
+    }
+
+
 def openai_usage_has_billable_tokens(usage: dict | None) -> bool:
     if not isinstance(usage, dict):
         return False

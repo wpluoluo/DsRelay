@@ -70,6 +70,7 @@ class PoolConfigTests(unittest.TestCase):
         self.assertEqual(pools[0]["urls"], ["https://api.example.com/v1"])
         self.assertEqual(pools[0]["keys"], [{"key": "sk-test-1"}])
         self.assertEqual(pools[0]["route_policy"]["reasoning_effort"], "high")
+        self.assertEqual(pools[0]["route_policy"]["text_upstream_protocol"], "auto")
         self.assertEqual(pools[0]["route_policy"]["prompt_cache_mode"], "exact")
         self.assertEqual(pools[0]["route_policy"]["prompt_cache_hints_mode"], "auto")
         self.assertEqual(pools[0]["route_policy"]["prompt_cache_provider"], "auto")
@@ -167,6 +168,27 @@ class PoolConfigTests(unittest.TestCase):
         self.assertEqual(route_policy["prompt_cache_hints_mode"], "passthrough")
         self.assertEqual(route_policy["prompt_cache_provider"], "openai")
         self.assertEqual(route_policy["prompt_cache_retention"], "24h")
+
+    def test_pool_route_policy_keeps_text_upstream_protocol(self):
+        payload = {
+            "pools": [
+                {
+                    "name": "responses-aware",
+                    "enabled": True,
+                    "priority": 100,
+                    "urls": ["https://api.example.com/v1"],
+                    "keys": [{"key": "sk-test-1"}],
+                    "route_policy": {
+                        "text_upstream_protocol": "responses",
+                    },
+                }
+            ]
+        }
+
+        normalized = normalize_runtime_config_payload(payload, current=current_runtime_config())
+        route_policy = normalized["proxy_pools"][0]["route_policy"]
+
+        self.assertEqual(route_policy["text_upstream_protocol"], "responses")
 
 
 if __name__ == "__main__":

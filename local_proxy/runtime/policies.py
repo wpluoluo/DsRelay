@@ -8,6 +8,7 @@ DEFAULT_ROUTE_POLICY = {
     "prompt_cache_mode": "exact",
     "prompt_cache_hints_mode": "auto",
     "prompt_cache_provider": "auto",
+    "text_upstream_protocol": "auto",
     "prompt_cache_retention": "",
     "max_output_tokens": 0,
     "route_cooldown_seconds": 90,
@@ -42,6 +43,13 @@ def normalize_prompt_cache_provider(value: object) -> str:
     if candidate in {"auto", "openai", "none"}:
         return candidate
     return str(DEFAULT_ROUTE_POLICY["prompt_cache_provider"])
+
+
+def normalize_text_upstream_protocol(value: object) -> str:
+    candidate = str(value or "").strip().lower()
+    if candidate in {"auto", "openai", "responses"}:
+        return candidate
+    return str(DEFAULT_ROUTE_POLICY["text_upstream_protocol"])
 
 
 def normalize_prompt_cache_retention(value: object) -> str:
@@ -87,6 +95,9 @@ def normalize_route_policy(raw_policy: object) -> dict:
         )
         policy["prompt_cache_provider"] = normalize_prompt_cache_provider(
             raw_policy.get("prompt_cache_provider")
+        )
+        policy["text_upstream_protocol"] = normalize_text_upstream_protocol(
+            raw_policy.get("text_upstream_protocol")
         )
         policy["prompt_cache_retention"] = normalize_prompt_cache_retention(
             raw_policy.get("prompt_cache_retention")

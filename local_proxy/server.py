@@ -38,6 +38,7 @@ from local_proxy.compat.protocols import (
     build_anthropic_error_payload,
     build_gemini_error_payload,
     coerce_non_negative_int,
+    convert_openai_response_to_responses,
     ensure_openai_response_usage,
     estimate_text_tokens,
     openai_usage_has_billable_tokens,
@@ -1460,6 +1461,89 @@ def should_force_upstream_stream(subpath: str, request_payload: dict | None) -> 
     )
 
 
+def get_text_upstream_protocol(route_policy: dict | None, inbound_subpath: str, request_payload: dict | None) -> str:
+    explicit = str((route_policy or {}).get("text_upstream_protocol") or "auto").strip().lower()
+    if explicit in {"openai", "responses"}:
+        return explicit
+
+    normalized_subpath = str(inbound_subpath or "").strip("/")
+    if normalized_subpath == "responses":
+        return "openai"
+    return "openai"
+
+
+def resolve_upstream_text_subpath(
+    inbound_subpath: str,
+    route_policy: dict | None,
+    request_payload: dict | None,
+) -> str:
+    normalized_subpath = str(inbound_subpath or "").strip("/")
+    if normalized_subpath != "responses":
+        return normalized_subpath
+    protocol = get_text_upstream_protocol(route_policy, normalized_subpath, request_payload)
+    if protocol == "responses":
+        return "responses"
+    return "chat/completions"
+
+
+def build_responses_stream_packets_from_chat_completion(
+    response_body: dict | None,
+    request_payload: dict | None = None,
+) -> list[bytes]:
+    response_payload = convert_openai_response_to_responses(response_body, request_payload)
+    response_id = str(response_payload.get("id") or f"resp_{uuid.uuid4().hex[:24]}")
+    created_event = {
+        "type": "response.created",
+        "response": {
+            "id": response_id,
+            "object": "response",
+            "created_at": response_payload.get("created_at"),
+            "model": response_payload.get("model"),
+            "status": "in_progress",
+            "output": [],
+        },
+    }
+
+    output_text = ""
+    for item in response_payload.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        for content_item in item.get("content") or []:
+            if isinstance(content_item, dict) and content_item.get("type") == "output_text":
+                output_text += str(content_item.get("text") or "")
+
+    packets = [format_openai_sse_payload(created_event)]
+    if output_text:
+        packets.append(
+            format_openai_sse_payload(
+                {
+                    "type": "response.output_text.delta",
+                    "response_id": response_id,
+                    "delta": output_text,
+                }
+            )
+        )
+        packets.append(
+            format_openai_sse_payload(
+                {
+                    "type": "response.output_text.done",
+                    "response_id": response_id,
+                    "text": output_text,
+                }
+            )
+        )
+    packets.append(
+        format_openai_sse_payload(
+            {
+                "type": "response.completed",
+                "response": response_payload,
+            }
+        )
+    )
+    packets.append(b"data: [DONE]\n\n")
+    return packets
+
+
 def build_upstream_json_payload(
     subpath: str,
     request_payload: dict | None,
@@ -1471,7 +1555,7 @@ def build_upstream_json_payload(
 
     upstream_payload = dict(request_payload)
     request_repairs = 0
-    if subpath == "chat/completions":
+    if subpath in {"chat/completions", "responses"}:
         upstream_payload, normalization_repairs = normalize_openai_request_payload(upstream_payload)
         request_repairs += normalization_repairs
     model_candidates = build_model_candidates_from_payload(upstream_payload)
@@ -2004,8 +2088,42 @@ def execute_upstream_request(
     initial_blocked_urls: set[str] | None = None,
     request_context: dict | None = None,
 ) -> dict:
-    upstream_urls = build_upstream_url_candidates(subpath)
     requested_stream = bool(isinstance(request_payload, dict) and request_payload.get("stream"))
+    route_urls = list(UPSTREAM_URL_POOL)
+    if not route_urls:
+        route_urls = [
+            ConnectionPoolState.base_url_from_route_url(url) or url
+            for url in build_upstream_url_candidates(subpath)
+            if str(url or "").strip()
+        ]
+    if not route_urls:
+        return {
+            "upstream_url": "",
+            "upstream_url_pool": [],
+            "route_pool_size": 0,
+            "tool_schemas": extract_tool_schemas(request_payload),
+            "upstream_payload": request_payload if isinstance(request_payload, dict) else None,
+            "upstream_stream": requested_stream,
+            "upstream_response": None,
+            "attempts": [],
+            "request_exception": None,
+            "retry_count": 0,
+            "request_repairs": 0,
+            "model_candidates": [],
+            "initial_key_choice": {},
+            "forced_error_payload": build_no_upstream_configured_error_payload(),
+            "forced_error_status": 400,
+        }
+    route_url = route_urls[0]
+    route_policy = build_route_policy(route_url)
+    upstream_subpath = resolve_upstream_text_subpath(subpath, route_policy, request_payload)
+    upstream_urls = []
+    for candidate_route_url in route_urls:
+        candidate_route_policy = build_route_policy(candidate_route_url)
+        candidate_subpath = resolve_upstream_text_subpath(subpath, candidate_route_policy, request_payload)
+        candidate_upstream_urls = router_build_upstream_url_candidates([candidate_route_url], "", candidate_subpath)
+        if candidate_upstream_urls:
+            upstream_urls.append(candidate_upstream_urls[0])
     if not upstream_urls:
         return {
             "upstream_url": "",
@@ -2024,22 +2142,20 @@ def execute_upstream_request(
             "forced_error_payload": build_no_upstream_configured_error_payload(),
             "forced_error_status": 400,
         }
-    route_url = upstream_urls[0]
-    upstream_url = base_upstream_url(route_url)
+    upstream_url = base_upstream_url(upstream_urls[0])
     upstream_payload, upstream_stream, request_repairs, model_candidates = build_upstream_json_payload(
-        subpath,
+        upstream_subpath,
         request_payload,
         request_method=request_method,
     )
-    request_protocol = "openai_chat_completions" if subpath == "chat/completions" else subpath.replace("/", "_")
+    request_protocol = "openai_chat_completions" if upstream_subpath == "chat/completions" else subpath.replace("/", "_")
     session_affinity_key = build_session_affinity_key(
         request_protocol,
         upstream_payload if isinstance(upstream_payload, dict) else request_payload,
         request_context=request_context,
     )
-    route_policy = build_route_policy(route_url)
     upstream_payload, route_policy_repairs, route_policy_metrics = apply_route_policy_to_payload(
-        subpath,
+        upstream_subpath,
         upstream_payload,
         route_policy,
         upstream_url=upstream_url,
@@ -2048,11 +2164,11 @@ def execute_upstream_request(
     request_repairs += route_policy_repairs
     coalescing_key = build_coalescing_key(
         protocol=request_protocol,
-        path=subpath,
+        path=upstream_subpath,
         payload=upstream_payload if isinstance(upstream_payload, dict) else None,
     )
     resume_metrics = {}
-    if subpath == "chat/completions" and isinstance(upstream_payload, dict):
+    if upstream_subpath == "chat/completions" and isinstance(upstream_payload, dict):
         upstream_payload, resume_repairs, resume_metrics = apply_interruption_resume_to_payload(
             request_protocol,
             upstream_payload,
@@ -2097,7 +2213,7 @@ def execute_upstream_request(
 
     cache_key = build_cache_key(
         protocol=request_protocol,
-        path=subpath,
+        path=upstream_subpath,
         payload=upstream_payload if isinstance(upstream_payload, dict) else None,
         route_policy=route_policy,
     )
@@ -2171,7 +2287,7 @@ def execute_upstream_request(
 
     upstream_response, attempts, request_exception = request_upstream_with_retries(
         request_kwargs,
-        subpath=subpath,
+        subpath=upstream_subpath,
         request_id=request_id,
         upstream_urls=upstream_urls,
         initial_blocked_urls=initial_blocked_urls,
@@ -2194,6 +2310,7 @@ def execute_upstream_request(
     result = {
         "upstream_url": selected_upstream_url,
         "route_url": selected_route_url,
+        "upstream_subpath": upstream_subpath,
         "upstream_url_pool": upstream_urls,
         "route_pool_size": len(upstream_urls),
         "attempt_route_count": len({str(attempt.get("route_url") or "") for attempt in attempts if str(attempt.get("route_url") or "")}),
@@ -3930,6 +4047,9 @@ def detect_inbound_protocol(subpath: str, request_payload: dict | None) -> str:
     if payload_looks_anthropic(request_payload):
         return "anthropic_messages"
 
+    if subpath == "responses":
+        return "openai_responses"
+
     if subpath == "chat/completions":
         return "openai_chat_completions"
 
@@ -4192,6 +4312,8 @@ def proxy_response(
     empty_stream_fallbacks = int((execution or {}).get("empty_sse_fallbacks") or 0)
     request_context = (execution or {}).get("request_context") if isinstance(execution, dict) else None
     route_url = str((execution or {}).get("route_url") or upstream_url or "").strip()
+    upstream_subpath = str((execution or {}).get("upstream_subpath") or route_hint or "").strip("/")
+    responses_compat = protocol == "openai_responses" and route_hint == "responses" and upstream_subpath == "chat/completions"
 
     if upstream_response.status_code >= 400:
         client_gone = response_indicates_client_gone(upstream_response)
@@ -4284,7 +4406,11 @@ def proxy_response(
 
         ensure_openai_response_usage(consumed["openai_body"], request_payload)
         attach_execution_response_body(execution, consumed["openai_body"])
-        packets = build_openai_stream_packets_from_chat_completion(consumed["openai_body"])
+        packets = (
+            build_responses_stream_packets_from_chat_completion(consumed["openai_body"], request_payload)
+            if responses_compat
+            else build_openai_stream_packets_from_chat_completion(consumed["openai_body"])
+        )
         total_bytes = sum(len(packet) for packet in packets)
         response_preview = build_preview_summary(consumed["preview_parts"])
         close_response_quietly(upstream_response)
@@ -4319,7 +4445,11 @@ def proxy_response(
                 protocol=protocol or "openai_chat_completions",
                 path=route_hint,
                 request_payload=request_payload,
-                response_body=consumed["openai_body"],
+                response_body=(
+                    convert_openai_response_to_responses(consumed["openai_body"], request_payload)
+                    if responses_compat
+                    else consumed["openai_body"]
+                ),
                 upstream_url=upstream_url,
             )
         apply_sse_response_headers(response_headers)
@@ -4942,7 +5072,12 @@ def proxy_response(
             return Response(body, status=502, headers=response_headers)
         ensure_openai_response_usage(aggregated_body, request_payload)
         attach_execution_response_body(execution, aggregated_body)
-        body_bytes = json.dumps(aggregated_body, ensure_ascii=False).encode("utf-8")
+        downstream_body = (
+            convert_openai_response_to_responses(aggregated_body, request_payload)
+            if responses_compat
+            else aggregated_body
+        )
+        body_bytes = json.dumps(downstream_body, ensure_ascii=False).encode("utf-8")
         response_preview = build_preview_summary(preview_parts)
         close_response_quietly(upstream_response)
         resume_clear_meta = clear_interruption_resume_records(execution)
@@ -4975,7 +5110,7 @@ def proxy_response(
                 protocol=protocol or "openai_chat_completions",
                 path=route_hint,
                 request_payload=request_payload,
-                response_body=aggregated_body,
+                response_body=downstream_body if isinstance(downstream_body, dict) else aggregated_body,
                 upstream_url=upstream_url,
             )
         response_headers["Content-Type"] = "application/json; charset=utf-8"
@@ -5001,10 +5136,20 @@ def proxy_response(
             normalize_chat_completion_finish_reasons(json_body)
             if repaired_tool_args or json_body.get("choices"):
                 body = json.dumps(json_body, ensure_ascii=False).encode("utf-8")
-        if route_hint == "chat/completions" and isinstance(json_body, dict) and upstream_response.status_code < 400:
+        if (
+            isinstance(json_body, dict)
+            and upstream_response.status_code < 400
+            and (route_hint == "chat/completions" or responses_compat)
+        ):
             ensure_openai_response_usage(json_body, request_payload)
             attach_execution_response_body(execution, json_body)
-            body = json.dumps(json_body, ensure_ascii=False).encode("utf-8")
+            downstream_json_body = (
+                convert_openai_response_to_responses(json_body, request_payload)
+                if responses_compat
+                else json_body
+            )
+            body = json.dumps(downstream_json_body, ensure_ascii=False).encode("utf-8")
+            json_body = downstream_json_body
 
     issue = inspect_success_payload(
         route_hint=route_hint,
@@ -6526,6 +6671,7 @@ def openai_stream_response_with_connect_heartbeat(
     sanitize_dsml: bool,
     route_hint: str,
     request_payload: dict | None = None,
+    protocol: str = "openai_chat_completions",
 ) -> Response:
     heartbeat_interval = max(1, WAITING_STREAM_HEARTBEAT_SECONDS or 5)
 
@@ -6623,7 +6769,7 @@ def openai_stream_response_with_connect_heartbeat(
                         route_hint=route_hint,
                         tool_schemas=next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else {},
                         retry_count=int(next_execution.get("retry_count") or retry_count),
-                        protocol="openai_chat_completions",
+                        protocol=protocol,
                         request_payload=request_payload or {},
                         execution=next_execution,
                     )
@@ -6657,7 +6803,7 @@ def openai_stream_response_with_connect_heartbeat(
                 route_hint=route_hint,
                 tool_schemas=execution.get("tool_schemas") or {},
                 retry_count=retry_count,
-                protocol="openai_chat_completions",
+                protocol=protocol,
                 request_payload=request_payload or {},
                 execution=execution,
             )
@@ -8172,6 +8318,7 @@ def proxy_entrypoint(subpath: str):
                 sanitize_dsml=sanitize_dsml,
                 route_hint=upstream_subpath,
                 request_payload=request_payload if isinstance(request_payload, dict) else {},
+                protocol=detected_protocol,
             )
         if async_error is not None:
             async_urls = build_upstream_url_candidates(upstream_subpath)

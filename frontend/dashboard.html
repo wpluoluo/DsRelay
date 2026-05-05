@@ -2335,6 +2335,7 @@
         keys: keys,
         route_policy: {
           reasoning_effort: String(routePolicy.reasoning_effort || "medium"),
+          text_upstream_protocol: String(routePolicy.text_upstream_protocol || "auto"),
           prompt_cache_mode: String(routePolicy.prompt_cache_mode || "exact"),
           prompt_cache_hints_mode: String(routePolicy.prompt_cache_hints_mode || "auto"),
           prompt_cache_provider: String(routePolicy.prompt_cache_provider || "auto"),
@@ -2383,6 +2384,14 @@
         title: localText + " · " + upstreamText,
         detail: extra.join(" · "),
       };
+    }
+
+    function getTextProtocolSummary(routePolicy) {
+      routePolicy = routePolicy || {};
+      var mode = String(routePolicy.text_upstream_protocol || "auto");
+      if (mode === "openai") return "文本上游协议 OpenAI 兼容";
+      if (mode === "responses") return "文本上游协议 Responses";
+      return "文本上游协议 自动";
     }
 
     function renderPoolState(pools) {
@@ -2467,6 +2476,7 @@
         html += '<div class="pool-inline-block"><label>线路策略</label>';
         html += '<div class="pool-inline-item">' + escapeHtml(
           "思考 " + pool.route_policy.reasoning_effort +
+          " · " + getTextProtocolSummary(pool.route_policy) +
           " · 本地缓存 " + pool.route_policy.prompt_cache_mode +
           " · 冷却 " + pool.route_policy.route_cooldown_seconds + "s x" + pool.route_policy.route_cooldown_multiplier
         ) + '</div>';
@@ -2527,6 +2537,7 @@
       html += '<div class="pool-urls"><label>上游地址</label>' + urlRowsHtml(urls, 0) + '</div>';
       html += '<div class="pool-keys"><label>API Keys</label>' + keyRowsHtml(keys, 0) + '</div>';
       html += '<div class="field"><label>思考强度</label><select data-field="reasoning_effort"><option value="low"' + (pool.route_policy.reasoning_effort === "low" ? " selected" : "") + '>低</option><option value="medium"' + (pool.route_policy.reasoning_effort === "medium" ? " selected" : "") + '>中</option><option value="high"' + (pool.route_policy.reasoning_effort === "high" ? " selected" : "") + '>高</option></select></div>';
+      html += '<div class="field"><label>文本上游协议</label><select data-field="text_upstream_protocol"><option value="auto"' + (pool.route_policy.text_upstream_protocol === "auto" ? " selected" : "") + '>自动</option><option value="openai"' + (pool.route_policy.text_upstream_protocol === "openai" ? " selected" : "") + '>OpenAI 兼容</option><option value="responses"' + (pool.route_policy.text_upstream_protocol === "responses" ? " selected" : "") + '>Responses 原生</option></select><div class="pool-inline-note">控制该线路文本请求的上游协议。`/v1/responses` 在 OpenAI 兼容模式下会转到上游 `/chat/completions`。</div></div>';
       html += '<div class="field"><label>本地精确缓存</label><select data-field="prompt_cache_mode"><option value="off"' + (pool.route_policy.prompt_cache_mode === "off" ? " selected" : "") + '>关闭</option><option value="exact"' + (pool.route_policy.prompt_cache_mode === "exact" ? " selected" : "") + '>开启</option></select></div>';
       html += '<div class="field"><label>上游前缀缓存 Hint</label><select data-field="prompt_cache_hints_mode"><option value="off"' + (pool.route_policy.prompt_cache_hints_mode === "off" ? " selected" : "") + '>关闭</option><option value="auto"' + (pool.route_policy.prompt_cache_hints_mode === "auto" ? " selected" : "") + '>自动判断</option><option value="passthrough"' + (pool.route_policy.prompt_cache_hints_mode === "passthrough" ? " selected" : "") + '>仅透传下游 Hint</option></select><div class="pool-inline-note">这里就是上游前缀缓存开关。自动判断会按线路能力自动补 Hint。</div></div>';
       html += '<div class="field"><label>Hint 提供方</label><select data-field="prompt_cache_provider"><option value="auto"' + (pool.route_policy.prompt_cache_provider === "auto" ? " selected" : "") + '>自动识别</option><option value="openai"' + (pool.route_policy.prompt_cache_provider === "openai" ? " selected" : "") + '>OpenAI 兼容</option><option value="none"' + (pool.route_policy.prompt_cache_provider === "none" ? " selected" : "") + '>不支持</option></select></div>';
@@ -2549,6 +2560,7 @@
       var enabledEl = root.querySelector('[data-field="enabled"]');
       var priorityEl = root.querySelector('[data-field="priority"]');
       var reasoningEl = root.querySelector('[data-field="reasoning_effort"]');
+      var textProtocolEl = root.querySelector('[data-field="text_upstream_protocol"]');
       var cacheModeEl = root.querySelector('[data-field="prompt_cache_mode"]');
       var cacheHintsModeEl = root.querySelector('[data-field="prompt_cache_hints_mode"]');
       var cacheProviderEl = root.querySelector('[data-field="prompt_cache_provider"]');
@@ -2583,6 +2595,7 @@
         keys: keys,
         route_policy: {
           reasoning_effort: reasoningEl ? reasoningEl.value : "medium",
+          text_upstream_protocol: textProtocolEl ? textProtocolEl.value : "auto",
           prompt_cache_mode: cacheModeEl ? cacheModeEl.value : "exact",
           prompt_cache_hints_mode: cacheHintsModeEl ? cacheHintsModeEl.value : "auto",
           prompt_cache_provider: cacheProviderEl ? cacheProviderEl.value : "auto",
