@@ -1439,7 +1439,30 @@ def load_runtime_config_from_disk() -> bool:
     return True
 
 
-load_runtime_config_from_storage() or load_runtime_config_from_disk()
+def initialize_runtime_config() -> str:
+    if load_runtime_config_from_storage():
+        return "storage"
+    if load_runtime_config_from_disk():
+        if storage is not None:
+            try:
+                save_runtime_config_to_disk()
+                proxy_logger.info(
+                    "bootstrap_runtime_config_to_storage label=%s source=%s",
+                    STORAGE_DB_LABEL,
+                    str(PROXY_CONFIG_PATH),
+                )
+            except Exception as exc:  # pragma: no cover
+                proxy_logger.warning(
+                    "bootstrap_runtime_config_to_storage_failed label=%s source=%s error=%s",
+                    STORAGE_DB_LABEL,
+                    str(PROXY_CONFIG_PATH),
+                    str(exc),
+                )
+        return "disk"
+    return "defaults"
+
+
+initialize_runtime_config()
 load_pool_runtime_state_from_storage()
 configure_tool_compat(
     enable_request_normalization=ENABLE_REQUEST_NORMALIZATION,

@@ -18,10 +18,18 @@ class FakeRuntimeConfigStorage:
     def __init__(self):
         self.saved_payload = None
         self.saved_key = None
+        self.loaded_payload = {}
 
     def save_app_config(self, payload, config_key="runtime_config"):
         self.saved_payload = payload
         self.saved_key = config_key
+
+    def load_app_config(self, config_key="runtime_config"):
+        self.saved_key = config_key
+        return self.loaded_payload
+
+    def save_pool_runtime_state(self, payload, state_key="default"):
+        return None
 
 
 class ProxyApiAuthParserTests(unittest.TestCase):
@@ -314,6 +322,53 @@ class ProxyEntrypointAuthTests(unittest.TestCase):
             headers={"Accept": "application/json", "Authorization": f"Bearer {generated_key}"},
         )
         self.assertEqual(ok_response.status_code, 200)
+
+    def test_initialize_runtime_config_bootstraps_disk_payload_into_mysql_storage(self):
+        server = self.load_server_with_keys("")
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        server.PROXY_CONFIG_PATH = Path(temp_dir.name) / "proxy-config.json"
+        server.PROXY_API_KEY_RECORDS = []
+        server.PROXY_POOLS = []
+        server.MODEL_ALIASES_TEXT = ""
+        server.MODEL_CAPABILITIES_TEXT = ""
+        payload = {
+            "proxy_api_key_records": [
+                {
+                    "id": "pak_demo",
+                    "name": "NEWAPI",
+                    "key": "sk-bootstrap-secret",
+                    "enabled": True,
+                    "created_at": "2026-05-05 00:00:00",
+                    "updated_at": "2026-05-05 00:00:00",
+                }
+            ],
+            "pools": [
+                {
+                    "name": "nv",
+                    "enabled": True,
+                    "priority": 100,
+                    "urls": ["https://integrate.api.nvidia.com/v1"],
+                    "keys": [{"key": "nv-key-1"}],
+                }
+            ],
+            "request_timeout": 30,
+        }
+        server.PROXY_CONFIG_PATH.write_text(
+            __import__("json").dumps(payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        fake_storage = FakeRuntimeConfigStorage()
+        server.storage = fake_storage
+        server.STORAGE_DB_LABEL = "mysql://demo"
+
+        source = server.initialize_runtime_config()
+
+        self.assertEqual(source, "disk")
+        self.assertEqual(fake_storage.saved_key, "runtime_config")
+        self.assertIsNotNone(fake_storage.saved_payload)
+        self.assertEqual(fake_storage.saved_payload["proxy_api_key_records"][0]["id"], "pak_demo")
+        self.assertEqual(fake_storage.saved_payload["pools"][0]["name"], "nv")
 
 
 if __name__ == "__main__":
