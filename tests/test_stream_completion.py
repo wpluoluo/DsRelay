@@ -812,6 +812,5 @@ class StreamCompletionTests(unittest.TestCase):
         self.assertTrue(upstream.closed_by_proxy)
         self.assertTrue(fallback_upstream.closed_by_proxy)
 
-
 if __name__ == "__main__":
     unittest.main()

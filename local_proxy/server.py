@@ -3635,6 +3635,42 @@ def build_gemini_malformed_success_payload(*, issue: dict, retry_count: int) -> 
     )
 
 
+def bridge_anthropic_sse_response(
+    response: Response,
+    *,
+    retry_count: int,
+) -> list[bytes]:
+    response_status = int(getattr(response, "status_code", 200) or 200)
+    response_body = response.response
+    if response_status == 200:
+        if isinstance(response_body, (bytes, bytearray)):
+            return [bytes(response_body)]
+        return list(response_body)
+
+    if isinstance(response_body, (bytes, bytearray)):
+        body_bytes = bytes(response_body)
+    else:
+        body_bytes = b"".join(response_body)
+
+    upstream_preview = body_bytes.decode("utf-8", errors="ignore")
+    upstream_payload = extract_error_payload_from_text(upstream_preview)
+    error_message = ""
+    if isinstance(upstream_payload, dict):
+        error_block = upstream_payload.get("error")
+        if isinstance(error_block, dict):
+            error_message = str(error_block.get("message") or "").strip()
+    if not error_message:
+        error_message = f"Upstream returned HTTP {response_status}."
+
+    payload = build_anthropic_error_payload(
+        status_code=response_status,
+        message=error_message,
+        retry_count=retry_count,
+        preview=upstream_preview,
+    )
+    return [format_sse_event("error", payload)]
+
+
 def get_same_request_failover_budget(route_hint: str, execution: dict | None = None) -> int:
     route_pool_size = 0
     if isinstance(execution, dict):
@@ -6781,6 +6817,26 @@ def handle_anthropic_stream_response(
     execution = (observability_meta or {}).get("_execution")
     request_context = (execution or {}).get("request_context")
     route_url = str((execution or {}).get("route_url") or upstream_url or "").strip()
+    if upstream_response.status_code >= 400:
+        client_gone = response_indicates_client_gone(upstream_response)
+        error_message, preview = extract_upstream_error_message(upstream_response)
+        downstream_status = upstream_response.status_code if client_gone else 502
+        payload = build_anthropic_error_payload(
+            status_code=upstream_response.status_code,
+            message=error_message,
+            retry_count=retry_count,
+            preview=preview,
+        )
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        close_response_quietly(upstream_response)
+        return Response(
+            body,
+            status=downstream_status,
+            headers={
+                "Content-Type": "application/json; charset=utf-8",
+                "X-Proxy-Retries": str(retry_count),
+            },
+        )
     if "text/event-stream" not in content_type.lower():
         consumed = read_upstream_openai_response_body(upstream_response, tool_schemas)
         issue = inspect_success_payload(
@@ -6961,7 +7017,10 @@ def handle_anthropic_stream_response(
                                 retry_count=int(next_execution.get("retry_count") or retry_count),
                                 observability_meta=next_meta | build_request_observability_meta(next_execution, retry_payload) | {"_upstream_openai_payload": retry_payload, "_execution": next_execution},
                             )
-                            yield from next_stream.response
+                            yield from bridge_anthropic_sse_response(
+                                next_stream,
+                                retry_count=int(next_execution.get("retry_count") or retry_count),
+                            )
                             return
 
                 payload = build_anthropic_malformed_success_payload(issue=preflight_empty_issue, retry_count=retry_count)
@@ -7290,7 +7349,10 @@ def handle_anthropic_stream_response(
                                 retry_count=int(next_execution.get("retry_count") or retry_count),
                                 observability_meta=next_meta | build_request_observability_meta(next_execution, retry_payload) | {"_upstream_openai_payload": retry_payload, "_execution": next_execution},
                             )
-                            yield from next_stream.response
+                            yield from bridge_anthropic_sse_response(
+                                next_stream,
+                                retry_count=int(next_execution.get("retry_count") or retry_count),
+                            )
                             return
 
                 payload = build_anthropic_malformed_success_payload(issue=issue, retry_count=retry_count)
