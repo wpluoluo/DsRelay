@@ -127,6 +127,20 @@ class ResponsesCompatTests(unittest.TestCase):
         self.assertEqual(seen["subpath"], "chat/completions")
         self.assertEqual(response.status_code, 502)
 
+    def test_proxy_entrypoint_normalizes_duplicate_v1_messages_into_anthropic_handler(self):
+        with server.app.test_request_context(
+            "/v1/v1/messages",
+            method="POST",
+            json={"model": "demo", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"x-api-key": "proxy-secret", "anthropic-version": "2023-06-01"},
+        ):
+            with patch.object(server, "require_proxy_api_key", return_value=None):
+                with patch.object(server, "anthropic_messages", return_value=server.Response("ok", status=200)) as anthropic_mock:
+                    response = server.proxy_entrypoint("v1/messages")
+
+        anthropic_mock.assert_called_once()
+        self.assertEqual(response.status_code, 200)
+
     def test_convert_openai_response_to_responses_payload(self):
         openai_body = {
             "id": "chatcmpl_1",
