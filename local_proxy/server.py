@@ -2992,6 +2992,7 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
     meta = {
         "logical_model": logical_model,
         "resolved_model": resolved_model,
+        "upstream_subpath": str(execution.get("upstream_subpath") or ""),
         "pool_name": pool_name,
         "attempted_pool_names": list(execution.get("attempted_pool_names") or []) or ([pool_name] if pool_name else []),
         "api_key_index": api_key_index,

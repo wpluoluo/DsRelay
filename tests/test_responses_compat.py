@@ -62,6 +62,8 @@ class ResponsesCompatTests(unittest.TestCase):
         )
         self.assertEqual(seen["request_kwargs"]["url"], "https://line-openai.example/v1/chat/completions")
         self.assertIn("messages", seen["request_kwargs"]["json"])
+        meta = server.build_request_observability_meta(result, {"model": "demo"})
+        self.assertEqual(meta["upstream_subpath"], "chat/completions")
 
     def test_convert_openai_response_to_responses_payload(self):
         openai_body = {
