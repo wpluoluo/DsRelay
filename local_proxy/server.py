@@ -4346,15 +4346,16 @@ def proxy_response(
             requested_stream=requested_stream,
             retry_count=retry_count,
         )
-        proxy_logger.info(
-            "request_id=%s 上游=%s 状态=%s 流式=%s 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
-            request_id,
-            upstream_url,
-            upstream_response.status_code,
-            str(requested_stream).lower(),
-            len(body),
-            int((time.perf_counter() - started_at) * 1000),
-            0,
+    proxy_logger.info(
+        "request_id=%s 上游=%s 上游路径=%s 状态=%s 流式=%s 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
+        request_id,
+        upstream_url,
+        upstream_subpath,
+        upstream_response.status_code,
+        str(requested_stream).lower(),
+        len(body),
+        int((time.perf_counter() - started_at) * 1000),
+        0,
             0,
             retry_count,
             response_preview or "",
@@ -4440,9 +4441,10 @@ def proxy_response(
         close_response_quietly(upstream_response)
         resume_clear_meta = clear_interruption_resume_records(execution)
         proxy_logger.info(
-            "request_id=%s 上游=%s 状态=%s 流式=true 合成来源=%s 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
+            "request_id=%s 上游=%s 上游路径=%s 状态=%s 流式=true 合成来源=%s 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
             request_id,
             upstream_url,
+            upstream_subpath,
             upstream_response.status_code,
             content_type or "unknown",
             total_bytes,
