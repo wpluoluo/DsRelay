@@ -207,7 +207,8 @@ rsync -a --delete \
   '$remoteExtractDir/' '$RemoteDeployDir/'
 cd '$RemoteDeployDir'
 docker compose up -d --build $RemoteServiceName
-for attempt in \$(seq 1 30); do
+attempt=1
+while [ "\$attempt" -le 30 ]; do
   if curl -fsS http://127.0.0.1:18765/health >/dev/null; then
     break
   fi
@@ -218,6 +219,7 @@ for attempt in \$(seq 1 30); do
     exit 1
   fi
   sleep 2
+  attempt=\$((attempt + 1))
 done
 curl -fsS http://127.0.0.1:18765/health
 rm -rf '$remoteExtractDir' '$remoteArchivePath'
