@@ -9,7 +9,14 @@ from typing import Any
 class RequestRecorder:
     """Tracks request lifecycle state and persists sanitized request metadata."""
 
-    def __init__(self, max_recent: int, storage: Any = None, logger: Any = None):
+    def __init__(
+        self,
+        max_recent: int,
+        storage: Any = None,
+        logger: Any = None,
+        *,
+        load_persisted_recent: bool = True,
+    ):
         self.max_recent = max_recent
         self.storage = storage
         self.logger = logger
@@ -22,12 +29,29 @@ class RequestRecorder:
         }
         self.active_requests = {}
         self.recent_requests = deque(maxlen=max_recent)
-        self._load_recent_from_storage()
+        if load_persisted_recent:
+            self._load_recent_from_storage()
+
+    @staticmethod
+    def _looks_like_reserved_example(value: object) -> bool:
+        text = str(value or "").strip().lower()
+        if not text:
+            return False
+        return (
+            "example domain" in text
+            or "example.com" in text
+            or ".example" in text
+        )
 
     @staticmethod
     def _should_hide_request(item: dict) -> bool:
         if not isinstance(item, dict):
             return False
+        method = str(item.get("method") or "").strip().upper()
+        protocol = str(item.get("protocol") or "").strip().lower()
+        remote = str(item.get("remote") or "").strip()
+        if method == "REQ" and protocol == "auto" and remote in {"", "-"}:
+            return True
         haystacks = [
             item.get("upstream_url"),
             item.get("route_url"),
@@ -36,8 +60,7 @@ class RequestRecorder:
             item.get("error"),
         ]
         for value in haystacks:
-            text = str(value or "").lower()
-            if "example.com" in text or "example domain" in text:
+            if RequestRecorder._looks_like_reserved_example(value):
                 return True
         return False
 

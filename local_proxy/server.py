@@ -241,8 +241,15 @@ def build_upstream_timeout(*, requested_stream: bool) -> int | tuple[int, int]:
     if not requested_stream:
         return REQUEST_TIMEOUT
     connect_timeout = min(max(5, REQUEST_TIMEOUT), STREAM_CONNECT_TIMEOUT_SECONDS)
-    read_timeout = max(REQUEST_TIMEOUT, STREAM_READ_TIMEOUT_SECONDS)
+    read_timeout = max(REQUEST_TIMEOUT, STREAM_READ_TIMEOUT_SECONDS, effective_stream_first_event_timeout_seconds())
     return (connect_timeout, read_timeout)
+
+
+def effective_stream_first_event_timeout_seconds() -> int:
+    return max(
+        1,
+        max(REQUEST_TIMEOUT, STREAM_FIRST_EVENT_TIMEOUT_SECONDS),
+    )
 
 
 def build_stream_route_switch_timeout(*, route_pool_size: int) -> tuple[int, int]:
@@ -255,10 +262,12 @@ def build_stream_route_switch_timeout(*, route_pool_size: int) -> tuple[int, int
         read_timeout = max(connect_timeout, STREAM_READ_TIMEOUT_SECONDS)
         return (connect_timeout, read_timeout)
 
-    read_timeout = min(
-        max(1, STREAM_FIRST_EVENT_TIMEOUT_SECONDS),
-        max(1, UPSTREAM_ROUTE_SWITCH_WINDOW_SECONDS),
-        max(1, STREAM_READ_TIMEOUT_SECONDS),
+    # Route ids in the same base URL are still independent routes. When we
+    # switch among them, keep the first-event budget intact instead of letting
+    # the route-switch window silently clamp the upstream read timeout.
+    read_timeout = max(
+        connect_timeout,
+        effective_stream_first_event_timeout_seconds(),
     )
     return (connect_timeout, read_timeout)
 
@@ -779,6 +788,7 @@ def build_model_candidates_from_payload(payload: dict | None) -> list[str]:
 
     candidates = []
     seen = set()
+    alias_targets = get_model_alias_targets(model_name)
 
     def add(candidate: str | None) -> None:
         candidate = str(candidate or "").strip()
@@ -787,11 +797,11 @@ def build_model_candidates_from_payload(payload: dict | None) -> list[str]:
         seen.add(candidate)
         candidates.append(candidate)
 
-    for candidate in build_related_model_name_candidates(model_name):
-        add(candidate)
-    for alias_target in get_model_alias_targets(model_name):
-        for candidate in build_related_model_name_candidates(alias_target):
-            add(candidate)
+    if alias_targets:
+        for alias_target in alias_targets:
+            add(alias_target)
+    else:
+        add(model_name)
     return candidates
 
 
@@ -1210,6 +1220,7 @@ def export_runtime_config_for_storage() -> dict:
             "model_aliases_text": MODEL_ALIASES_TEXT,
             "model_capabilities_text": MODEL_CAPABILITIES_TEXT,
             "request_timeout": REQUEST_TIMEOUT,
+            "stream_first_event_timeout_seconds": STREAM_FIRST_EVENT_TIMEOUT_SECONDS,
             "force_upstream_chat_stream": FORCE_UPSTREAM_CHAT_STREAM,
             "enable_request_normalization": ENABLE_REQUEST_NORMALIZATION,
             "max_completion_tokens": MAX_COMPLETION_TOKENS,
@@ -1255,6 +1266,7 @@ def build_runtime_config_payload() -> dict:
             "model_capabilities_text": MODEL_CAPABILITIES_TEXT,
             "model_capability_count": len(MODEL_CAPABILITIES),
             "request_timeout": REQUEST_TIMEOUT,
+            "stream_first_event_timeout_seconds": STREAM_FIRST_EVENT_TIMEOUT_SECONDS,
             "force_upstream_chat_stream": FORCE_UPSTREAM_CHAT_STREAM,
             "enable_request_normalization": ENABLE_REQUEST_NORMALIZATION,
             "max_completion_tokens": MAX_COMPLETION_TOKENS,
@@ -1327,6 +1339,7 @@ def apply_runtime_config(config_payload: dict | None, *, persist: bool) -> dict:
     global MODEL_CAPABILITIES_TEXT
     global MODEL_CAPABILITIES
     global REQUEST_TIMEOUT
+    global STREAM_FIRST_EVENT_TIMEOUT_SECONDS
     global FORCE_UPSTREAM_CHAT_STREAM
     global ENABLE_REQUEST_NORMALIZATION
     global MAX_COMPLETION_TOKENS
@@ -1360,6 +1373,7 @@ def apply_runtime_config(config_payload: dict | None, *, persist: bool) -> dict:
             "MODEL_ALIASES_TEXT": MODEL_ALIASES_TEXT,
             "MODEL_CAPABILITIES_TEXT": MODEL_CAPABILITIES_TEXT,
             "REQUEST_TIMEOUT": REQUEST_TIMEOUT,
+            "STREAM_FIRST_EVENT_TIMEOUT_SECONDS": STREAM_FIRST_EVENT_TIMEOUT_SECONDS,
             "FORCE_UPSTREAM_CHAT_STREAM": FORCE_UPSTREAM_CHAT_STREAM,
             "ENABLE_REQUEST_NORMALIZATION": ENABLE_REQUEST_NORMALIZATION,
             "MAX_COMPLETION_TOKENS": MAX_COMPLETION_TOKENS,
@@ -1484,6 +1498,10 @@ def should_force_upstream_stream(subpath: str, request_payload: dict | None) -> 
     )
 
 
+def should_send_upstream_stream(*, requested_stream: bool, upstream_stream: bool) -> bool:
+    return bool(requested_stream or upstream_stream)
+
+
 def normalize_downstream_subpath(subpath: str) -> str:
     normalized = str(subpath or "").strip().strip("/")
     if not normalized:
@@ -1595,6 +1613,8 @@ def build_upstream_json_payload(
     request_method: str = "POST",
 ) -> tuple[dict | None, bool, int, list[str]]:
     if not isinstance(request_payload, dict):
+        import sys as _sys
+        print(f"[BUILD_PAYLOAD] request_payload is NOT dict: type={type(request_payload).__name__} subpath={subpath}", file=_sys.stderr)
         return None, False, 0, []
 
     upstream_payload = dict(request_payload)
@@ -2131,6 +2151,7 @@ def execute_upstream_request(
     raw_body: bytes | None = None,
     initial_blocked_urls: set[str] | None = None,
     request_context: dict | None = None,
+    bypass_inflight_coalescing: bool = False,
 ) -> dict:
     requested_stream = bool(isinstance(request_payload, dict) and request_payload.get("stream"))
     route_urls = list(UPSTREAM_URL_POOL)
@@ -2289,19 +2310,22 @@ def execute_upstream_request(
             return cached_execution
         bump_cache_stat("prompt_cache_misses")
 
-    inflight_entry, is_inflight_owner = begin_inflight_request(coalescing_key, request_id)
-    if not is_inflight_owner:
-        try:
-            shared_execution = wait_for_inflight_request(inflight_entry)
-        except BaseException:
-            shared_execution = None
-        if isinstance(shared_execution, dict):
-            shared_execution["request_context"] = request_context
-            shared_execution["coalescing_key"] = coalescing_key
-            shared_execution["coalesced"] = True
-            shared_execution["coalesced_owner_request_id"] = str(inflight_entry.get("owner_request_id") or "")
-            shared_execution["session_affinity_key"] = session_affinity_key
-            return shared_execution
+    inflight_entry = None
+    is_inflight_owner = True
+    if not bypass_inflight_coalescing:
+        inflight_entry, is_inflight_owner = begin_inflight_request(coalescing_key, request_id)
+        if not is_inflight_owner:
+            try:
+                shared_execution = wait_for_inflight_request(inflight_entry)
+            except BaseException:
+                shared_execution = None
+            if isinstance(shared_execution, dict):
+                shared_execution["request_context"] = request_context
+                shared_execution["coalescing_key"] = coalescing_key
+                shared_execution["coalesced"] = True
+                shared_execution["coalesced_owner_request_id"] = str(inflight_entry.get("owner_request_id") or "")
+                shared_execution["session_affinity_key"] = session_affinity_key
+                return shared_execution
 
     key_choice = choose_api_key_for_url(route_url)
     if key_choice.get("from_pool"):
@@ -2329,92 +2353,101 @@ def execute_upstream_request(
         request_kwargs["json"] = upstream_payload
     else:
         request_kwargs["data"] = raw_body or b""
+        if not isinstance(raw_body, (bytes, bytearray)) or len(raw_body) == 0:
+            import sys as _sys
+            print(f"[EXEC_DEBUG] upstream_payload=None raw_body_type={type(raw_body).__name__} raw_body_len={len(raw_body) if isinstance(raw_body,(bytes,bytearray,str)) else 'N/A'} subpath={subpath} request_payload_type={type(request_payload).__name__}", file=_sys.stderr)
     request_kwargs = prepare_route_switch_stream_request_kwargs(
         request_kwargs,
         upstream_urls=upstream_urls,
     )
 
-    upstream_response, attempts, request_exception = request_upstream_with_retries(
-        request_kwargs,
-        subpath=upstream_subpath,
-        request_id=request_id,
-        upstream_urls=upstream_urls,
-        initial_blocked_urls=initial_blocked_urls,
-        model_candidates=model_candidates,
-    )
-    selected_route_url = next(
-        (attempt.get("route_url") for attempt in reversed(attempts) if attempt.get("route_url")),
-        route_url,
-    )
-    selected_upstream_url = next(
-        (attempt.get("upstream_url") for attempt in reversed(attempts) if attempt.get("upstream_url")),
-        upstream_url,
-    )
-    learned_request_repairs = sum(
-        int(attempt.get("learned_request_repairs", 0) or 0)
-        for attempt in attempts
-        if isinstance(attempt, dict)
-    )
+    try:
+        upstream_response, attempts, request_exception = request_upstream_with_retries(
+            request_kwargs,
+            subpath=upstream_subpath,
+            request_id=request_id,
+            upstream_urls=upstream_urls,
+            initial_blocked_urls=initial_blocked_urls,
+            model_candidates=model_candidates,
+        )
+        selected_route_url = next(
+            (attempt.get("route_url") for attempt in reversed(attempts) if attempt.get("route_url")),
+            route_url,
+        )
+        selected_upstream_url = next(
+            (attempt.get("upstream_url") for attempt in reversed(attempts) if attempt.get("upstream_url")),
+            upstream_url,
+        )
+        learned_request_repairs = sum(
+            int(attempt.get("learned_request_repairs", 0) or 0)
+            for attempt in attempts
+            if isinstance(attempt, dict)
+        )
 
-    result = {
-        "upstream_url": selected_upstream_url,
-        "route_url": selected_route_url,
-        "upstream_subpath": upstream_subpath,
-        "upstream_url_pool": upstream_urls,
-        "route_pool_size": len(upstream_urls),
-        "attempt_route_count": len({str(attempt.get("route_url") or "") for attempt in attempts if str(attempt.get("route_url") or "")}),
-        "tool_schemas": tool_schemas,
-        "upstream_payload": upstream_payload,
-        "upstream_stream": upstream_stream,
-        "upstream_response": upstream_response,
-        "attempts": attempts,
-        "request_exception": request_exception,
-        "retry_count": max(0, len(attempts) - 1),
-        "request_repairs": request_repairs + learned_request_repairs,
-        "model_candidates": model_candidates,
-        "route_policy": route_policy,
-        "route_policy_metrics": route_policy_metrics,
-        "interruption_resume": resume_metrics,
-        "request_context": request_context,
-        "cache_hit": False,
-        "cache_key": cache_key,
-        "coalescing_key": coalescing_key,
-        "coalesced": False,
-        "session_affinity_key": session_affinity_key,
-        "initial_key_choice": {
-            "pool_name": key_choice.get("pool_name"),
-            "key_index": key_choice.get("key_index"),
-            "key_count": key_choice.get("key_count"),
-            "key_id": key_choice.get("key_id"),
-            "from_pool": key_choice.get("from_pool"),
-        },
-        "logical_model": model_candidates[0] if model_candidates else "",
-        "resolved_model": next(
-            (str(attempt.get("model") or "") for attempt in reversed(attempts) if str(attempt.get("model") or "").strip()),
-            model_candidates[0] if model_candidates else "",
-        ),
-        "selected_pool_name": next(
-            (str(attempt.get("pool_name") or "") for attempt in reversed(attempts) if str(attempt.get("pool_name") or "").strip()),
-            str(key_choice.get("pool_name") or ""),
-        ),
-        "attempted_pool_names": list(dict.fromkeys(
-            str(attempt.get("pool_name") or "") for attempt in attempts if str(attempt.get("pool_name") or "").strip()
-        )),
-        "selected_key_index": next(
-            (attempt.get("api_key_index") for attempt in reversed(attempts) if attempt.get("api_key_index") is not None),
-            key_choice.get("key_index"),
-        ),
-        "selected_route_index": next(
-            (
-                upstream_urls.index(str(attempt.get("route_url") or ""))
-                for attempt in reversed(attempts)
-                if str(attempt.get("route_url") or "") in upstream_urls
+        result = {
+            "upstream_url": selected_upstream_url,
+            "route_url": selected_route_url,
+            "upstream_subpath": upstream_subpath,
+            "upstream_url_pool": upstream_urls,
+            "route_pool_size": len(upstream_urls),
+            "attempt_route_count": len({str(attempt.get("route_url") or "") for attempt in attempts if str(attempt.get("route_url") or "")}),
+            "tool_schemas": tool_schemas,
+            "upstream_payload": upstream_payload,
+            "upstream_stream": upstream_stream,
+            "upstream_response": upstream_response,
+            "attempts": attempts,
+            "request_exception": request_exception,
+            "retry_count": max(0, len(attempts) - 1),
+            "request_repairs": request_repairs + learned_request_repairs,
+            "model_candidates": model_candidates,
+            "route_policy": route_policy,
+            "route_policy_metrics": route_policy_metrics,
+            "interruption_resume": resume_metrics,
+            "request_context": request_context,
+            "cache_hit": False,
+            "cache_key": cache_key,
+            "coalescing_key": coalescing_key,
+            "coalesced": False,
+            "session_affinity_key": session_affinity_key,
+            "initial_key_choice": {
+                "pool_name": key_choice.get("pool_name"),
+                "key_index": key_choice.get("key_index"),
+                "key_count": key_choice.get("key_count"),
+                "key_id": key_choice.get("key_id"),
+                "from_pool": key_choice.get("from_pool"),
+            },
+            "logical_model": model_candidates[0] if model_candidates else "",
+            "resolved_model": next(
+                (str(attempt.get("model") or "") for attempt in reversed(attempts) if str(attempt.get("model") or "").strip()),
+                model_candidates[0] if model_candidates else "",
             ),
-            0 if upstream_urls else None,
-        ),
-    }
-    complete_inflight_request(coalescing_key, result=result)
-    return result
+            "selected_pool_name": next(
+                (str(attempt.get("pool_name") or "") for attempt in reversed(attempts) if str(attempt.get("pool_name") or "").strip()),
+                str(key_choice.get("pool_name") or ""),
+            ),
+            "attempted_pool_names": list(dict.fromkeys(
+                str(attempt.get("pool_name") or "") for attempt in attempts if str(attempt.get("pool_name") or "").strip()
+            )),
+            "selected_key_index": next(
+                (attempt.get("api_key_index") for attempt in reversed(attempts) if attempt.get("api_key_index") is not None),
+                key_choice.get("key_index"),
+            ),
+            "selected_route_index": next(
+                (
+                    upstream_urls.index(str(attempt.get("route_url") or ""))
+                    for attempt in reversed(attempts)
+                    if str(attempt.get("route_url") or "") in upstream_urls
+                ),
+                0 if upstream_urls else None,
+            ),
+        }
+        if not bypass_inflight_coalescing:
+            complete_inflight_request(coalescing_key, result=result)
+        return result
+    except BaseException as exc:
+        if not bypass_inflight_coalescing:
+            complete_inflight_request(coalescing_key, error=exc)
+        raise
 
 
 def close_execution_upstream_response(execution: dict | None) -> None:
@@ -2798,8 +2831,25 @@ def request_upstream_with_retries(
         model_candidate_race_limit=MODEL_CANDIDATE_RACE_LIMIT,
         model_candidate_race_timeout_seconds=MODEL_CANDIDATE_RACE_TIMEOUT_SECONDS,
         enable_model_candidate_race=ENABLE_MODEL_CANDIDATE_RACE,
-        request_sender=UPSTREAM_SESSION.request,
+        request_sender=_node_aware_request,
     )
+
+
+def _node_aware_request(method, url, **kwargs):
+    import sys as _sys
+    import json as _json
+    if "opencode.ai" in url:
+        url = url.replace("https://opencode.ai", "http://127.0.0.1:18766")
+        log_kwargs = {k: v for k, v in kwargs.items() if k != 'headers' and k != 'meta'}
+        log_kwargs['headers'] = dict(kwargs.get('headers', {}))
+        log_kwargs['json_snippet'] = str(kwargs.get('json', {}))[:200] if 'json' in kwargs else 'NO_JSON_KEY'
+        data_v = kwargs.get('data', 'NO_DATA_KEY')
+        log_kwargs['data_debug'] = f'type={type(data_v).__name__} len={len(data_v) if isinstance(data_v,(bytes,str)) else "N/A"} repr={str(data_v)[:100] if isinstance(data_v,(bytes,str)) else data_v}'
+        print(f"[NODE_REQ] {method} {url} {_json.dumps(log_kwargs, default=str)}", file=_sys.stderr)
+    result = UPSTREAM_SESSION.request(method, url, **kwargs)
+    if "opencode.ai" in url.replace("127.0.0.1:18766", "opencode.ai") or "127.0.0.1" in url:
+        print(f"[NODE_REQ] resp: {result.status_code} len={len(result.content)}", file=_sys.stderr)
+    return result
 
 
 def record_request_cache_hit(
@@ -3432,6 +3482,7 @@ def build_runtime_snapshot() -> dict:
             "python_executable": sys.executable,
             "port": PORT,
             "request_timeout": REQUEST_TIMEOUT,
+            "stream_first_event_timeout_seconds": STREAM_FIRST_EVENT_TIMEOUT_SECONDS,
             "enable_request_normalization": ENABLE_REQUEST_NORMALIZATION,
             "max_completion_tokens": MAX_COMPLETION_TOKENS,
             "model_capability_count": len(MODEL_CAPABILITIES),
@@ -3988,6 +4039,7 @@ def retry_malformed_success_once(
         request_id,
         initial_blocked_urls=blocked_urls,
         request_context=request_context or (execution.get("request_context") if isinstance(execution, dict) else None),
+        bypass_inflight_coalescing=True,
     )
     if isinstance(next_execution, dict):
         next_execution["malformed_success_fallbacks"] = malformed_success_fallbacks + 1
@@ -4032,6 +4084,7 @@ def retry_terminal_upstream_failure_once(
         request_id,
         initial_blocked_urls=blocked_urls,
         request_context=request_context or (execution.get("request_context") if isinstance(execution, dict) else None),
+        bypass_inflight_coalescing=True,
     )
     if isinstance(next_execution, dict):
         next_execution[fallback_key] = terminal_failure_fallbacks + 1
@@ -4526,7 +4579,7 @@ def proxy_response(
                         preflight_heartbeat_count += 1
                         if (
                             int((time.perf_counter() - preflight_wait_started_at) * 1000)
-                            >= STREAM_FIRST_EVENT_TIMEOUT_SECONDS * 1000
+                            >= effective_stream_first_event_timeout_seconds() * 1000
                         ):
                             preflight_empty_issue = {
                                 "code": "empty_sse_success",
@@ -4540,7 +4593,7 @@ def proxy_response(
                                         "first_upstream_event_ms": None,
                                         "first_data_event_ms": None,
                                         "last_nonempty_line": "",
-                                        "first_event_timeout_seconds": STREAM_FIRST_EVENT_TIMEOUT_SECONDS,
+                                        "first_event_timeout_seconds": effective_stream_first_event_timeout_seconds(),
                                     },
                                     ensure_ascii=False,
                                     separators=(",", ":"),
@@ -5507,6 +5560,14 @@ def debug_requests_clear():
         return Response(status=204)
     clear_request_history()
     return {"ok": True, "message": "请求历史已清空。"}
+
+
+def debug_request_cache_clear():
+    if request.method == "OPTIONS":
+        return Response(status=204)
+    if storage is not None and hasattr(storage, "clear_request_cache"):
+        storage.clear_request_cache()
+    return {"ok": True, "message": "请求缓存已清空。"}
 
 
 def proxy_api_key_public_payload(*, generated_key: str = "") -> dict:
@@ -6730,6 +6791,7 @@ def openai_stream_response_with_connect_heartbeat(
     route_hint: str,
     request_payload: dict | None = None,
     protocol: str = "openai_chat_completions",
+    request_context: dict | None = None,
 ) -> Response:
     heartbeat_interval = max(1, WAITING_STREAM_HEARTBEAT_SECONDS or 5)
 
@@ -6757,6 +6819,43 @@ def openai_stream_response_with_connect_heartbeat(
                 yield keepalive_payload
 
             if execution_error is not None:
+                next_execution = retry_terminal_upstream_failure_once(
+                    route_hint=route_hint,
+                    request_id=request_id,
+                    upstream_url="",
+                    route_url="",
+                    request_payload=request_payload,
+                    execution={
+                        "upstream_url_pool": execution.get("upstream_url_pool") if isinstance(execution, dict) else [],
+                        "route_pool_size": execution.get("route_pool_size") if isinstance(execution, dict) else 0,
+                        "request_context": execution.get("request_context") if isinstance(execution, dict) else None,
+                        "request_exception": execution_error,
+                        "attempts": execution.get("attempts") if isinstance(execution, dict) else [],
+                    } if isinstance(execution, dict) else {"request_exception": execution_error},
+                    request_context=request_context or (execution.get("request_context") if isinstance(execution, dict) else None),
+                    fallback_key="terminal_error_fallbacks",
+                    failure_reason="request_exception",
+                )
+                next_response = next_execution.get("upstream_response") if isinstance(next_execution, dict) else None
+                if next_response is not None:
+                    delegated = True
+                    stream_response = proxy_response(
+                        next_response,
+                        sanitize_dsml=sanitize_dsml,
+                        request_id=request_id,
+                        upstream_url=str(next_execution.get("upstream_url") or ""),
+                        started_at=started_at,
+                        requested_stream=True,
+                        route_hint=route_hint,
+                        tool_schemas=next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else {},
+                        retry_count=int(next_execution.get("retry_count") or 0),
+                        protocol=protocol,
+                        request_payload=request_payload or {},
+                        execution=next_execution,
+                    )
+                    yield from bridge_openai_sse_response(stream_response)
+                    return
+
                 waiting_error = str(execution_error)
                 error_payload = build_openai_error_payload(
                     status_code=502,
@@ -6786,6 +6885,37 @@ def openai_stream_response_with_connect_heartbeat(
 
             upstream_response = execution.get("upstream_response")
             if upstream_response is None:
+                next_execution = retry_terminal_upstream_failure_once(
+                    route_hint=route_hint,
+                    request_id=request_id,
+                    upstream_url=upstream_url,
+                    route_url=str(execution.get("route_url") or upstream_url),
+                    request_payload=request_payload,
+                    execution=execution,
+                    request_context=request_context or (execution.get("request_context") if isinstance(execution, dict) else None),
+                    fallback_key="terminal_error_fallbacks",
+                    failure_reason="request_exception",
+                )
+                next_response = next_execution.get("upstream_response") if isinstance(next_execution, dict) else None
+                if next_response is not None:
+                    delegated = True
+                    stream_response = proxy_response(
+                        next_response,
+                        sanitize_dsml=sanitize_dsml,
+                        request_id=request_id,
+                        upstream_url=str(next_execution.get("upstream_url") or upstream_url),
+                        started_at=started_at,
+                        requested_stream=True,
+                        route_hint=route_hint,
+                        tool_schemas=next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else {},
+                        retry_count=int(next_execution.get("retry_count") or retry_count),
+                        protocol=protocol,
+                        request_payload=request_payload or {},
+                        execution=next_execution,
+                    )
+                    yield from bridge_openai_sse_response(stream_response)
+                    return
+
                 waiting_error = str(execution.get("request_exception") or "upstream request failed")
                 error_payload = build_openai_error_payload(
                     status_code=502,
@@ -8310,6 +8440,12 @@ def proxy_entrypoint(subpath: str):
         return auth_error
 
     request_payload = request.get_json(silent=True)
+    if not isinstance(request_payload, dict):
+        import sys as _sys
+        content_len = request.headers.get('Content-Length', 'N/A')
+        content_type = request.headers.get('Content-Type', 'N/A')
+        raw_data = request.get_data(as_text=False)[:500]
+        print(f"[PROXY_ENTRY] request_payload={type(request_payload).__name__} content_len={content_len} content_type={content_type} raw_data={raw_data!r}", file=_sys.stderr)
     inbound_subpath = normalize_downstream_subpath(subpath)
     upstream_subpath = inbound_subpath
 
@@ -8375,6 +8511,7 @@ def proxy_entrypoint(subpath: str):
                 route_hint=upstream_subpath,
                 request_payload=request_payload if isinstance(request_payload, dict) else {},
                 protocol=detected_protocol,
+                request_context=freeze_request_context_snapshot(),
             )
         if async_error is not None:
             async_urls = build_upstream_url_candidates(upstream_subpath)
@@ -8546,6 +8683,7 @@ register_http_routes(
         "debug_config": login_required(debug_config),
         "debug_pool_test": login_required(debug_pool_test),
         "debug_requests_clear": login_required(debug_requests_clear),
+        "debug_request_cache_clear": login_required(debug_request_cache_clear),
         "debug_proxy_api_keys": login_required(debug_proxy_api_keys),
         "v1_root": v1_root,
         "gemini_version_root": gemini_version_root,

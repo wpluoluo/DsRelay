@@ -1150,6 +1150,8 @@
                 <option value="active">活跃请求</option>
                 <option value="all">合并显示</option>
               </select>
+              <button class="btn btn-ghost" id="clearRequestHistoryBtn" type="button">清空历史</button>
+              <button class="btn btn-ghost" id="clearRequestCacheBtn" type="button">清空响应缓存</button>
               <button class="btn btn-primary" id="applyRequestFiltersBtn" type="button">查询</button>
               <button class="btn btn-ghost" id="resetRequestFiltersBtn" type="button">重置</button>
             </div>
@@ -1289,6 +1291,7 @@
                 <h4><svg width="15" height="15" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;margin-right:4px;"><rect x="2" y="11" width="3.5" height="7" rx="0.6" fill="currentColor" opacity="0.45"/><rect x="8" y="5" width="3.5" height="13" rx="0.6" fill="currentColor"/><rect x="14" y="8" width="3.5" height="10" rx="0.6" fill="currentColor" opacity="0.7"/></svg>重试与稳定性</h4>
                 <div class="config-grid-3">
                   <div class="field"><label for="requestTimeout">请求超时（秒）</label><input id="requestTimeout" type="number" min="30" max="3600" step="1"></div>
+                  <div class="field"><label for="streamFirstEventTimeoutSeconds">流式首包超时（秒）</label><input id="streamFirstEventTimeoutSeconds" type="number" min="1" max="3600" step="1"></div>
                   <div class="field"><label for="maxCompletionTokens">全局兜底上限</label><input id="maxCompletionTokens" type="number" min="0" max="10000000" step="1"></div>
                   <div class="field"><label for="maxRetries">最大重试次数</label><input id="maxRetries" type="number" min="0" max="30" step="1"></div>
                   <div class="field"><label for="retryBackoffMs">重试退避（毫秒）</label><input id="retryBackoffMs" type="number" min="0" max="60000" step="100"></div>
@@ -1445,6 +1448,7 @@
     const modelAliasesTextEl = document.getElementById("modelAliasesText");
     const modelCapabilitiesTextEl = document.getElementById("modelCapabilitiesText");
     const requestTimeoutEl = document.getElementById("requestTimeout");
+    const streamFirstEventTimeoutSecondsEl = document.getElementById("streamFirstEventTimeoutSeconds");
     const maxCompletionTokensEl = document.getElementById("maxCompletionTokens");
     const maxRetriesEl = document.getElementById("maxRetries");
     const retryBackoffMsEl = document.getElementById("retryBackoffMs");
@@ -1493,6 +1497,8 @@
     const requestProtocolFilterEl = document.getElementById("requestProtocolFilter");
     const requestRemoteFilterEl = document.getElementById("requestRemoteFilter");
     const requestScopeFilterEl = document.getElementById("requestScopeFilter");
+    const clearRequestHistoryBtn = document.getElementById("clearRequestHistoryBtn");
+    const clearRequestCacheBtn = document.getElementById("clearRequestCacheBtn");
     const applyRequestFiltersBtn = document.getElementById("applyRequestFiltersBtn");
     const resetRequestFiltersBtn = document.getElementById("resetRequestFiltersBtn");
     const proxyKeySummaryEl = document.getElementById("proxyKeySummary");
@@ -1794,9 +1800,16 @@
         var routePolicy = (pool && pool.route_policy) || {};
         return String(routePolicy.prompt_cache_hints_mode || "auto") === "auto";
       }).length;
+      var configSource = String(config.config_source || runtime.config_source || data.config_source || "");
+      var dbLabel = String((runtime.model_routing && runtime.model_routing.db_label) || config.db_label || "");
+      var activeConfigPath = String((runtime && runtime.config_path) || config.config_path || "");
+      var activeConfigName = activeConfigPath ? activeConfigPath.replace(/^.*[\\/]/, "") : "";
+      var sourceLabel = "defaults";
+      if (configSource === "storage") sourceLabel = dbLabel ? ("storage · " + dbLabel) : "storage";
+      else if (configSource === "disk") sourceLabel = activeConfigName ? ("disk · " + activeConfigName) : "disk";
 
       setText(configRouteInfoEl, poolsCount ? (enabledPools + " / " + poolsCount + " 池启用") : (upstreamCount + " 条直连"));
-      setText(configRouteMetaEl, upstreamCount + " 条链路 · 冷却 " + Number(retry.cooled_routes || 0));
+      setText(configRouteMetaEl, upstreamCount + " 条链路 · 冷却 " + Number(retry.cooled_routes || 0) + " · 来源 " + sourceLabel);
 
       setText(configPolicyInfoEl, "重试 " + Number(retry.max_retries || config.max_retries || 0) + " 次 · 本地缓存 " + promptHits);
       setText(
@@ -1855,6 +1868,7 @@
         var stickyRate = Number(item.sticky_session_rate || 0);
         var hintRate = Number(item.hint_applied_rate || 0);
         var statusBadge = item.cooling ? '<span class="request-chip warn">冷却中</span>' : '<span class="request-chip ok">可用</span>';
+        if (item.historical_only) statusBadge += '<span class="request-chip">历史链路</span>';
         return '<tr>' +
           '<td><div class="request-stack"><div class="request-cell-title request-ellipsis">' + escapeHtml(item.route_url || "-") + '</div><div class="request-cell-sub">活跃粘滞 ' + escapeHtml(item.active_affinity_count || 0) + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(item.pool_name || "-") + '</div><div class="request-cell-sub">' + statusBadge + '</div></div></td>' +
@@ -1966,7 +1980,14 @@
 
       setText(heroRoutesEl, (data.pools_count || 0) + " 池 · " + Number(data.upstream_url_count || 0) + " 链路");
       if (heroRoutesEl) heroRoutesEl.className = (data.pools_count || 0) > 0 ? "tag accent" : "tag";
-      setText(overviewRoutesEl, (data.pools_count || 0) + " 池 · " + Number(data.upstream_url_count || 0) + " 链路");
+      var configSource = String(config.config_source || runtime.config_source || data.config_source || "");
+      var dbLabel = String((runtime.model_routing && runtime.model_routing.db_label) || config.db_label || "");
+      var activeConfigPath = String((runtime && runtime.config_path) || config.config_path || "");
+      var activeConfigName = activeConfigPath ? activeConfigPath.replace(/^.*[\\/]/, "") : "";
+      var sourceLabel = "defaults";
+      if (configSource === "storage") sourceLabel = dbLabel ? ("storage · " + dbLabel) : "storage";
+      else if (configSource === "disk") sourceLabel = activeConfigName ? ("disk · " + activeConfigName) : "disk";
+      setText(overviewRoutesEl, (data.pools_count || 0) + " 池 · " + Number(data.upstream_url_count || 0) + " 链路 · 来源 " + sourceLabel);
 
       setText(heroModelInfoEl, (runtime.model_alias_count || config.model_alias_count || 0) + " 别名 / " + (runtime.model_capability_count || config.model_capability_count || 0) + " 能力");
       setText(heroUptimeEl, formatUptime(runtime.uptime_seconds || 0));
@@ -1992,6 +2013,7 @@
       modelAliasesTextEl.value = config.model_aliases_text || "";
       modelCapabilitiesTextEl.value = config.model_capabilities_text || "";
       requestTimeoutEl.value = config.request_timeout ?? 600;
+      streamFirstEventTimeoutSecondsEl.value = config.stream_first_event_timeout_seconds ?? config.request_timeout ?? 600;
       maxCompletionTokensEl.value = config.max_completion_tokens ?? 0;
       maxRetriesEl.value = config.max_retries ?? 0;
       retryBackoffMsEl.value = config.retry_backoff_ms ?? 0;
@@ -2093,6 +2115,11 @@
         var cacheNote = String(entry.local_response_cache_note || entry.cache_note || "");
         var upstreamPromptCacheStatus = String(entry.upstream_prompt_cache_status || "off");
         var upstreamPromptCacheNote = String(entry.upstream_prompt_cache_note || "");
+        var routeScopeChip = entry.matches_current_route ? '<span class="request-chip ok">当前链路</span>' : '<span class="request-chip">历史链路</span>';
+        var upstreamUrl = String(entry.upstream_url || "");
+        var upstreamSubpath = String(entry.upstream_subpath || "").replace(/^\/+/, "");
+        var upstreamEndpointText = upstreamUrl || "-";
+        var upstreamSubpathText = upstreamSubpath ? ("/" + upstreamSubpath) : "/";
         var cacheSummary = "本地缓存读 " + cacheReadBytes + " B";
         var tokenSummary = "Token " + promptTokens + " IN · " + completionTokens + " OUT";
         if (cacheReadTokens > 0) tokenSummary += " · 缓存读 " + cacheReadTokens;
@@ -2113,8 +2140,8 @@
           '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(entry.started_at || "-") + '</div><div class="request-cell-sub request-mono">' + escapeHtml(entry.request_id || "-") + '</div></div></td>' +
           '<td><div class="request-chip-row"><span class="request-chip accent">' + escapeHtml(entry.protocol || "auto") + '</span>' + (entry.stream ? '<span class="request-chip warn">流</span>' : '<span class="request-chip">非流</span>') + '</div></td>' +
           '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(entry.remote || "-") + '</div><div class="request-cell-sub">重试 ' + escapeHtml(entry.retry_count || 0) + ' · 候选线路 ' + escapeHtml(routePoolSize || 1) + (routeAttemptCount ? (' · 尝试线路 ' + escapeHtml(routeAttemptCount)) : '') + '</div></div></td>' +
-          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml((entry.method || "REQ") + " " + (entry.path || "")) + '</div><div class="request-cell-sub request-mono">上游 ' + escapeHtml((entry.method || "REQ") + " /" + String(entry.upstream_subpath || "").replace(/^\/+/, "")) + '</div><div class="request-cell-sub">' + (entry.client_gone ? '客户端断开' : '请求完成') + '</div></div></td>' +
-          '<td><div class="request-stack"><div class="request-cell-title request-ellipsis">' + escapeHtml(logicalModel) + '</div><div class="request-cell-sub request-ellipsis">' + escapeHtml(resolvedModel) + '</div><div class="request-cell-sub">' + escapeHtml(poolName) + ' · ' + escapeHtml(routeIndex) + ' · ' + escapeHtml(keyIndex) + '</div></div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml((entry.method || "REQ") + " " + (entry.path || "")) + '</div><div class="request-cell-sub request-mono">上游端点 ' + escapeHtml(upstreamEndpointText) + '</div><div class="request-cell-sub request-mono">上游子路径 ' + escapeHtml((entry.method || "REQ") + " " + upstreamSubpathText) + '</div><div class="request-cell-sub">' + (entry.client_gone ? '客户端断开' : '请求完成') + '</div></div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-title request-ellipsis">' + escapeHtml(logicalModel) + '</div><div class="request-cell-sub request-ellipsis">' + escapeHtml(resolvedModel) + '</div><div class="request-cell-sub">' + escapeHtml(poolName) + ' · ' + escapeHtml(routeIndex) + ' · ' + escapeHtml(keyIndex) + '</div><div class="request-chip-row">' + routeScopeChip + '</div></div></td>' +
           '<td><div class="request-chip-row"><span class="request-chip ok">' + escapeHtml(entry.duration_ms || "-") + ' ms</span><span class="request-chip">' + escapeHtml(inputBytes) + ' IN</span><span class="request-chip">' + escapeHtml(outputBytes) + ' OUT</span></div><div class="request-cell-sub">' + escapeHtml(tokenSummary) + '</div><div class="request-cell-sub">' + escapeHtml(cacheSummary) + '</div></td>' +
           '<td><div class="request-stack"><div class="request-cell-sub">请求 ' + escapeHtml(entry.request_repairs || 0) + ' · DSML ' + escapeHtml(entry.sanitized_markers || 0) + ' · 工具 ' + escapeHtml(entry.repaired_tool_args || 0) + '</div><div class="request-cell-sub">本地缓存 ' + escapeHtml(cacheStatus) + (cacheNote ? (' · ' + escapeHtml(cacheNote)) : '') + '</div><div class="request-cell-sub">前缀缓存 ' + escapeHtml(upstreamPromptCacheStatus) + (upstreamPromptCacheNote ? (' · ' + escapeHtml(upstreamPromptCacheNote)) : '') + '</div></div></td>' +
           '<td><div class="request-chip-row"><span class="request-chip ' + statusTone + '">状态 ' + escapeHtml(entry.status_code || "-") + '</span>' + (entry.error ? '<span class="request-chip err">异常</span>' : '') + '</div></td>' +
@@ -2178,6 +2205,7 @@
         model_aliases_text: modelAliasesTextEl.value,
         model_capabilities_text: modelCapabilitiesTextEl.value,
         request_timeout: Number(requestTimeoutEl.value || 0),
+        stream_first_event_timeout_seconds: Number(streamFirstEventTimeoutSecondsEl.value || 0),
         max_completion_tokens: Number(maxCompletionTokensEl.value || 0),
         max_retries: Number(maxRetriesEl.value || 0),
         retry_backoff_ms: Number(retryBackoffMsEl.value || 0),
@@ -2283,6 +2311,54 @@
         setText(logPathEl, data.log_path || "");
       } catch (err) {
         renderLogTable(["监控面板拉取失败: " + err]);
+      }
+    }
+
+    async function clearRequestHistory() {
+      if (!confirm("确认清空请求历史？这会删除面板里的已持久化历史记录。")) return;
+      if (clearRequestHistoryBtn) {
+        clearRequestHistoryBtn.disabled = true;
+        clearRequestHistoryBtn.textContent = "清空中...";
+      }
+      try {
+        var resp = await fetch("/debug/requests/clear", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+        var data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.message || ("清空失败（HTTP " + resp.status + "）"));
+        await refreshState();
+      } catch (err) {
+        alert("清空请求历史失败：" + err);
+      } finally {
+        if (clearRequestHistoryBtn) {
+          clearRequestHistoryBtn.disabled = false;
+          clearRequestHistoryBtn.textContent = "清空历史";
+        }
+      }
+    }
+
+    async function clearRequestCache() {
+      if (!confirm("确认清空响应缓存？这会删除本地持久化的缓存响应。")) return;
+      if (clearRequestCacheBtn) {
+        clearRequestCacheBtn.disabled = true;
+        clearRequestCacheBtn.textContent = "清空中...";
+      }
+      try {
+        var resp = await fetch("/debug/request-cache/clear", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+        var data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.message || ("清空失败（HTTP " + resp.status + "）"));
+        await refreshState();
+      } catch (err) {
+        alert("清空响应缓存失败：" + err);
+      } finally {
+        if (clearRequestCacheBtn) {
+          clearRequestCacheBtn.disabled = false;
+          clearRequestCacheBtn.textContent = "清空响应缓存";
+        }
       }
     }
 
@@ -3005,6 +3081,12 @@
         syncRequestFilterState();
         renderRequestTable(lastState || {});
       });
+    }
+    if (clearRequestHistoryBtn) {
+      clearRequestHistoryBtn.addEventListener("click", clearRequestHistory);
+    }
+    if (clearRequestCacheBtn) {
+      clearRequestCacheBtn.addEventListener("click", clearRequestCache);
     }
 
     // Init

@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 import local_proxy.server as server
+from local_proxy.upstream.router import build_model_candidate_order_for_route
 
 
 class ResponsesCompatTests(unittest.TestCase):
@@ -88,6 +89,57 @@ class ResponsesCompatTests(unittest.TestCase):
             server.resolve_upstream_text_subpath("/v1/openai/responses", {"text_upstream_protocol": "responses"}, {"input": "hi"}),
             "responses",
         )
+
+    def test_build_model_candidates_uses_only_configured_alias_targets_when_mapping_hits(self):
+        original_aliases = server.MODEL_ALIASES
+        try:
+            server.MODEL_ALIASES = {
+                "deepseek-v4-flash": ["deepseek-ai/deepseek-v4-flash"],
+            }
+            candidates = server.build_model_candidates_from_payload({"model": "deepseek-v4-flash"})
+        finally:
+            server.MODEL_ALIASES = original_aliases
+
+        self.assertEqual(candidates, ["deepseek-ai/deepseek-v4-flash"])
+
+    def test_build_model_candidates_locks_deepseek_v4_pro_to_configured_alias_first(self):
+        original_aliases = server.MODEL_ALIASES
+        try:
+            server.MODEL_ALIASES = {
+                "deepseek-v4-pro": ["deepseek-ai/deepseek-v4-pro"],
+            }
+            candidates = server.build_model_candidates_from_payload({"model": "deepseek-v4-pro"})
+        finally:
+            server.MODEL_ALIASES = original_aliases
+
+        self.assertEqual(candidates, ["deepseek-ai/deepseek-v4-pro"])
+
+    def test_build_model_candidates_passthroughs_original_model_when_mapping_misses(self):
+        original_aliases = server.MODEL_ALIASES
+        try:
+            server.MODEL_ALIASES = {}
+            candidates = server.build_model_candidates_from_payload({"model": "deepseek-v4-flash"})
+        finally:
+            server.MODEL_ALIASES = original_aliases
+
+        self.assertEqual(candidates, ["deepseek-v4-flash"])
+
+    def test_route_model_order_keeps_alias_target_locked_when_request_model_differs(self):
+        order_info = build_model_candidate_order_for_route(
+            route_url="https://integrate.api.nvidia.com/v1/chat/completions#__route=test",
+            model_candidates=["deepseek-ai/deepseek-v4-flash"],
+            request_kwargs={"json": {"model": "deepseek-v4-flash"}},
+            request_id="req-locked-alias",
+            get_cached_route_candidates=lambda logical_model, route_url: ["deepseek-v4-flash"],
+            fetch_model_list=lambda route_url, request_kwargs, request_id: [
+                "deepseek-v4-flash",
+                "deepseek-ai/deepseek-v4-flash",
+            ],
+            get_model_candidate_score=lambda logical_model, route_url, model_candidate: 0,
+            logger=type("NullLogger", (), {"info": lambda *args, **kwargs: None})(),
+        )
+
+        self.assertEqual(order_info["candidates"], ["deepseek-ai/deepseek-v4-flash"])
 
     def test_proxy_entrypoint_normalizes_duplicate_v1_prefix_before_upstream_request(self):
         seen = {}

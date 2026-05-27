@@ -485,6 +485,15 @@ class ProxyStorage:
         finally:
             conn.close()
 
+    def clear_request_cache(self) -> None:
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM request_cache")
+            conn.commit()
+        finally:
+            conn.close()
+
     def load_interrupted_response(self, resume_key: str) -> dict:
         now = time.time()
         conn = self._connect()

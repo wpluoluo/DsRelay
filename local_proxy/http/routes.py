@@ -33,6 +33,12 @@ def register_http_routes(app, handlers: dict) -> None:
         methods=["POST", "OPTIONS"],
     )
     app.add_url_rule(
+        "/debug/request-cache/clear",
+        endpoint="debug_request_cache_clear",
+        view_func=_handler(handlers, "debug_request_cache_clear"),
+        methods=["POST", "OPTIONS"],
+    )
+    app.add_url_rule(
         "/debug/proxy-keys",
         endpoint="debug_proxy_api_keys",
         view_func=_handler(handlers, "debug_proxy_api_keys"),

@@ -353,6 +353,23 @@ def fetch_upstream_model_list(
     return models
 
 
+def _request_model_differs_from_candidate_set(request_kwargs: dict, model_candidates: list[str]) -> bool:
+    payload = request_kwargs.get("json")
+    if not isinstance(payload, dict):
+        return False
+    requested_model = str(payload.get("model") or "").strip()
+    if not requested_model:
+        return False
+    candidate_keys = {
+        normalize_model_alias_key(candidate)
+        for candidate in (model_candidates or [])
+        if str(candidate or "").strip()
+    }
+    if not candidate_keys:
+        return False
+    return normalize_model_alias_key(requested_model) not in candidate_keys
+
+
 def build_model_candidate_order_for_route(
     *,
     route_url: str,
@@ -375,22 +392,34 @@ def build_model_candidate_order_for_route(
 
     logical_model = model_candidates[0]
     candidates = dedupe_model_candidates(model_candidates)
+    alias_locked = _request_model_differs_from_candidate_set(request_kwargs, candidates)
+    allowed_candidate_keys = {
+        normalize_model_alias_key(candidate)
+        for candidate in candidates
+    }
     def compact(items: list[str], limit: int = 4) -> str:
         values = list(items or [])
         if len(values) <= limit:
             return ", ".join(values)
         return ", ".join(values[:limit]) + f" ... +{len(values) - limit}"
     cached_candidates = get_cached_route_candidates(logical_model, route_url)
+    if alias_locked and cached_candidates:
+        cached_candidates = [
+            candidate
+            for candidate in cached_candidates
+            if normalize_model_alias_key(candidate) in allowed_candidate_keys
+        ]
     if cached_candidates:
         ordered = dedupe_model_candidates(cached_candidates + candidates)
         logger.info(
-            "request_id=%s 模型候选 线路=%s 逻辑模型=%s 顺序=%s 已探测=%s 命中缓存=%s",
+            "request_id=%s 模型候选 线路=%s 逻辑模型=%s 顺序=%s 已探测=%s 命中缓存=%s 锁定映射=%s",
             request_id,
             route_url,
             logical_model,
             compact(ordered),
             False,
             True,
+            alias_locked,
         )
         return {
             "candidates": ordered,
@@ -414,7 +443,9 @@ def build_model_candidate_order_for_route(
     ]
     unavailable_known = bool(available_models) and not exact_available
 
-    if unavailable_known and discovered:
+    if alias_locked:
+        candidates = exact_available + candidates
+    elif unavailable_known and discovered:
         candidates = discovered + candidates
     else:
         candidates = exact_available + candidates + discovered
@@ -430,12 +461,13 @@ def build_model_candidate_order_for_route(
     )
     ordered = [candidate for _, candidate in indexed]
     logger.info(
-        "request_id=%s 模型候选 线路=%s 逻辑模型=%s 顺序=%s 已探测=%s",
+        "request_id=%s 模型候选 线路=%s 逻辑模型=%s 顺序=%s 已探测=%s 锁定映射=%s",
         request_id,
         route_url,
         logical_model,
         compact(ordered),
         bool(available_models),
+        alias_locked,
     )
     return {
         "candidates": ordered,

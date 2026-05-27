@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $scriptPath = $MyInvocation.MyCommand.Path
 $scriptDir = Split-Path -Parent $scriptPath
 $projectRoot = Split-Path -Parent $scriptDir
-$pythonPath = Join-Path $projectRoot ".venv\Scripts\python.exe"
+$pythonPath = $null
 $envPath = Join-Path $projectRoot ".env"
 $envExamplePath = Join-Path $projectRoot ".env.example"
 $appPath = Join-Path $projectRoot "app.py"
@@ -28,13 +28,77 @@ $startDeadlineSeconds = 25
 $venvScripts = Join-Path $projectRoot ".venv\Scripts"
 $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-$isolatedPathParts = @($venvScripts, $machinePath, $userPath) | Where-Object { $_ -and $_.Trim() }
-$isolatedPath = ($isolatedPathParts -join ";")
 
 foreach ($dir in @($frontendDir, $configDir, $logDir, $cacheDir, $runDir)) {
     if (-not (Test-Path -LiteralPath $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
+}
+
+function Get-ProjectPythonCandidates {
+    param([string]$ProjectRoot)
+
+    $candidates = @()
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+    $venvDirs = @()
+    $primaryEnvDir = Join-Path $ProjectRoot ".venv"
+    if (Test-Path -LiteralPath $primaryEnvDir) {
+        $venvDirs += $primaryEnvDir
+    }
+    Get-ChildItem -LiteralPath $ProjectRoot -Directory -Filter ".venv*" -ErrorAction SilentlyContinue |
+        Sort-Object Name |
+        ForEach-Object {
+            if ($_.FullName -ne $primaryEnvDir) {
+                $venvDirs += $_.FullName
+            }
+        }
+
+    foreach ($envDir in $venvDirs) {
+        $candidatePath = Join-Path $envDir "Scripts\python.exe"
+        $cfgPath = Join-Path $envDir "pyvenv.cfg"
+        if (-not (Test-Path -LiteralPath $candidatePath) -or -not (Test-Path -LiteralPath $cfgPath)) {
+            continue
+        }
+        $fullPath = [System.IO.Path]::GetFullPath($candidatePath)
+        $pathKey = $fullPath.ToLowerInvariant()
+        if ($seen.Add($pathKey)) {
+            $candidates += [pscustomobject]@{
+                PythonPath = $fullPath
+                EnvDir = $envDir
+                Name = [System.IO.Path]::GetFileName($envDir)
+            }
+        }
+    }
+
+    return @($candidates)
+}
+
+function Test-PythonHealthy {
+    param([string]$PythonPath)
+
+    if (-not (Test-Path -LiteralPath $PythonPath)) {
+        return $false
+    }
+
+    try {
+        $null = & $PythonPath -c "import sys; print(sys.executable)" 2>$null
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
+    }
+}
+
+function Resolve-ProjectPython {
+    param([string]$ProjectRoot)
+
+    $candidates = @(Get-ProjectPythonCandidates -ProjectRoot $ProjectRoot)
+    foreach ($candidate in $candidates) {
+        if (Test-PythonHealthy -PythonPath $candidate.PythonPath) {
+            return $candidate
+        }
+    }
+
+    return $null
 }
 
 function Write-BootstrapLog {
@@ -341,10 +405,18 @@ Set-Location $projectRoot
 "" | Set-Content -LiteralPath $bootstrapLogPath -Encoding UTF8
 Write-BootstrapLog -Level "INFO" -Message "project_root=$projectRoot"
 
-if (-not (Test-Path -LiteralPath $pythonPath)) {
-    Write-BootstrapLog -Level "ERROR" -Message "python_not_found path=$pythonPath"
+$pythonCandidate = Resolve-ProjectPython -ProjectRoot $projectRoot
+if ($null -eq $pythonCandidate) {
+    $searched = @(
+        Get-ProjectPythonCandidates -ProjectRoot $projectRoot | ForEach-Object { $_.PythonPath }
+    ) -join ", "
+    Write-BootstrapLog -Level "ERROR" -Message "python_not_found searched=$searched"
     exit 1
 }
+$pythonPath = [string]$pythonCandidate.PythonPath
+$venvScripts = Join-Path ([string]$pythonCandidate.EnvDir) "Scripts"
+$isolatedPathParts = @($venvScripts, $machinePath, $userPath) | Where-Object { $_ -and $_.Trim() }
+$isolatedPath = ($isolatedPathParts -join ";")
 
 if (-not (Test-Path -LiteralPath $envPath)) {
     if (Test-Path -LiteralPath $envExamplePath) {
@@ -378,6 +450,7 @@ if (-not $releasedBeforeStart) {
 }
 
 Write-BootstrapLog -Level "INFO" -Message "python_path=$pythonPath"
+Write-BootstrapLog -Level "INFO" -Message "python_env=$($pythonCandidate.Name)"
 Write-BootstrapLog -Level "INFO" -Message "command=$pythonPath app.py"
 Write-BootstrapLog -Level "INFO" -Message "dashboard_template=$dashboardTemplatePath"
 Write-BootstrapLog -Level "INFO" -Message "config_path=$proxyConfigPath"

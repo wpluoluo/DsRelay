@@ -1,6 +1,11 @@
 import unittest
 
-from local_proxy.runtime.request_cache import build_cache_key, build_coalescing_key, is_cacheable_request
+from local_proxy.runtime.request_cache import (
+    build_cache_key,
+    build_cached_execution,
+    build_coalescing_key,
+    is_cacheable_request,
+)
 
 
 class RequestCacheTests(unittest.TestCase):
@@ -64,6 +69,35 @@ class RequestCacheTests(unittest.TestCase):
         )
 
         self.assertEqual(first_key, second_key)
+
+    def test_cached_execution_preserves_upstream_path_metadata_for_observability(self):
+        execution = build_cached_execution(
+            cached_payload={
+                "response_body": {"id": "resp_1", "model": "demo-model"},
+                "created_at": 1.0,
+                "source": "sqlite",
+                "upstream_url": "https://good.example/v1/chat/completions",
+                "pool_name": "good",
+                "key_index": 1,
+                "model_name": "demo-model",
+                "path": "chat/completions",
+            },
+            request_payload={
+                "model": "demo-model",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+            request_repairs=0,
+            model_candidates=["demo-model"],
+            route_policy={"prompt_cache_mode": "exact"},
+            cache_key="cache-key",
+        )
+
+        self.assertEqual(execution["upstream_url"], "https://good.example/v1/chat/completions")
+        self.assertEqual(execution["route_url"], "https://good.example/v1/chat/completions")
+        self.assertEqual(execution["upstream_subpath"], "chat/completions")
+        self.assertEqual(execution["upstream_url_pool"], ["https://good.example/v1/chat/completions"])
+        self.assertEqual(execution["route_pool_size"], 1)
+        self.assertEqual(execution["attempt_route_count"], 1)
 
 
 if __name__ == "__main__":

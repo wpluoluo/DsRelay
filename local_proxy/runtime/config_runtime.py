@@ -42,6 +42,15 @@ def normalize_runtime_config_payload(
         minimum=30,
         maximum=3600,
     )
+    next_stream_first_event_timeout_seconds = parse_int(
+        config_payload.get(
+            "stream_first_event_timeout_seconds",
+            max(next_request_timeout, current["STREAM_FIRST_EVENT_TIMEOUT_SECONDS"]),
+        ),
+        max(next_request_timeout, current["STREAM_FIRST_EVENT_TIMEOUT_SECONDS"]),
+        minimum=1,
+        maximum=3600,
+    )
     next_force_stream = parse_bool(
         config_payload.get("force_upstream_chat_stream", current["FORCE_UPSTREAM_CHAT_STREAM"]),
         current["FORCE_UPSTREAM_CHAT_STREAM"],
@@ -186,6 +195,10 @@ def normalize_runtime_config_payload(
         "model_capabilities_text": next_model_capabilities_text,
         "model_capabilities": next_model_capabilities,
         "request_timeout": next_request_timeout,
+        "stream_first_event_timeout_seconds": max(
+            next_request_timeout,
+            next_stream_first_event_timeout_seconds,
+        ),
         "force_upstream_chat_stream": next_force_stream,
         "enable_request_normalization": next_request_normalization,
         "max_completion_tokens": next_max_completion_tokens,
@@ -239,6 +252,7 @@ def apply_runtime_globals(target_globals: dict, normalized_config: dict) -> None
     target_globals["MODEL_CAPABILITIES_TEXT"] = normalized_config["model_capabilities_text"]
     target_globals["MODEL_CAPABILITIES"] = normalized_config["model_capabilities"]
     target_globals["REQUEST_TIMEOUT"] = normalized_config["request_timeout"]
+    target_globals["STREAM_FIRST_EVENT_TIMEOUT_SECONDS"] = normalized_config["stream_first_event_timeout_seconds"]
     target_globals["FORCE_UPSTREAM_CHAT_STREAM"] = normalized_config["force_upstream_chat_stream"]
     target_globals["ENABLE_REQUEST_NORMALIZATION"] = normalized_config["enable_request_normalization"]
     target_globals["MAX_COMPLETION_TOKENS"] = normalized_config["max_completion_tokens"]

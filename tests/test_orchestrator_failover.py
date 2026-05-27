@@ -3,8 +3,11 @@ import unittest
 import requests
 
 from local_proxy.server import (
+    REQUEST_TIMEOUT,
     STREAM_FIRST_EVENT_TIMEOUT_SECONDS,
+    STREAM_READ_TIMEOUT_SECONDS,
     prepare_route_switch_stream_request_kwargs,
+    should_send_upstream_stream,
 )
 from local_proxy.upstream.orchestrator import request_upstream_with_retries
 from local_proxy.upstream.router import build_attempt_url_cycle, mark_route_failure
@@ -47,7 +50,82 @@ class GatewayFailoverTests(unittest.TestCase):
 
         self.assertNotEqual(prepared["timeout"], (20, 600))
         self.assertLessEqual(prepared["timeout"][0], prepared["timeout"][1])
-        self.assertLess(prepared["timeout"][1], 600)
+        self.assertGreaterEqual(prepared["timeout"][1], REQUEST_TIMEOUT)
+        self.assertGreaterEqual(prepared["timeout"][1], prepared["timeout"][0])
+
+    def test_prepare_route_switch_stream_request_kwargs_treats_same_base_route_ids_as_independent_routes(self):
+        request_kwargs = {
+            "method": "POST",
+            "url": "https://integrate.api.nvidia.com/v1/chat/completions",
+            "json": {"model": "demo", "stream": True},
+            "stream": True,
+            "timeout": (20, 600),
+        }
+
+        prepared = prepare_route_switch_stream_request_kwargs(
+            request_kwargs,
+            upstream_urls=[
+                "https://integrate.api.nvidia.com/v1/chat/completions#__route=one",
+                "https://integrate.api.nvidia.com/v1/chat/completions#__route=two",
+                "https://integrate.api.nvidia.com/v1/chat/completions#__route=three",
+            ],
+        )
+
+        self.assertEqual(
+            prepared["timeout"],
+            prepare_route_switch_stream_request_kwargs(
+                request_kwargs,
+                upstream_urls=[
+                    "https://first.example/v1/chat/completions",
+                    "https://second.example/v1/chat/completions",
+                    "https://third.example/v1/chat/completions",
+                ],
+            )["timeout"],
+        )
+
+    def test_prepare_route_switch_stream_request_kwargs_never_shortens_read_timeout_below_request_timeout(self):
+        request_kwargs = {
+            "method": "POST",
+            "url": "https://integrate.api.nvidia.com/v1/chat/completions",
+            "json": {"model": "demo", "stream": True},
+            "stream": True,
+            "timeout": (20, 600),
+        }
+
+        prepared = prepare_route_switch_stream_request_kwargs(
+            request_kwargs,
+            upstream_urls=[
+                "https://integrate.api.nvidia.com/v1/chat/completions#__route=one",
+                "https://integrate.api.nvidia.com/v1/chat/completions#__route=two",
+                "https://integrate.api.nvidia.com/v1/chat/completions#__route=three",
+            ],
+        )
+
+        self.assertGreaterEqual(prepared["timeout"][1], REQUEST_TIMEOUT)
+
+    def test_prepare_route_switch_stream_request_kwargs_does_not_shorten_timeout_for_non_stream_requests(self):
+        request_kwargs = {
+            "method": "POST",
+            "url": "https://first.example/v1/chat/completions",
+            "json": {"model": "demo", "stream": True},
+            "stream": False,
+            "timeout": 30,
+        }
+
+        prepared = prepare_route_switch_stream_request_kwargs(
+            request_kwargs,
+            upstream_urls=[
+                "https://first.example/v1/chat/completions",
+                "https://second.example/v1/chat/completions",
+            ],
+        )
+
+        self.assertEqual(prepared["timeout"], 30)
+
+    def test_should_send_upstream_stream_respects_forced_upstream_stream(self):
+        self.assertFalse(should_send_upstream_stream(requested_stream=False, upstream_stream=False))
+        self.assertTrue(should_send_upstream_stream(requested_stream=False, upstream_stream=True))
+        self.assertTrue(should_send_upstream_stream(requested_stream=True, upstream_stream=False))
 
     def test_internal_meta_is_not_forwarded_to_request_sender(self):
         captured_kwargs = {}

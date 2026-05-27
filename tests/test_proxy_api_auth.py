@@ -31,6 +31,9 @@ class FakeRuntimeConfigStorage:
     def save_pool_runtime_state(self, payload, state_key="default"):
         return None
 
+    def clear_request_cache(self):
+        self.request_cache_cleared = True
+
 
 class ProxyApiAuthParserTests(unittest.TestCase):
     def test_generate_proxy_api_key_uses_openai_style_shape(self):
@@ -142,12 +145,33 @@ class ProxyApiAuthParserTests(unittest.TestCase):
 
 class ProxyEntrypointAuthTests(unittest.TestCase):
     def load_server_with_keys(self, value: str):
-        os.environ["PROXY_API_KEYS"] = value
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        env_overrides = {
+            "PROXY_API_KEYS": value,
+            "PROXY_CONFIG_PATH": str(Path(temp_dir.name) / "proxy-config.json"),
+            "PROXY_REMOTE_CONFIG_PATH": str(Path(temp_dir.name) / "proxy-config.remote.json"),
+            "STORAGE_DB_HOST": "",
+            "STORAGE_DB_PORT": "3306",
+            "STORAGE_DB_USER": "",
+            "STORAGE_DB_PASSWORD": "",
+            "STORAGE_DB_NAME": "",
+        }
+        previous = {key: os.environ.get(key) for key in env_overrides}
+        for key, env_value in env_overrides.items():
+            os.environ[key] = env_value
 
         import local_proxy.server as server
 
         server = importlib.reload(server)
-        self.addCleanup(lambda: os.environ.pop("PROXY_API_KEYS", None))
+        def restore_env():
+            for key, old_value in previous.items():
+                if old_value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = old_value
+
+        self.addCleanup(restore_env)
         return server
 
     def test_models_root_requires_proxy_api_key_configuration(self):
@@ -212,6 +236,21 @@ class ProxyEntrypointAuthTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["ok"])
+
+    def test_debug_request_cache_clear_endpoint_works_for_authenticated_session(self):
+        server = self.load_server_with_keys("")
+        fake_storage = FakeRuntimeConfigStorage()
+        fake_storage.request_cache_cleared = False
+        server.storage = fake_storage
+        client = server.app.test_client()
+        with client.session_transaction() as session:
+            session["_proxy_authed"] = True
+
+        response = client.post("/debug/request-cache/clear")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["ok"])
+        self.assertTrue(fake_storage.request_cache_cleared)
 
     def test_managed_proxy_key_can_be_created_used_disabled_and_deleted(self):
         server = self.load_server_with_keys("")
@@ -323,11 +362,30 @@ class ProxyEntrypointAuthTests(unittest.TestCase):
         )
         self.assertEqual(ok_response.status_code, 200)
 
+    def test_saving_public_config_payload_persists_stream_first_event_timeout(self):
+        server = self.load_server_with_keys("")
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        server.PROXY_CONFIG_PATH = Path(temp_dir.name) / "proxy-config.json"
+        client = server.app.test_client()
+        with client.session_transaction() as session:
+            session["_proxy_authed"] = True
+
+        config_payload = client.get("/debug/config").get_json()["config"]
+        config_payload["stream_first_event_timeout_seconds"] = 650
+        save_response = client.post("/debug/config", json=config_payload)
+
+        self.assertEqual(save_response.status_code, 200)
+        self.assertEqual(server.STREAM_FIRST_EVENT_TIMEOUT_SECONDS, 650)
+        saved_payload = __import__("json").loads(server.PROXY_CONFIG_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(saved_payload["stream_first_event_timeout_seconds"], 650)
+
     def test_initialize_runtime_config_bootstraps_disk_payload_into_mysql_storage(self):
         server = self.load_server_with_keys("")
         temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(temp_dir.cleanup)
         server.PROXY_CONFIG_PATH = Path(temp_dir.name) / "proxy-config.json"
+        server.PROXY_REMOTE_CONFIG_PATH = Path(temp_dir.name) / "proxy-config.remote.json"
         server.PROXY_API_KEY_RECORDS = []
         server.PROXY_POOLS = []
         server.MODEL_ALIASES_TEXT = ""
@@ -369,6 +427,59 @@ class ProxyEntrypointAuthTests(unittest.TestCase):
         self.assertIsNotNone(fake_storage.saved_payload)
         self.assertEqual(fake_storage.saved_payload["proxy_api_key_records"][0]["id"], "pak_demo")
         self.assertEqual(fake_storage.saved_payload["pools"][0]["name"], "nv")
+        self.assertEqual(server.ACTIVE_RUNTIME_CONFIG_PATH, server.PROXY_CONFIG_PATH)
+
+    def test_initialize_runtime_config_prefers_newer_remote_disk_snapshot_when_storage_unavailable(self):
+        server = self.load_server_with_keys("")
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        server.PROXY_CONFIG_PATH = Path(temp_dir.name) / "proxy-config.json"
+        server.PROXY_REMOTE_CONFIG_PATH = Path(temp_dir.name) / "proxy-config.remote.json"
+        server.storage = None
+        server.PROXY_POOLS = []
+        server.PROXY_API_KEY_RECORDS = []
+
+        stale_payload = {
+            "pools": [
+                {
+                    "name": "old-juece",
+                    "enabled": True,
+                    "priority": 100,
+                    "urls": ["https://open.juece.cloud/v1"],
+                    "keys": [{"key": "old-key"}],
+                }
+            ],
+            "request_timeout": 30,
+        }
+        fresh_payload = {
+            "pools": [
+                {
+                    "name": "nv",
+                    "enabled": True,
+                    "priority": 100,
+                    "urls": ["https://integrate.api.nvidia.com/v1"],
+                    "keys": [{"key": "nv-key-1"}],
+                }
+            ],
+            "request_timeout": 30,
+        }
+        server.PROXY_CONFIG_PATH.write_text(
+            __import__("json").dumps(stale_payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        server.PROXY_REMOTE_CONFIG_PATH.write_text(
+            __import__("json").dumps(fresh_payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        os.utime(server.PROXY_CONFIG_PATH, (1_000_000_000, 1_000_000_000))
+        os.utime(server.PROXY_REMOTE_CONFIG_PATH, (1_000_000_100, 1_000_000_100))
+
+        source = server.initialize_runtime_config()
+
+        self.assertEqual(source, "disk")
+        self.assertEqual(server.ACTIVE_RUNTIME_CONFIG_PATH, server.PROXY_REMOTE_CONFIG_PATH)
+        self.assertEqual(server.PROXY_POOLS[0]["name"], "nv")
+        self.assertEqual(server.build_runtime_config_payload()["config_path"], str(server.PROXY_REMOTE_CONFIG_PATH))
 
 
 if __name__ == "__main__":

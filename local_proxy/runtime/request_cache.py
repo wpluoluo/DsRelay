@@ -166,18 +166,24 @@ def build_cached_execution(
     route_policy_metrics: dict | None = None,
 ) -> dict:
     cached_body = deepcopy(cached_payload.get("response_body") or {})
+    upstream_url = str(cached_payload.get("upstream_url") or "")
+    upstream_subpath = str(cached_payload.get("path") or "").strip("/")
+    upstream_url_pool = [upstream_url] if upstream_url else []
     return {
         "cache_hit": True,
         "cache_key": cache_key,
         "cached_at": float(cached_payload.get("created_at", 0.0) or 0.0),
         "cache_source": str(cached_payload.get("source") or "sqlite"),
-        "upstream_url": str(cached_payload.get("upstream_url") or ""),
+        "upstream_url": upstream_url,
+        "route_url": upstream_url,
+        "upstream_subpath": upstream_subpath,
         "upstream_pool_name": str(cached_payload.get("pool_name") or ""),
         "upstream_key_index": cached_payload.get("key_index"),
         "resolved_model": str(cached_payload.get("model_name") or ""),
-        "upstream_url_pool": [],
+        "upstream_url_pool": upstream_url_pool,
         "attempted_pool_names": [str(cached_payload.get("pool_name") or "")] if str(cached_payload.get("pool_name") or "") else [],
-        "route_pool_size": 0,
+        "route_pool_size": len(upstream_url_pool),
+        "attempt_route_count": len(upstream_url_pool),
         "tool_schemas": {},
         "upstream_payload": request_payload if isinstance(request_payload, dict) else None,
         "upstream_stream": bool((request_payload or {}).get("stream")) if isinstance(request_payload, dict) else False,

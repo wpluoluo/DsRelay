@@ -4,6 +4,54 @@ import os
 import re
 import time
 from collections import deque
+from urllib.parse import urlsplit, urlunsplit
+
+KNOWN_UPSTREAM_SUFFIXES = (
+    "/chat/completions",
+    "/completions",
+    "/responses",
+    "/embeddings",
+    "/images/generations",
+    "/audio/speech",
+    "/audio/transcriptions",
+    "/audio/translations",
+    "/models",
+)
+
+
+def _looks_like_test_example(value: object) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return False
+    return ".example" in text or "example.com" in text or "example domain" in text
+
+
+def _strip_route_identity(url: object) -> str:
+    text = str(url or "").strip()
+    if not text:
+        return ""
+    parts = urlsplit(text)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
+
+
+def _normalize_route_url(url: object) -> str:
+    normalized = _strip_route_identity(url).rstrip("/")
+    lowered = normalized.lower()
+    for suffix in KNOWN_UPSTREAM_SUFFIXES:
+        if lowered.endswith(suffix):
+            normalized = normalized[: -len(suffix)].rstrip("/")
+            break
+    return normalized
+
+
+def _canonical_route_url(url: object, *, active_routes_by_base: dict[str, str]) -> str:
+    text = str(url or "").strip()
+    if not text:
+        return ""
+    base_url = _normalize_route_url(text)
+    if not base_url:
+        return text
+    return active_routes_by_base.get(base_url, text)
 
 
 def read_recent_log_lines(*, log_path, app_started_at_epoch: float, limit: int) -> list[str]:
@@ -16,7 +64,7 @@ def read_recent_log_lines(*, log_path, app_started_at_epoch: float, limit: int) 
     filtered_lines = []
     for line in recent_candidates:
         lowered_line = line.lower()
-        if "example.com" in lowered_line or "example domain" in lowered_line:
+        if _looks_like_test_example(lowered_line):
             continue
         if not re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", line):
             continue
@@ -46,6 +94,7 @@ def build_runtime_snapshot(context: dict) -> dict:
         "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(context["app_started_at_epoch"]))),
         "uptime_seconds": uptime_seconds,
         "request_timeout_seconds": context["request_timeout"],
+        "stream_first_event_timeout_seconds": context["stream_first_event_timeout_seconds"],
         "request_normalization": context["enable_request_normalization"],
         "max_completion_tokens": context["max_completion_tokens"],
         "model_capability_count": context["model_capability_count"],
@@ -85,6 +134,9 @@ def build_runtime_snapshot(context: dict) -> dict:
         },
         "config_path": str(context["config_path"]),
         "config_file_exists": context["config_file_exists"],
+        "primary_config_path": str(context.get("primary_config_path") or context["config_path"]),
+        "config_candidate_paths": [str(item) for item in (context.get("config_candidate_paths") or [])],
+        "config_source": str(context.get("config_source") or ""),
         "retry_config": {
             "max_retries": context["max_retries"],
             "backoff_ms": context["retry_backoff_ms"],
@@ -119,7 +171,34 @@ def build_dashboard_state(context: dict) -> dict:
         route_url: dict(entry)
         for route_url, entry in (context.get("route_health") or {}).items()
     }
-    recent_requests = request_snapshot["recent_requests"]
+    active_upstream_urls = list(context["upstream_urls"])
+    active_routes_by_base = {
+        _normalize_route_url(route_url): str(route_url)
+        for route_url in active_upstream_urls
+        if _normalize_route_url(route_url)
+    }
+    recent_requests = []
+    for item in request_snapshot["recent_requests"]:
+        if not isinstance(item, dict):
+            continue
+        if any(
+            _looks_like_test_example(item.get(field))
+            for field in ("upstream_url", "route_url", "response_preview", "error")
+        ):
+            continue
+        next_item = dict(item)
+        canonical_route_url = _canonical_route_url(
+            next_item.get("route_url") or next_item.get("upstream_url") or "",
+            active_routes_by_base=active_routes_by_base,
+        )
+        upstream_url = str(next_item.get("upstream_url") or "").strip()
+        upstream_base_url = _normalize_route_url(upstream_url)
+        next_item["current_route_url"] = canonical_route_url
+        next_item["current_route_base_url"] = upstream_base_url
+        next_item["matches_current_route"] = bool(
+            upstream_base_url and upstream_base_url in active_routes_by_base
+        )
+        recent_requests.append(next_item)
     cache_stats = (runtime_snapshot.get("model_routing") or {}).get("cache_stats") or {}
     local_response_cache_hits = int(cache_stats.get("prompt_cache_hits", 0) or 0)
     local_response_cache_misses = int(cache_stats.get("prompt_cache_misses", 0) or 0)
@@ -153,7 +232,7 @@ def build_dashboard_state(context: dict) -> dict:
         if bool(item.get("prompt_cache_hint_applied")) or bool(item.get("prompt_cache_hint_passthrough")):
             prompt_hint_requests += 1
         affinity_key = str(item.get("session_affinity_key") or "").strip()
-        route_url = str(item.get("upstream_url") or "").strip()
+        route_url = str(item.get("current_route_url") or item.get("upstream_url") or "").strip()
         if not affinity_key or not route_url:
             continue
         session_route_map.setdefault(affinity_key, set()).add(route_url)
@@ -215,7 +294,7 @@ def build_dashboard_state(context: dict) -> dict:
         )
         entry["pool_name"] = str((info or {}).get("pool_name") or "")
     for item in recent_requests:
-        route_url = str(item.get("upstream_url") or "").strip()
+        route_url = str(item.get("current_route_url") or item.get("upstream_url") or "").strip()
         if not route_url:
             continue
         entry = route_observability.setdefault(
@@ -263,6 +342,7 @@ def build_dashboard_state(context: dict) -> dict:
             entry["hint_applied_count"] += 1
         if not entry["pool_name"]:
             entry["pool_name"] = str(item.get("pool_name") or "")
+        entry["historical_only"] = not bool(item.get("matches_current_route"))
     for route_url, sessions in route_sessions.items():
         entry = route_observability.setdefault(
             route_url,
@@ -337,6 +417,7 @@ def build_dashboard_state(context: dict) -> dict:
             {
                 "route_url": entry["route_url"],
                 "pool_name": entry["pool_name"],
+                "historical_only": bool(entry.get("historical_only")),
                 "request_count": request_count,
                 "success_count": int(entry.get("success_count") or 0),
                 "error_count": int(entry.get("error_count") or 0),
@@ -379,8 +460,8 @@ def build_dashboard_state(context: dict) -> dict:
         "ok": True,
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "upstream_url": context["upstream_url"],
-        "upstream_urls": list(context["upstream_urls"]),
-        "upstream_url_count": len(context["upstream_urls"]),
+        "upstream_urls": active_upstream_urls,
+        "upstream_url_count": len(active_upstream_urls),
         "pools_count": len(context["proxy_pools"]),
         "pools_enabled_count": sum(1 for p in context["proxy_pools"] if p.get("enabled", True)),
         "log_path": str(context["log_path"]),
@@ -392,6 +473,7 @@ def build_dashboard_state(context: dict) -> dict:
         "route_health": route_health_snapshot,
         "connection_pool": context["connection_pool_snapshot"](),
         "route_observability": route_observability_rows,
+        "config_source": context.get("config_source") or "",
         "cache_observability": {
             "local_response_cache_hits": local_response_cache_hits,
             "local_response_cache_misses": local_response_cache_misses,

@@ -2,6 +2,32 @@ import os
 import sys
 from pathlib import Path
 
+
+def iter_project_python_candidates(project_root: Path) -> list[Path]:
+    candidates: list[Path] = []
+    seen: set[str] = set()
+    env_dirs: list[Path] = []
+
+    primary_env = project_root / ".venv"
+    if primary_env.is_dir():
+        env_dirs.append(primary_env)
+
+    for env_dir in sorted(project_root.glob(".venv*")):
+        if env_dir.is_dir():
+            env_dirs.append(env_dir)
+
+    for env_dir in env_dirs:
+        candidate = (env_dir / "Scripts" / "python.exe").resolve()
+        env_config = env_dir / "pyvenv.cfg"
+        candidate_key = str(candidate).lower()
+        if candidate_key in seen or not env_config.exists():
+            continue
+        seen.add(candidate_key)
+        candidates.append(candidate)
+
+    return candidates
+
+
 def ensure_project_venv_python() -> None:
     if os.environ.get("RUNNING_IN_DOCKER") == "1":
         return
@@ -17,12 +43,13 @@ def ensure_project_venv_python() -> None:
         )
         raise SystemExit(86)
 
-    expected_python = (project_root / ".venv" / "Scripts" / "python.exe").resolve()
+    expected_pythons = iter_project_python_candidates(project_root)
     current_python = Path(sys.executable).resolve()
-    if current_python != expected_python:
+    if current_python not in expected_pythons:
+        expected_display = ", ".join(str(path) for path in expected_pythons) or "<no project venv found>"
         print(
             "[local-proxy] refused to start with non-project python: "
-            f"current={current_python} expected={expected_python}",
+            f"current={current_python} expected_any={expected_display}",
             file=sys.stderr,
             flush=True,
         )

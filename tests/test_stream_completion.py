@@ -13,6 +13,7 @@ from local_proxy.http.validation import inspect_success_payload
 from local_proxy.server import (
     classify_upstream_response,
     consume_openai_sse_events,
+    execute_upstream_request,
     handle_anthropic_stream_response,
     handle_gemini_stream_response,
     openai_stream_response_with_connect_heartbeat,
@@ -951,6 +952,110 @@ class StreamCompletionTests(unittest.TestCase):
         self.assertIn('"upstream_status": 404', body)
         self.assertIn("data: [DONE]\n\n", body)
         self.assertNotIn('\n{"error":', body)
+
+    def test_openai_connect_heartbeat_retries_request_exception_before_emitting_error(self):
+        fallback_upstream = FiniteStreamResponse(openai_stream_lines())
+        request_payload = {"model": "test-model", "stream": True, "messages": [{"role": "user", "content": "hello"}]}
+
+        class ReadyBackgroundExecution:
+            def wait(self, timeout_seconds):
+                return (
+                    "result",
+                    {
+                        "upstream_response": None,
+                        "upstream_url": "https://primary.example/v1/chat/completions",
+                        "tool_schemas": {},
+                        "retry_count": 0,
+                        "attempts": [{"route_url": "https://primary.example/v1/chat/completions", "error": "Read timed out"}],
+                        "upstream_url_pool": [
+                            "https://primary.example/v1/chat/completions",
+                            "https://fallback.example/v1/chat/completions",
+                        ],
+                        "route_pool_size": 2,
+                        "request_context": {},
+                        "route_url": "https://primary.example/v1/chat/completions",
+                        "request_exception": requests.exceptions.ReadTimeout("Read timed out. (read timeout=10)"),
+                    },
+                )
+
+            def cancel(self):
+                return None
+
+        with mock.patch(
+            "local_proxy.server.execute_upstream_request",
+            return_value={
+                "upstream_response": fallback_upstream,
+                "upstream_url": fallback_upstream.url,
+                "tool_schemas": {},
+                "retry_count": 1,
+                "attempts": [{"route_url": "https://fallback.example/v1/chat/completions"}],
+                "upstream_url_pool": [
+                    "https://primary.example/v1/chat/completions",
+                    "https://fallback.example/v1/chat/completions",
+                ],
+                "route_pool_size": 2,
+                "request_context": {},
+                "route_url": "https://fallback.example/v1/chat/completions",
+            },
+        ) as execute_mock:
+            response = openai_stream_response_with_connect_heartbeat(
+                background_execution=ReadyBackgroundExecution(),
+                request_id="heartbeat-exception-fallback",
+                started_at=time.perf_counter(),
+                sanitize_dsml=True,
+                route_hint="chat/completions",
+                request_payload=request_payload,
+            )
+            body = collect_response_body(response).decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('"content":"ok"', body)
+        self.assertIn("data: [DONE]\n\n", body)
+        self.assertNotIn('data: {"error"', body)
+        execute_mock.assert_called_once()
+        self.assertTrue(fallback_upstream.closed_by_proxy)
+
+    def test_execute_upstream_request_clears_inflight_cache_on_exception(self):
+        with mock.patch("local_proxy.server.UPSTREAM_URL_POOL", ["https://primary.example/v1#__route=one"]), \
+             mock.patch("local_proxy.server.build_route_policy", return_value={}), \
+             mock.patch("local_proxy.server.resolve_upstream_text_subpath", return_value="chat/completions"), \
+             mock.patch(
+                 "local_proxy.server.router_build_upstream_url_candidates",
+                 return_value=["https://primary.example/v1/chat/completions#__route=one"],
+             ), \
+             mock.patch(
+                 "local_proxy.server.build_upstream_json_payload",
+                 return_value=(
+                     {"model": "test-model", "messages": [{"role": "user", "content": "hello"}], "stream": True},
+                     True,
+                     0,
+                     ["test-model"],
+                 ),
+             ), \
+             mock.patch("local_proxy.server.build_session_affinity_key", return_value="session-1"), \
+             mock.patch(
+                 "local_proxy.server.apply_route_policy_to_payload",
+                 return_value=(
+                     {"model": "test-model", "messages": [{"role": "user", "content": "hello"}], "stream": True},
+                     0,
+                     {},
+                 ),
+             ), \
+             mock.patch("local_proxy.server.check_payload_against_model_capability", return_value=None), \
+             mock.patch("local_proxy.server.choose_api_key_for_url", return_value={}), \
+             mock.patch("local_proxy.server.request_upstream_with_retries", side_effect=RuntimeError("boom")):
+            with self.assertRaisesRegex(RuntimeError, "boom"):
+                execute_upstream_request(
+                    "chat/completions",
+                    {"model": "test-model", "messages": [{"role": "user", "content": "hello"}], "stream": True},
+                    "raise-once",
+                    request_context={},
+                )
+
+        self.assertEqual(
+            len([key for key in getattr(__import__("local_proxy.server", fromlist=["inflight_request_cache"]), "inflight_request_cache").keys() if key]),
+            0,
+        )
 
 if __name__ == "__main__":
     unittest.main()

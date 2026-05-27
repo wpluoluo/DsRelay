@@ -1,10 +1,16 @@
+FROM node:22-slim AS node-stage
+
 FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# Copy Node.js binary from official image (no apt needed)
+COPY --from=node-stage /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-stage /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=node-stage /usr/local/include/node /usr/local/include/node
+COPY --from=node-stage /usr/local/share/doc/node /usr/local/share/doc/node
+RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
+    ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npx
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
@@ -18,4 +24,4 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 18765
 
-CMD ["python", "app.py"]
+CMD ["sh", "/app/start.sh"]
