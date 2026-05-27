@@ -207,7 +207,18 @@ rsync -a --delete \
   '$remoteExtractDir/' '$RemoteDeployDir/'
 cd '$RemoteDeployDir'
 docker compose up -d --build $RemoteServiceName
-sleep 6
+for attempt in \$(seq 1 30); do
+  if curl -fsS http://127.0.0.1:18765/health >/dev/null; then
+    break
+  fi
+  if [ "\$attempt" -eq 30 ]; then
+    echo "health check failed after \$attempt attempts" >&2
+    docker ps --filter name=$RemoteServiceName || true
+    docker logs --tail 80 $RemoteServiceName || true
+    exit 1
+  fi
+  sleep 2
+done
 curl -fsS http://127.0.0.1:18765/health
 rm -rf '$remoteExtractDir' '$remoteArchivePath'
 "@
