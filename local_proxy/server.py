@@ -2304,7 +2304,12 @@ def execute_upstream_request(
             return shared_execution
 
     key_choice = choose_api_key_for_url(route_url)
-    primary_pool_key = str(key_choice.get("key") or UPSTREAM_API_KEY)
+    if key_choice.get("from_pool"):
+        primary_pool_key = str(key_choice.get("key") or "")
+    elif connection_pool_state.has_url(route_url):
+        primary_pool_key = ""
+    else:
+        primary_pool_key = UPSTREAM_API_KEY
     request_kwargs = {
         "method": request_method,
         "url": upstream_url,
@@ -6529,14 +6534,19 @@ def image_generation_proxy(subpath: str, request_payload: dict | None):
     model_alias_repairs = 0
     initial_route_url = UPSTREAM_URL_POOL[0] if UPSTREAM_URL_POOL else ""
     pool_keys = get_api_keys_for_url(initial_route_url)
-    primary_pool_key = pool_keys[0] if pool_keys else UPSTREAM_API_KEY
+    if pool_keys:
+        primary_pool_key = pool_keys[0]
+    elif connection_pool_state.has_url(initial_route_url):
+        primary_pool_key = ""
+    else:
+        primary_pool_key = UPSTREAM_API_KEY
     plan = build_image_generation_plan(
         subpath=subpath,
         payload=aliased_payload if isinstance(aliased_payload, dict) else {},
         upstream_url_pool=UPSTREAM_URL_POOL,
         inbound_headers=build_upstream_headers(upstream_api_key=primary_pool_key),
         inbound_params=build_upstream_params(),
-        api_key=primary_pool_key or UPSTREAM_API_KEY,
+        api_key=primary_pool_key,
         upstream_protocol_override=IMAGE_UPSTREAM_PROTOCOL,
     )
     downstream_protocol = plan["downstream_protocol"]

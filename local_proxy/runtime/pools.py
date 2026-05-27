@@ -193,10 +193,10 @@ class ConnectionPoolState:
                 if not url:
                     continue
                 urls.append(url)
+                url_key_map[url] = list(keys)
+                url_pool_name_map[url] = pool_name
                 if keys:
-                    url_key_map[url] = list(keys)
                     url_key_meta[url] = dict(key_meta)
-                    url_pool_name_map[url] = pool_name
 
         deduped_urls = list(dict.fromkeys(urls))
         with self.lock:
@@ -217,6 +217,12 @@ class ConnectionPoolState:
                 for url, keys in url_key_map.items()
             }
         return deduped_urls
+
+    def has_url(self, url: str) -> bool:
+        """Check if a URL (or its resolved form) is registered in any pool."""
+        with self.lock:
+            normalized_url = self._resolve_stored_route_url(str(url or "").strip())
+            return normalized_url in self.url_key_map
 
     def get_api_keys_for_url(self, url: str) -> list[str]:
         with self.lock:
