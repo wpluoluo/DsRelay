@@ -1869,9 +1869,22 @@
         var hintRate = Number(item.hint_applied_rate || 0);
         var statusBadge = item.cooling ? '<span class="request-chip warn">冷却中</span>' : '<span class="request-chip ok">可用</span>';
         if (item.historical_only) statusBadge += '<span class="request-chip">历史链路</span>';
+        var routePolicy = item.route_policy || {};
+        var configuredCooldown = Number(routePolicy.route_cooldown_seconds || 0);
+        var effectiveCooldown = Number(routePolicy.effective_route_cooldown_seconds || configuredCooldown || 0);
+        var cooldownMax = Number(routePolicy.route_cooldown_max_seconds || 0);
+        var cooldownLabel = configuredCooldown
+          ? ("冷却 " + configuredCooldown + "s")
+          : "冷却 -";
+        if (effectiveCooldown && effectiveCooldown !== configuredCooldown) {
+          cooldownLabel += " · 生效 " + effectiveCooldown + "s";
+        }
+        if (cooldownMax) {
+          cooldownLabel += " · 上限 " + cooldownMax + "s";
+        }
         return '<tr>' +
           '<td><div class="request-stack"><div class="request-cell-title request-ellipsis">' + escapeHtml(item.route_url || "-") + '</div><div class="request-cell-sub">活跃粘滞 ' + escapeHtml(item.active_affinity_count || 0) + '</div></div></td>' +
-          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(item.pool_name || "-") + '</div><div class="request-cell-sub">' + statusBadge + '</div></div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(item.pool_name || "-") + '</div><div class="request-cell-sub">' + statusBadge + '</div><div class="request-cell-sub">' + escapeHtml(cooldownLabel) + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(requestCount) + '</div><div class="request-cell-sub">成功 ' + escapeHtml(successCount) + ' · 错误 ' + escapeHtml(errorCount) + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml((upstreamPromptCacheHitRate * 100).toFixed(1) + "%") + '</div><div class="request-cell-sub">前缀缓存 ' + escapeHtml(upstreamPromptCacheHits) + '/' + escapeHtml(upstreamPromptCacheRequests) + ' · 平均读 ' + escapeHtml(Math.round(avgCacheRead)) + ' token</div><div class="request-cell-sub">本地响应缓存 ' + escapeHtml((localCacheHitRate * 100).toFixed(1) + "%") + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(item.sticky_session_count || 0) + '/' + escapeHtml(item.session_count || 0) + '</div><div class="request-cell-sub">粘滞率 ' + escapeHtml((stickyRate * 100).toFixed(1) + "%") + '</div></div></td>' +

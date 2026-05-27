@@ -194,36 +194,60 @@ print("synced remote db env keys:", ",".join(sorted(updates)))
 }
 
 Write-Step "Sync tracked code while preserving remote .env, config/proxy-config.json and var/"
-$deployCommand = @"
+$deployCommand = @'
 set -e
-mkdir -p '$RemoteDeployDir'
-rm -rf '$remoteExtractDir'
-mkdir -p '$remoteExtractDir'
-tar -xf '$remoteArchivePath' -C '$remoteExtractDir'
+mkdir -p '__REMOTE_DEPLOY_DIR__'
+rm -rf '__REMOTE_EXTRACT_DIR__'
+mkdir -p '__REMOTE_EXTRACT_DIR__'
+tar -xf '__REMOTE_ARCHIVE_PATH__' -C '__REMOTE_EXTRACT_DIR__'
 rsync -a --delete \
   --exclude '.env' \
   --exclude 'config/proxy-config.json' \
   --exclude 'var/' \
-  '$remoteExtractDir/' '$RemoteDeployDir/'
-cd '$RemoteDeployDir'
-docker compose up -d --build $RemoteServiceName
+  '__REMOTE_EXTRACT_DIR__/' '__REMOTE_DEPLOY_DIR__/'
+cd '__REMOTE_DEPLOY_DIR__'
+python3 - <<'PY'
+from pathlib import Path
+
+targets = [
+    Path('/app/start.sh'),
+    Path('/app/node_proxy.js'),
+    Path('/app/app.py'),
+]
+
+repo_root = Path('.').resolve()
+for relative in ('start.sh', 'node_proxy.js', 'app.py'):
+    path = repo_root / relative
+    if not path.exists():
+        continue
+    raw = path.read_bytes()
+    normalized = raw.replace(b'\r\n', b'\n').replace(b'\r', b'\n')
+    if normalized != raw:
+        path.write_bytes(normalized)
+PY
+chmod +x ./start.sh
+docker compose up -d --build __REMOTE_SERVICE_NAME__
 attempt=1
-while [ "\$attempt" -le 30 ]; do
+while [ "$attempt" -le 30 ]; do
   if curl -fsS http://127.0.0.1:18765/health >/dev/null; then
     break
   fi
-  if [ "\$attempt" -eq 30 ]; then
-    echo "health check failed after \$attempt attempts" >&2
-    docker ps --filter name=$RemoteServiceName || true
-    docker logs --tail 80 $RemoteServiceName || true
+  if [ "$attempt" -eq 30 ]; then
+    echo "health check failed after $attempt attempts" >&2
+    docker ps --filter name=__REMOTE_SERVICE_NAME__ || true
+    docker logs --tail 80 __REMOTE_SERVICE_NAME__ || true
     exit 1
   fi
   sleep 2
-  attempt=\$((attempt + 1))
+  attempt=$((attempt + 1))
 done
 curl -fsS http://127.0.0.1:18765/health
-rm -rf '$remoteExtractDir' '$remoteArchivePath'
-"@
+rm -rf '__REMOTE_EXTRACT_DIR__' '__REMOTE_ARCHIVE_PATH__'
+'@
+$deployCommand = $deployCommand.Replace("__REMOTE_DEPLOY_DIR__", $RemoteDeployDir)
+$deployCommand = $deployCommand.Replace("__REMOTE_EXTRACT_DIR__", $remoteExtractDir)
+$deployCommand = $deployCommand.Replace("__REMOTE_ARCHIVE_PATH__", $remoteArchivePath)
+$deployCommand = $deployCommand.Replace("__REMOTE_SERVICE_NAME__", $RemoteServiceName)
 Invoke-Ssh $deployCommand
 
 Write-Step "Deploy complete: $commit"

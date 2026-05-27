@@ -3526,6 +3526,7 @@ def build_runtime_snapshot() -> dict:
             "route_switch_window_seconds": UPSTREAM_ROUTE_SWITCH_WINDOW_SECONDS,
             "randomize_endpoints": UPSTREAM_RANDOMIZE_ENDPOINTS,
             "retryable_status_codes": RETRYABLE_STATUS_CODES,
+            "build_route_policy": build_route_policy,
             "http_pool_connections": HTTP_POOL_CONNECTIONS,
             "http_pool_maxsize": HTTP_POOL_MAXSIZE,
             "pool_key_failure_threshold": POOL_KEY_FAILURE_THRESHOLD,

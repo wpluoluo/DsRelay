@@ -54,6 +54,37 @@ def _canonical_route_url(url: object, *, active_routes_by_base: dict[str, str]) 
     return active_routes_by_base.get(base_url, text)
 
 
+def _route_policy_snapshot(route_url: object, *, build_route_policy, route_switch_window_seconds: int) -> dict:
+    policy = {}
+    if callable(build_route_policy):
+        try:
+            built = build_route_policy(str(route_url or "").strip())
+        except Exception:
+            built = {}
+        if isinstance(built, dict):
+            policy = dict(built)
+    configured_cooldown = int(policy.get("route_cooldown_seconds") or 0)
+    configured_cooldown_max = int(
+        policy.get("route_cooldown_max_seconds") or configured_cooldown or route_switch_window_seconds or 0
+    )
+    effective_cooldown = max(configured_cooldown, int(route_switch_window_seconds or 0))
+    effective_cooldown_max = max(effective_cooldown, configured_cooldown_max)
+    return {
+        "reasoning_effort": str(policy.get("reasoning_effort") or ""),
+        "prompt_cache_mode": str(policy.get("prompt_cache_mode") or ""),
+        "prompt_cache_hints_mode": str(policy.get("prompt_cache_hints_mode") or ""),
+        "prompt_cache_provider": str(policy.get("prompt_cache_provider") or ""),
+        "text_upstream_protocol": str(policy.get("text_upstream_protocol") or ""),
+        "prompt_cache_retention": str(policy.get("prompt_cache_retention") or ""),
+        "max_output_tokens": int(policy.get("max_output_tokens") or 0),
+        "route_cooldown_seconds": configured_cooldown,
+        "route_cooldown_multiplier": float(policy.get("route_cooldown_multiplier") or 0.0),
+        "route_cooldown_max_seconds": configured_cooldown_max,
+        "effective_route_cooldown_seconds": effective_cooldown,
+        "effective_route_cooldown_max_seconds": effective_cooldown_max,
+    }
+
+
 def read_recent_log_lines(*, log_path, app_started_at_epoch: float, limit: int) -> list[str]:
     if not log_path.exists():
         return []
@@ -86,6 +117,14 @@ def build_runtime_snapshot(context: dict) -> dict:
     for entry in route_health.values():
         if float(entry.get("cooldown_until", 0.0) or 0.0) > now:
             cooled_routes += 1
+    route_switch_window_seconds = int(context["route_switch_window_seconds"])
+    route_policies = {}
+    for route_url in context["upstream_urls"]:
+        route_policies[str(route_url)] = _route_policy_snapshot(
+            route_url,
+            build_route_policy=context.get("build_route_policy"),
+            route_switch_window_seconds=route_switch_window_seconds,
+        )
 
     return {
         "pid": os.getpid(),
@@ -143,11 +182,12 @@ def build_runtime_snapshot(context: dict) -> dict:
             "max_backoff_ms": context["retry_max_backoff_ms"],
             "route_failure_threshold": context["route_failure_threshold"],
             "route_cooldown_seconds": context["route_cooldown_seconds"],
-            "route_switch_window_seconds": context["route_switch_window_seconds"],
+            "route_switch_window_seconds": route_switch_window_seconds,
             "randomize_endpoints": context["randomize_endpoints"],
             "retryable_status_codes": sorted(context["retryable_status_codes"]),
             "cooled_routes": cooled_routes,
         },
+        "route_policies": route_policies,
         "connection_pool": {
             "http_pool_connections": context["http_pool_connections"],
             "http_pool_maxsize": context["http_pool_maxsize"],
@@ -177,6 +217,7 @@ def build_dashboard_state(context: dict) -> dict:
         for route_url in active_upstream_urls
         if _normalize_route_url(route_url)
     }
+    route_policy_map = (runtime_snapshot.get("route_policies") or {}) if isinstance(runtime_snapshot, dict) else {}
     recent_requests = []
     for item in request_snapshot["recent_requests"]:
         if not isinstance(item, dict):
@@ -266,6 +307,7 @@ def build_dashboard_state(context: dict) -> dict:
             "cooling": False,
             "consecutive_failures": 0,
             "last_reason": "",
+            "route_policy": dict(route_policy_map.get(str(route_url)) or {}),
         }
     connection_pool = context["connection_pool_snapshot"]() or {}
     for route_url, info in (connection_pool.get("urls") or {}).items():
@@ -290,6 +332,7 @@ def build_dashboard_state(context: dict) -> dict:
                 "cooling": False,
                 "consecutive_failures": 0,
                 "last_reason": "",
+                "route_policy": dict(route_policy_map.get(str(route_url)) or {}),
             },
         )
         entry["pool_name"] = str((info or {}).get("pool_name") or "")
@@ -318,6 +361,7 @@ def build_dashboard_state(context: dict) -> dict:
                 "cooling": False,
                 "consecutive_failures": 0,
                 "last_reason": "",
+                "route_policy": dict(route_policy_map.get(route_url) or {}),
             },
         )
         entry["request_count"] += 1
@@ -365,6 +409,7 @@ def build_dashboard_state(context: dict) -> dict:
                 "cooling": False,
                 "consecutive_failures": 0,
                 "last_reason": "",
+                "route_policy": dict(route_policy_map.get(route_url) or {}),
             },
         )
         entry["session_count"] = len(sessions)
@@ -401,6 +446,7 @@ def build_dashboard_state(context: dict) -> dict:
                 "cooling": False,
                 "consecutive_failures": 0,
                 "last_reason": "",
+                "route_policy": dict(route_policy_map.get(str(route_url)) or {}),
             },
         )
         entry["cooling"] = float((health or {}).get("cooldown_until", 0.0) or 0.0) > now_epoch
@@ -417,6 +463,7 @@ def build_dashboard_state(context: dict) -> dict:
             {
                 "route_url": entry["route_url"],
                 "pool_name": entry["pool_name"],
+                "route_policy": dict(entry.get("route_policy") or {}),
                 "historical_only": bool(entry.get("historical_only")),
                 "request_count": request_count,
                 "success_count": int(entry.get("success_count") or 0),

@@ -60,6 +60,11 @@ class DashboardStateTests(unittest.TestCase):
                 "route_switch_window_seconds": 10,
                 "randomize_endpoints": True,
                 "retryable_status_codes": {408, 429, 500, 502, 503, 504},
+                "build_route_policy": lambda route_url: {
+                    "route_cooldown_seconds": 5,
+                    "route_cooldown_multiplier": 2,
+                    "route_cooldown_max_seconds": 10,
+                },
                 "http_pool_connections": 64,
                 "http_pool_maxsize": 128,
                 "pool_key_failure_threshold": 2,
@@ -74,6 +79,11 @@ class DashboardStateTests(unittest.TestCase):
         )
 
         self.assertEqual(runtime["stream_first_event_timeout_seconds"], 45)
+        self.assertIn("https://integrate.api.nvidia.com/v1#__route=a", runtime["route_policies"])
+        route_policy = runtime["route_policies"]["https://integrate.api.nvidia.com/v1#__route=a"]
+        self.assertEqual(route_policy["route_cooldown_seconds"], 5)
+        self.assertEqual(route_policy["effective_route_cooldown_seconds"], 10)
+        self.assertEqual(route_policy["route_cooldown_max_seconds"], 10)
 
     def test_recent_requests_are_tagged_against_current_routes(self):
         state = build_dashboard_state(
@@ -84,6 +94,18 @@ class DashboardStateTests(unittest.TestCase):
                         "db_label": "mysql://demo",
                     },
                     "config_source": "storage",
+                    "route_policies": {
+                        "https://integrate.api.nvidia.com/v1#__route=a": {
+                            "route_cooldown_seconds": 5,
+                            "effective_route_cooldown_seconds": 10,
+                            "route_cooldown_max_seconds": 10,
+                        },
+                        "https://integrate.api.nvidia.com/v1#__route=b": {
+                            "route_cooldown_seconds": 5,
+                            "effective_route_cooldown_seconds": 10,
+                            "route_cooldown_max_seconds": 10,
+                        },
+                    },
                 },
                 "request_recorder_snapshot": lambda: {
                     "stats": {},
@@ -149,6 +171,7 @@ class DashboardStateTests(unittest.TestCase):
         self.assertIn("https://open.juece.cloud/v1/chat/completions", routes)
         self.assertFalse(routes["https://integrate.api.nvidia.com/v1#__route=a"]["historical_only"])
         self.assertTrue(routes["https://open.juece.cloud/v1/chat/completions"]["historical_only"])
+        self.assertEqual(routes["https://integrate.api.nvidia.com/v1#__route=a"]["route_policy"]["route_cooldown_seconds"], 5)
         self.assertEqual(state["config_source"], "storage")
 
     def test_cached_execution_observability_exposes_upstream_subpath(self):
@@ -189,6 +212,13 @@ class DashboardStateTests(unittest.TestCase):
                         "db_label": "mysql://demo",
                     },
                     "config_source": "storage",
+                    "route_policies": {
+                        "https://integrate.api.nvidia.com/v1#__route=a": {
+                            "route_cooldown_seconds": 5,
+                            "effective_route_cooldown_seconds": 10,
+                            "route_cooldown_max_seconds": 10,
+                        },
+                    },
                 },
                 "request_recorder_snapshot": lambda: {
                     "stats": {},
