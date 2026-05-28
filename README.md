@@ -249,6 +249,46 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18765/health"
 | `PROXY_CONFIG_PATH` | `config/proxy-config.json` | 渠道配置文件路径 |
 | `PROXY_LOG_PATH` | `var/logs/proxy.log` | 代理日志路径 |
 | `SQLITE_DB_PATH` | `var/cache/proxy-cache.sqlite3` | SQLite 数据库路径 |
+| `SHARED_DOCKER_NETWORK` | `1panel-network` | Docker 共享网络名，容器访问外部 MySQL 时使用 |
+| `HOST_GATEWAY_HOSTNAME` | `host.docker.internal` | 宿主机网关别名 |
+| `HOST_GATEWAY_ADDRESS` | `host-gateway` | 宿主机网关地址写法 |
+
+### 远程部署与双机配置
+
+仓库内置 `scripts/deploy-remote.ps1`，支持：
+
+- 单目标部署：兼容原有 `DEPLOY_SSH_*` / `DEPLOY_STORAGE_DB_*` 变量。
+- 多目标部署：在本地 `.env` 中配置 `DEPLOY_TARGETS=legacy,baota`，再为每个目标填写 `DEPLOY_<目标名>_*` 变量。
+- `key` 与 `password` 两种 SSH 认证方式。
+- 宝塔 / 1Panel / 纯 Docker 环境共用，只要目标机上存在 `docker`、`docker compose` 和可用的共享网络。
+
+常用目标变量如下：
+
+| 变量 | 说明 |
+|------|------|
+| `DEPLOY_<TARGET>_SSH_HOST` | 服务器 IP 或域名 |
+| `DEPLOY_<TARGET>_SSH_PORT` | SSH 端口 |
+| `DEPLOY_<TARGET>_SSH_USER` | SSH 用户 |
+| `DEPLOY_<TARGET>_SSH_AUTH_MODE` | `key` 或 `password` |
+| `DEPLOY_<TARGET>_SSH_KEY_PATH` | 私钥路径（`key` 模式） |
+| `DEPLOY_<TARGET>_SSH_PASSWORD` | SSH 密码（`password` 模式，仅本地 `.env` 使用） |
+| `DEPLOY_<TARGET>_REMOTE_PATH` | 远端部署目录 |
+| `DEPLOY_<TARGET>_SERVICE_NAME` | `docker compose` 服务名 |
+| `DEPLOY_<TARGET>_APP_PORT` | 代理健康检查端口 |
+| `DEPLOY_<TARGET>_SHARED_DOCKER_NETWORK` | 目标机共享网络名 |
+| `DEPLOY_<TARGET>_STORAGE_DB_*` | 目标机远端 `.env` 中需要写入的 MySQL 连接参数 |
+
+示例：
+
+```powershell
+# 部署到单台
+.\scripts\deploy-remote.ps1 -Target legacy
+
+# 一次部署到 .env 里声明的全部目标
+.\scripts\deploy-remote.ps1 -AllTargets
+```
+
+如果目标机是宝塔面板，推荐单独创建一个 Docker 共享网络（例如 `local-proxy-shared`），再把 `local-proxy` 和它自己的 MySQL 容器挂进去；这样不会和宝塔宿主机已有服务混在一起。
 
 ### 渠道配置
 

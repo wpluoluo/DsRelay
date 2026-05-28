@@ -1,10 +1,16 @@
 param(
+    [string]$Target,
+    [string[]]$Targets,
+    [switch]$AllTargets,
     [string]$ServerHost,
     [int]$ServerPort = 0,
     [string]$ServerUser,
     [string]$SshKeyPath,
+    [string]$SshPassword,
     [string]$RemoteDeployDir,
-    [string]$RemoteServiceName = "local-proxy"
+    [string]$RemoteServiceName = "local-proxy",
+    [string]$SharedDockerNetwork,
+    [int]$AppPort = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,6 +21,18 @@ function Write-Step([string]$Message) {
 
 function Get-RepoRoot {
     return (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+}
+
+function Get-PythonCommand([string]$RepoRoot) {
+    $venvPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
+    if (Test-Path $venvPython) {
+        return $venvPython
+    }
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if ($python) {
+        return $python.Source
+    }
+    throw "Python not found. Please install Python or create .venv first."
 }
 
 function Get-DotEnvMap([string]$Path) {
@@ -52,60 +70,186 @@ function Resolve-OptionalPath([string]$PathValue) {
     return $expanded
 }
 
-function Invoke-Ssh([string]$Command) {
-    & ssh -i $SshKeyPath -p $ServerPort -o StrictHostKeyChecking=no "$ServerUser@$ServerHost" $Command
+function Ensure-Paramiko([string]$PythonCommand) {
+    & $PythonCommand -c "import paramiko" 2>$null
     if ($LASTEXITCODE -ne 0) {
-        throw "SSH command failed: $Command"
+        Write-Step "Install paramiko into local Python environment"
+        & $PythonCommand -m pip install paramiko
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to install paramiko."
+        }
     }
 }
 
-function Invoke-Scp([string]$LocalPath, [string]$RemotePath) {
-    & scp -i $SshKeyPath -P $ServerPort -o StrictHostKeyChecking=no $LocalPath "${ServerUser}@${ServerHost}:$RemotePath"
+function Invoke-RemoteHelper([string]$PythonCommand, [string[]]$Arguments, [string]$PasswordValue = "") {
+    $oldPassword = $env:REMOTE_OPS_PASSWORD
+    try {
+        if ($PasswordValue) {
+            $env:REMOTE_OPS_PASSWORD = $PasswordValue
+        } else {
+            Remove-Item Env:REMOTE_OPS_PASSWORD -ErrorAction SilentlyContinue
+        }
+        & $PythonCommand (Join-Path $PSScriptRoot "remote_ops.py") @Arguments
+    } finally {
+        if ($null -eq $oldPassword) {
+            Remove-Item Env:REMOTE_OPS_PASSWORD -ErrorAction SilentlyContinue
+        } else {
+            $env:REMOTE_OPS_PASSWORD = $oldPassword
+        }
+    }
     if ($LASTEXITCODE -ne 0) {
-        throw "SCP failed: $LocalPath -> $RemotePath"
+        throw "Remote helper failed: $($Arguments -join ' ')"
     }
 }
 
 $repoRoot = Get-RepoRoot
+$pythonCommand = Get-PythonCommand $repoRoot
+Ensure-Paramiko $pythonCommand
 $envPath = Join-Path $repoRoot ".env"
 $envMap = Get-DotEnvMap $envPath
 
-if (-not $ServerHost) {
-    $ServerHost = [string]$envMap["DEPLOY_SSH_HOST"]
-}
-if ($ServerPort -le 0) {
-    $rawPort = [string]$envMap["DEPLOY_SSH_PORT"]
-    if ($rawPort) {
-        $ServerPort = [int]$rawPort
+function Get-EnvOrEmpty([hashtable]$Map, [string]$Key) {
+    if ($Map.ContainsKey($Key)) {
+        return [string]$Map[$Key]
     }
-}
-if (-not $ServerUser) {
-    $ServerUser = [string]$envMap["DEPLOY_SSH_USER"]
-}
-if (-not $SshKeyPath) {
-    $SshKeyPath = Resolve-OptionalPath ([string]$envMap["DEPLOY_SSH_KEY_PATH"])
-}
-if (-not $RemoteDeployDir) {
-    $RemoteDeployDir = [string]$envMap["DEPLOY_REMOTE_PATH"]
+    return ""
 }
 
-if (-not $ServerHost) {
-    throw "Missing DEPLOY_SSH_HOST or -ServerHost."
+function Normalize-TargetName([string]$Name) {
+    return (($Name -replace '[^A-Za-z0-9]', '_').Trim('_')).ToUpperInvariant()
 }
-if ($ServerPort -le 0) {
-    $ServerPort = 22
+
+function Resolve-TargetConfig([string]$TargetName, [hashtable]$EnvMap) {
+    $normalized = Normalize-TargetName $TargetName
+    $prefix = "DEPLOY_${normalized}_"
+    $authMode = (Get-EnvOrEmpty $EnvMap ($prefix + "SSH_AUTH_MODE")).ToLowerInvariant()
+    $cfg = [ordered]@{
+        Target = $TargetName
+        ServerHost = Get-EnvOrEmpty $EnvMap ($prefix + "SSH_HOST")
+        ServerPort = Get-EnvOrEmpty $EnvMap ($prefix + "SSH_PORT")
+        ServerUser = Get-EnvOrEmpty $EnvMap ($prefix + "SSH_USER")
+        AuthMode = $authMode
+        SshKeyPath = Resolve-OptionalPath (Get-EnvOrEmpty $EnvMap ($prefix + "SSH_KEY_PATH"))
+        SshPassword = Get-EnvOrEmpty $EnvMap ($prefix + "SSH_PASSWORD")
+        RemoteDeployDir = Get-EnvOrEmpty $EnvMap ($prefix + "REMOTE_PATH")
+        RemoteServiceName = Get-EnvOrEmpty $EnvMap ($prefix + "SERVICE_NAME")
+        SharedDockerNetwork = Get-EnvOrEmpty $EnvMap ($prefix + "SHARED_DOCKER_NETWORK")
+        AppPort = Get-EnvOrEmpty $EnvMap ($prefix + "APP_PORT")
+        StorageDbHost = Get-EnvOrEmpty $EnvMap ($prefix + "STORAGE_DB_HOST")
+        StorageDbPort = Get-EnvOrEmpty $EnvMap ($prefix + "STORAGE_DB_PORT")
+        StorageDbUser = Get-EnvOrEmpty $EnvMap ($prefix + "STORAGE_DB_USER")
+        StorageDbPassword = Get-EnvOrEmpty $EnvMap ($prefix + "STORAGE_DB_PASSWORD")
+        StorageDbName = Get-EnvOrEmpty $EnvMap ($prefix + "STORAGE_DB_NAME")
+    }
+    if (-not $cfg.AuthMode) {
+        if ($cfg.SshPassword) {
+            $cfg.AuthMode = "password"
+        } elseif ($cfg.SshKeyPath) {
+            $cfg.AuthMode = "key"
+        }
+    }
+    if (-not $cfg.ServerPort) { $cfg.ServerPort = "22" }
+    if (-not $cfg.RemoteServiceName) { $cfg.RemoteServiceName = "local-proxy" }
+    if (-not $cfg.AppPort) { $cfg.AppPort = [string](Get-EnvOrEmpty $EnvMap "PORT") }
+    if (-not $cfg.AppPort) { $cfg.AppPort = "18765" }
+    if (-not $cfg.SharedDockerNetwork) { $cfg.SharedDockerNetwork = "1panel-network" }
+    return $cfg
 }
-if (-not $ServerUser) {
-    throw "Missing DEPLOY_SSH_USER or -ServerUser."
+
+function Build-RemoteArgs([hashtable]$Config, [string]$Action) {
+    $args = @(
+        $Action,
+        "--host", [string]$Config.ServerHost,
+        "--port", [string]$Config.ServerPort,
+        "--user", [string]$Config.ServerUser
+    )
+    if ($Config.AuthMode -eq "key") {
+        $args += @("--key-path", [string]$Config.SshKeyPath)
+    }
+    return $args
 }
-if (-not $SshKeyPath) {
-    throw "Missing DEPLOY_SSH_KEY_PATH or -SshKeyPath."
+
+$targetConfigs = @()
+
+if ($AllTargets) {
+    $declaredTargets = @(
+        ((Get-EnvOrEmpty $envMap "DEPLOY_TARGETS") -split "[,;\r\n]+" | ForEach-Object { $_.Trim() }) |
+            Where-Object { $_ }
+    )
+    if (-not $declaredTargets -or $declaredTargets.Count -eq 0) {
+        throw "DEPLOY_TARGETS is empty; cannot use -AllTargets."
+    }
+    foreach ($targetName in $declaredTargets) {
+        $targetConfigs += ,(Resolve-TargetConfig $targetName $envMap)
+    }
+} elseif ($Targets -and $Targets.Count -gt 0) {
+    foreach ($targetName in $Targets) {
+        $targetConfigs += ,(Resolve-TargetConfig $targetName $envMap)
+    }
+} elseif ($Target) {
+    $targetConfigs += ,(Resolve-TargetConfig $Target $envMap)
+} else {
+    if (-not $ServerHost) {
+        $ServerHost = [string]$envMap["DEPLOY_SSH_HOST"]
+    }
+    if ($ServerPort -le 0) {
+        $rawPort = [string]$envMap["DEPLOY_SSH_PORT"]
+        if ($rawPort) {
+            $ServerPort = [int]$rawPort
+        }
+    }
+    if (-not $ServerUser) {
+        $ServerUser = [string]$envMap["DEPLOY_SSH_USER"]
+    }
+    if (-not $SshKeyPath) {
+        $SshKeyPath = Resolve-OptionalPath ([string]$envMap["DEPLOY_SSH_KEY_PATH"])
+    }
+    if (-not $SshPassword) {
+        $SshPassword = [string]$envMap["DEPLOY_SSH_PASSWORD"]
+    }
+    if (-not $RemoteDeployDir) {
+        $RemoteDeployDir = [string]$envMap["DEPLOY_REMOTE_PATH"]
+    }
+    if (-not $SharedDockerNetwork) {
+        $SharedDockerNetwork = [string]$envMap["SHARED_DOCKER_NETWORK"]
+    }
+    if ($AppPort -le 0) {
+        $rawAppPort = [string]$envMap["PORT"]
+        if ($rawAppPort) {
+            $AppPort = [int]$rawAppPort
+        }
+    }
+    $resolvedServerPort = if ($ServerPort -gt 0) { [string]$ServerPort } else { "22" }
+    $resolvedSharedDockerNetwork = if ($SharedDockerNetwork) { $SharedDockerNetwork } else { "1panel-network" }
+    $resolvedAppPort = if ($AppPort -gt 0) { [string]$AppPort } else { "18765" }
+    $authMode = if ($SshPassword) { "password" } else { "key" }
+    $targetConfigs += ,([ordered]@{
+        Target = "default"
+        ServerHost = $ServerHost
+        ServerPort = $resolvedServerPort
+        ServerUser = $ServerUser
+        AuthMode = $authMode
+        SshKeyPath = $SshKeyPath
+        SshPassword = $SshPassword
+        RemoteDeployDir = $RemoteDeployDir
+        RemoteServiceName = $RemoteServiceName
+        SharedDockerNetwork = $resolvedSharedDockerNetwork
+        AppPort = $resolvedAppPort
+        StorageDbHost = [string]$envMap["DEPLOY_STORAGE_DB_HOST"]
+        StorageDbPort = [string]$envMap["DEPLOY_STORAGE_DB_PORT"]
+        StorageDbUser = [string]$envMap["DEPLOY_STORAGE_DB_USER"]
+        StorageDbPassword = [string]$envMap["DEPLOY_STORAGE_DB_PASSWORD"]
+        StorageDbName = [string]$envMap["DEPLOY_STORAGE_DB_NAME"]
+    })
 }
-if (-not (Test-Path $SshKeyPath)) {
-    throw "SSH key not found: $SshKeyPath"
-}
-if (-not $RemoteDeployDir) {
-    throw "Missing DEPLOY_REMOTE_PATH or -RemoteDeployDir."
+
+foreach ($cfg in $targetConfigs) {
+    if (-not $cfg.ServerHost) { throw "Missing SSH host for target '$($cfg.Target)'." }
+    if (-not $cfg.ServerUser) { throw "Missing SSH user for target '$($cfg.Target)'." }
+    if (-not $cfg.RemoteDeployDir) { throw "Missing remote deploy path for target '$($cfg.Target)'." }
+    if ($cfg.AuthMode -eq "key" -and -not $cfg.SshKeyPath) { throw "Missing SSH key path for target '$($cfg.Target)'." }
+    if ($cfg.AuthMode -eq "password" -and -not $cfg.SshPassword) { throw "Missing SSH password for target '$($cfg.Target)'." }
+    if ($cfg.AuthMode -eq "key" -and -not (Test-Path $cfg.SshKeyPath)) { throw "SSH key not found for target '$($cfg.Target)': $($cfg.SshKeyPath)" }
 }
 
 $gitStatus = & git -C $repoRoot status --short
@@ -122,25 +266,6 @@ if (-not $commit) {
 }
 
 $archivePath = Join-Path $repoRoot "local-proxy-$commit.tar"
-$remoteArchivePath = "/tmp/local-proxy-$commit.tar"
-$remoteExtractDir = "/tmp/local-proxy-$commit"
-
-$remoteDbEnv = @{
-    STORAGE_DB_HOST = [string]$envMap["DEPLOY_STORAGE_DB_HOST"]
-    STORAGE_DB_PORT = [string]$envMap["DEPLOY_STORAGE_DB_PORT"]
-    STORAGE_DB_USER = [string]$envMap["DEPLOY_STORAGE_DB_USER"]
-    STORAGE_DB_PASSWORD = [string]$envMap["DEPLOY_STORAGE_DB_PASSWORD"]
-    STORAGE_DB_NAME = [string]$envMap["DEPLOY_STORAGE_DB_NAME"]
-}
-
-$hasRemoteDbEnv = $false
-foreach ($key in $remoteDbEnv.Keys) {
-    if ([string]::IsNullOrWhiteSpace([string]$remoteDbEnv[$key])) {
-        $hasRemoteDbEnv = $false
-        break
-    }
-    $hasRemoteDbEnv = $true
-}
 
 Write-Step "Archive commit $commit"
 if (Test-Path $archivePath) {
@@ -151,21 +276,42 @@ if ($LASTEXITCODE -ne 0) {
     throw "git archive failed."
 }
 
-Write-Step "Upload archive to ${ServerUser}@${ServerHost}:$remoteArchivePath"
-Invoke-Scp -LocalPath $archivePath -RemotePath $remoteArchivePath
+foreach ($cfg in $targetConfigs) {
+    $remoteArchivePath = "/tmp/local-proxy-$commit-$($cfg.Target).tar"
+    $remoteExtractDir = "/tmp/local-proxy-$commit-$($cfg.Target)"
+    $remoteBaseArgs = Build-RemoteArgs $cfg "exec"
+    $uploadArgs = Build-RemoteArgs $cfg "upload"
+    $passwordValue = if ($cfg.AuthMode -eq "password") { [string]$cfg.SshPassword } else { "" }
 
-if ($hasRemoteDbEnv) {
-    Write-Step "Sync remote MySQL env values"
-    $payloadJson = $remoteDbEnv | ConvertTo-Json -Compress
-    $payloadB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payloadJson))
-    $remoteEnvPath = "$RemoteDeployDir/.env"
-    $pythonScript = @"
+    Write-Step "[$($cfg.Target)] Upload archive to $($cfg.ServerUser)@$($cfg.ServerHost):$remoteArchivePath"
+    Invoke-RemoteHelper $pythonCommand ($uploadArgs + @("--local-path", $archivePath, "--remote-path", $remoteArchivePath)) $passwordValue
+
+    $remoteEnvUpdates = [ordered]@{
+        STORAGE_DB_HOST = [string]$cfg.StorageDbHost
+        STORAGE_DB_PORT = [string]$cfg.StorageDbPort
+        STORAGE_DB_USER = [string]$cfg.StorageDbUser
+        STORAGE_DB_PASSWORD = [string]$cfg.StorageDbPassword
+        STORAGE_DB_NAME = [string]$cfg.StorageDbName
+        SHARED_DOCKER_NETWORK = [string]$cfg.SharedDockerNetwork
+    }
+    $filteredUpdates = [ordered]@{}
+    foreach ($entry in $remoteEnvUpdates.GetEnumerator()) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$entry.Value)) {
+            $filteredUpdates[$entry.Key] = [string]$entry.Value
+        }
+    }
+    if ($filteredUpdates.Count -gt 0) {
+        Write-Step "[$($cfg.Target)] Sync remote env values"
+        $payloadJson = $filteredUpdates | ConvertTo-Json -Compress
+        $payloadB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payloadJson))
+        $envSyncCommand = @'
+python3 - <<'PY'
 import base64
 import json
 from pathlib import Path
 
-env_path = Path("$remoteEnvPath")
-updates = json.loads(base64.b64decode("$payloadB64").decode("utf-8"))
+env_path = Path("__REMOTE_ENV_PATH__")
+updates = json.loads(base64.b64decode("__PAYLOAD_B64__").decode("utf-8"))
 lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
 seen = set()
 output = []
@@ -182,72 +328,81 @@ for line in lines:
 for key, value in updates.items():
     if key not in seen:
         output.append(f"{key}={value}")
+env_path.parent.mkdir(parents=True, exist_ok=True)
 env_path.write_text("\n".join(output) + "\n", encoding="utf-8")
-print("synced remote db env keys:", ",".join(sorted(updates)))
-"@
-    $pythonScriptPath = Join-Path $repoRoot "var\tmp-remote-env-sync.py"
-    New-Item -ItemType Directory -Force -Path (Split-Path $pythonScriptPath -Parent) | Out-Null
-    Set-Content -LiteralPath $pythonScriptPath -Value $pythonScript -Encoding UTF8
-    $remoteScriptPath = "/tmp/local-proxy-env-sync.py"
-    Invoke-Scp -LocalPath $pythonScriptPath -RemotePath $remoteScriptPath
-    Invoke-Ssh "python3 '$remoteScriptPath' && rm -f '$remoteScriptPath'"
-}
+print("synced_remote_env_keys=" + ",".join(sorted(updates)))
+PY
+'@
+        $envSyncCommand = $envSyncCommand.Replace("__REMOTE_ENV_PATH__", "$($cfg.RemoteDeployDir)/.env")
+        $envSyncCommand = $envSyncCommand.Replace("__PAYLOAD_B64__", $payloadB64)
+        $envSyncCommandB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($envSyncCommand))
+        Invoke-RemoteHelper $pythonCommand ($remoteBaseArgs + @("--command-b64", $envSyncCommandB64)) $passwordValue
+    }
 
-Write-Step "Sync tracked code while preserving remote .env, config/proxy-config.json and var/"
-$deployCommand = @'
+    Write-Step "[$($cfg.Target)] Sync tracked code while preserving remote .env, config/proxy-config.json and var/"
+    $deployCommand = @'
 set -e
-mkdir -p '__REMOTE_DEPLOY_DIR__'
-rm -rf '__REMOTE_EXTRACT_DIR__'
-mkdir -p '__REMOTE_EXTRACT_DIR__'
-tar -xf '__REMOTE_ARCHIVE_PATH__' -C '__REMOTE_EXTRACT_DIR__'
-rsync -a --delete \
-  --exclude '.env' \
-  --exclude 'config/proxy-config.json' \
-  --exclude 'var/' \
-  '__REMOTE_EXTRACT_DIR__/' '__REMOTE_DEPLOY_DIR__/'
-cd '__REMOTE_DEPLOY_DIR__'
+mkdir -p "__REMOTE_DEPLOY_DIR__"
+rm -rf "__REMOTE_EXTRACT_DIR__"
+mkdir -p "__REMOTE_EXTRACT_DIR__"
+tar -xf "__REMOTE_ARCHIVE_PATH__" -C "__REMOTE_EXTRACT_DIR__"
 python3 - <<'PY'
 from pathlib import Path
+import shutil
 
-targets = [
-    Path('/app/start.sh'),
-    Path('/app/node_proxy.js'),
-    Path('/app/app.py'),
-]
+source_root = Path("__REMOTE_EXTRACT_DIR__")
+deploy_root = Path("__REMOTE_DEPLOY_DIR__")
+skip_exact = {".env", "config/proxy-config.json"}
+skip_prefix = ("var/",)
 
-repo_root = Path('.').resolve()
-for relative in ('start.sh', 'node_proxy.js', 'app.py'):
-    path = repo_root / relative
+for path in sorted(source_root.rglob("*")):
+    rel = path.relative_to(source_root).as_posix()
+    if rel in skip_exact:
+        continue
+    if any(rel == prefix[:-1] or rel.startswith(prefix) for prefix in skip_prefix):
+        continue
+    target = deploy_root / rel
+    if path.is_dir():
+        target.mkdir(parents=True, exist_ok=True)
+        continue
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, target)
+
+for relative in ("start.sh", "node_proxy.js", "app.py"):
+    path = deploy_root / relative
     if not path.exists():
         continue
     raw = path.read_bytes()
-    normalized = raw.replace(b'\r\n', b'\n').replace(b'\r', b'\n')
+    normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     if normalized != raw:
         path.write_bytes(normalized)
 PY
+cd "__REMOTE_DEPLOY_DIR__"
 chmod +x ./start.sh
 docker compose up -d --build __REMOTE_SERVICE_NAME__
 attempt=1
-while [ "$attempt" -le 30 ]; do
-  if curl -fsS http://127.0.0.1:18765/health >/dev/null; then
+while [ "$attempt" -le 45 ]; do
+  if curl -fsS http://127.0.0.1:__APP_PORT__/health >/dev/null; then
     break
   fi
-  if [ "$attempt" -eq 30 ]; then
+  if [ "$attempt" -eq 45 ]; then
     echo "health check failed after $attempt attempts" >&2
     docker ps --filter name=__REMOTE_SERVICE_NAME__ || true
-    docker logs --tail 80 __REMOTE_SERVICE_NAME__ || true
+    docker logs --tail 120 __REMOTE_SERVICE_NAME__ || true
     exit 1
   fi
   sleep 2
   attempt=$((attempt + 1))
 done
-curl -fsS http://127.0.0.1:18765/health
-rm -rf '__REMOTE_EXTRACT_DIR__' '__REMOTE_ARCHIVE_PATH__'
+curl -fsS http://127.0.0.1:__APP_PORT__/health
+rm -rf "__REMOTE_EXTRACT_DIR__" "__REMOTE_ARCHIVE_PATH__"
 '@
-$deployCommand = $deployCommand.Replace("__REMOTE_DEPLOY_DIR__", $RemoteDeployDir)
-$deployCommand = $deployCommand.Replace("__REMOTE_EXTRACT_DIR__", $remoteExtractDir)
-$deployCommand = $deployCommand.Replace("__REMOTE_ARCHIVE_PATH__", $remoteArchivePath)
-$deployCommand = $deployCommand.Replace("__REMOTE_SERVICE_NAME__", $RemoteServiceName)
-Invoke-Ssh $deployCommand
-
-Write-Step "Deploy complete: $commit"
+    $deployCommand = $deployCommand.Replace("__REMOTE_DEPLOY_DIR__", [string]$cfg.RemoteDeployDir)
+    $deployCommand = $deployCommand.Replace("__REMOTE_EXTRACT_DIR__", $remoteExtractDir)
+    $deployCommand = $deployCommand.Replace("__REMOTE_ARCHIVE_PATH__", $remoteArchivePath)
+    $deployCommand = $deployCommand.Replace("__REMOTE_SERVICE_NAME__", [string]$cfg.RemoteServiceName)
+    $deployCommand = $deployCommand.Replace("__APP_PORT__", [string]$cfg.AppPort)
+    $deployCommandB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($deployCommand))
+    Invoke-RemoteHelper $pythonCommand ($remoteBaseArgs + @("--command-b64", $deployCommandB64)) $passwordValue
+    Write-Step "[$($cfg.Target)] Deploy complete: $commit"
+}
