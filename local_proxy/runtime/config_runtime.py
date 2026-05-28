@@ -4,7 +4,7 @@ import json
 
 from local_proxy.runtime.helpers import ensure_proxy_prompt_rules, parse_bool, parse_int
 from local_proxy.runtime.policies import normalize_pool_route_policies
-from local_proxy.runtime.pools import normalize_proxy_pools
+from local_proxy.runtime.pools import apply_legacy_pool_text_defaults, normalize_proxy_pools
 from local_proxy.http.proxy_auth import normalize_proxy_api_key_records
 from local_proxy.upstream.capabilities import (
     normalize_model_capabilities_text,
@@ -177,6 +177,11 @@ def normalize_runtime_config_payload(
     next_pools = current["PROXY_POOLS"]
     incoming_pools = config_payload.get("pools")
     if isinstance(incoming_pools, list):
+        incoming_pools = apply_legacy_pool_text_defaults(
+            incoming_pools,
+            legacy_model_aliases_text=config_payload.get("model_aliases_text"),
+            legacy_supported_models_text=config_payload.get("supported_models_text"),
+        )
         next_pools = normalize_pool_route_policies(normalize_proxy_pools(incoming_pools))
 
     return {

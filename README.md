@@ -34,7 +34,7 @@
 **Local Proxy** 是一个部署在本地开发环境中的 AI API 代理网关。推荐拓扑为 `客户端 -> NEWAPI -> 代理 -> 上游模型`：客户端、NEWAPI、本项目和上游模型之间的鉴权彼此独立，代理负责协议转换、路由和上游认证。
 
 - **协议统一**：客户端只需使用 OpenAI 兼容协议，代理自动转换为 Anthropic、Gemini 等原生协议
-- **智能路由**：支持多上游链路、线路模型映射、自动探测与竞速选择
+- **智能路由**：支持多上游链路、每条线路独立支持模型列表、线路模型映射、自动探测与竞速选择
 - **高可用**：请求失败自动重试、链路切换、退避策略，确保服务连续性
 - **请求修复**：自动修正常见客户端请求格式问题、工具调用参数问题
 - **监控运维**：提供 Web 监控面板，实时查看请求状态、路由缓存、链路健康
@@ -58,6 +58,7 @@
 
 ### 智能路由
 
+- **线路支持模型**：每条链路可手工声明自己明确支持的上游模型列表，避免慢线路被自动探测误导
 - **线路模型映射**：每条链路可单独声明“请求模型 -> 上游真实模型”，避免跨线路误判
 - **模型探测**：短超时探测上游 `/models` 接口，发现同语义模型名
 - **候选竞速**：首次请求时并发尝试多个候选模型名，取最快成功者
@@ -165,7 +166,7 @@ UPSTREAM_URL=https://your-upstream-service.example/v1
 UPSTREAM_API_KEY=sk-your-upstream-key
 ```
 
-编辑 `config/proxy-config.json`，配置渠道池和模型映射。
+编辑 `config/proxy-config.json`，按线路配置连接池、支持模型和模型映射。
 
 > **注意**：`.env` 和 `config/proxy-config.json` 已被 Git 忽略，避免密钥泄露。
 
@@ -262,14 +263,18 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18765/health"
       "priority": 100,
       "urls": ["https://your-upstream.example/v1"],
       "keys": [{"key": "sk-your-upstream-key"}],
-      "model_aliases_text": "deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash",
+      "supported_models_text": "deepseek-ai/deepseek-v4-flash\ndeepseek-ai/deepseek-v4-pro",
+      "model_aliases_text": "deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash\ndeepseek-v4-pro=deepseek-ai/deepseek-v4-pro",
       "route_policy": {
         "reasoning_effort": "high",
         "prompt_cache_mode": "exact",
-        "compression_mode": "light",
-        "max_history_messages": 80,
-        "max_tool_chars": 24000,
-        "max_input_chars": 180000,
+        "prompt_cache_hints_mode": "auto",
+        "prompt_cache_provider": "auto",
+        "prompt_cache_retention": "",
+        "text_upstream_protocol": "auto",
+        "route_cooldown_seconds": 90,
+        "route_cooldown_multiplier": 2,
+        "route_cooldown_max_seconds": 900,
         "max_output_tokens": 0
       }
     }
@@ -281,12 +286,17 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18765/health"
 
 | 参数 | 说明 |
 |------|------|
+| `supported_models_text` | 该线路显式支持的上游模型 ID 列表，按行填写；填写后只会在该列表内选候选 |
+| `model_aliases_text` | 该线路的“请求模型 -> 上游真实模型”映射，按行填写 |
 | `reasoning_effort` | 推理努力程度（low / medium / high） |
-| `prompt_cache_mode` | 提示缓存模式 |
-| `compression_mode` | 历史消息压缩模式（light / medium / heavy） |
-| `max_history_messages` | 历史消息上限 |
-| `max_tool_chars` | 工具调用字符上限 |
-| `max_input_chars` | 输入字符上限 |
+| `text_upstream_protocol` | 文本请求上游协议（auto / openai / responses） |
+| `prompt_cache_mode` | 本地精确缓存模式 |
+| `prompt_cache_hints_mode` | 上游前缀缓存 Hint 模式 |
+| `prompt_cache_provider` | Hint 提供方 |
+| `prompt_cache_retention` | Hint 保留期 |
+| `route_cooldown_seconds` | 线路基础冷却秒数 |
+| `route_cooldown_multiplier` | 连续失败后的冷却倍率 |
+| `route_cooldown_max_seconds` | 线路最大冷却秒数 |
 | `max_output_tokens` | 输出 Token 上限（0 表示不限制） |
 
 ---
@@ -469,12 +479,19 @@ Invoke-RestMethod `
 
 ### 线路模型映射配置
 
-在控制台“连接池管理 -> 管理连接池 -> 该线路模型映射”中按线路填写：
+在控制台“连接池管理 -> 管理连接池”中，先填写“该线路支持模型”，再填写“该线路模型映射”：
 
 ```text
-# 格式：请求模型=该线路上游模型
+# 该线路支持模型（逐行填写上游真实模型 ID）
+deepseek-ai/deepseek-v4-flash
+deepseek-ai/deepseek-v4-pro
+```
+
+```text
+# 该线路模型映射（格式：请求模型=该线路上游模型）
 deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash
 opencode/deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash
+deepseek-v4-pro=deepseek-ai/deepseek-v4-pro
 ```
 
 ### 模型能力表
@@ -500,8 +517,8 @@ gpt-5.5=1000000,128000
 | 请求历史 | 最近请求的详细记录，包括耗时、协议类型 |
 | 路由缓存 | 模型路由记忆命中、模型列表缓存命中、候选竞速命中 |
 | 链路测试 | 测试各上游链路的连通性 |
-| 配置管理 | 在线修改渠道配置和模型映射 |
-| 连接池策略 | 调整压缩模式、历史消息上限等策略参数 |
+| 配置管理 | 在线修改渠道配置、每条线路支持模型和模型映射 |
+| 连接池策略 | 调整协议、缓存、冷却等线路策略参数 |
 | 客户端断开计数 | 记录客户端主动断开连接的情况 |
 | 最近日志 | 实时滚动显示代理运行日志 |
 
@@ -565,7 +582,7 @@ gpt-5.5=1000000,128000
         ├── orchestrator.py         # 请求编排
         ├── router.py               # 模型路由
         ├── retry.py                # 重试机制
-        ├── models.py               # 线路模型映射解析与候选
+        ├── models.py               # 线路支持模型 / 模型映射解析与候选
         ├── capabilities.py         # 能力探测
         └── logging_utils.py        # 日志工具
 ```
@@ -594,6 +611,7 @@ gpt-5.5=1000000,128000
 ### 模型返回 "model not found"
 
 - 检查对应线路的模型映射是否正确配置
+- 检查对应线路的支持模型列表是否已显式包含目标上游模型
 - 检查上游服务是否支持该模型
 - 代理会自动尝试候选模型名并记住成功路由
 

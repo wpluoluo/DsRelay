@@ -124,6 +124,7 @@ from local_proxy.runtime.pools import ConnectionPoolState, normalize_pool_url, n
 from local_proxy.runtime.policies import (
     DEFAULT_ROUTE_POLICY,
     get_pool_model_aliases_for_url,
+    get_pool_supported_models_for_url,
     get_route_policy_for_url,
     normalize_pool_route_policies,
 )
@@ -156,6 +157,7 @@ from local_proxy.upstream.models import (
     model_list_url_from_endpoint,
     normalize_model_alias_key,
     parse_model_aliases,
+    parse_supported_model_ids,
 )
 from local_proxy.upstream.logging_utils import summarize_attempt_routes, summarize_attempts_for_log
 from local_proxy.upstream.retry import race_model_candidate_requests
@@ -200,6 +202,7 @@ CONFIG_DIR = PROJECT_ROOT / "config"
 VAR_DIR = PROJECT_ROOT / "var"
 CACHE_DIR = VAR_DIR / "cache"
 LOG_DIR = VAR_DIR / "logs"
+CONFIG_SOURCE = "defaults"
 
 
 def resolve_project_path(raw_path: str | Path) -> Path:
@@ -207,6 +210,26 @@ def resolve_project_path(raw_path: str | Path) -> Path:
     if path.is_absolute():
         return path
     return PROJECT_ROOT / path
+
+
+def list_runtime_config_candidate_paths() -> list[Path]:
+    candidates: list[Path] = []
+    seen: set[str] = set()
+    for path in (PROXY_CONFIG_PATH, PROXY_REMOTE_CONFIG_PATH):
+        resolved = resolve_project_path(path)
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(resolved)
+    return candidates
+
+
+def pick_active_runtime_config_path() -> Path:
+    existing = [path for path in list_runtime_config_candidate_paths() if path.exists()]
+    if not existing:
+        return PROXY_CONFIG_PATH
+    return max(existing, key=lambda path: (float(path.stat().st_mtime or 0.0), str(path)))
 
 
 def has_explicit_config_value(config_payload: dict, key: str) -> bool:
@@ -505,6 +528,10 @@ PROXY_LOG_PATH = resolve_project_path(
 PROXY_CONFIG_PATH = resolve_project_path(
     os.getenv("PROXY_CONFIG_PATH", str(CONFIG_DIR / "proxy-config.json"))
 )
+PROXY_REMOTE_CONFIG_PATH = resolve_project_path(
+    os.getenv("PROXY_REMOTE_CONFIG_PATH", str(CONFIG_DIR / "proxy-config.remote.json"))
+)
+ACTIVE_RUNTIME_CONFIG_PATH = PROXY_CONFIG_PATH
 MAX_RECENT_REQUESTS = int(os.getenv("MAX_RECENT_REQUESTS", "80"))
 MAX_LOG_LINES = int(os.getenv("MAX_LOG_LINES", "120"))
 FORCE_UPSTREAM_CHAT_STREAM = os.getenv("FORCE_UPSTREAM_CHAT_STREAM", "1") == "1"
@@ -1310,15 +1337,19 @@ def build_runtime_config_payload() -> dict:
             "enable_model_candidate_race": ENABLE_MODEL_CANDIDATE_RACE,
             "model_candidate_race_limit": MODEL_CANDIDATE_RACE_LIMIT,
             "model_candidate_race_timeout_seconds": MODEL_CANDIDATE_RACE_TIMEOUT_SECONDS,
-            "config_path": PROXY_CONFIG_PATH,
-            "config_file_exists": PROXY_CONFIG_PATH.exists(),
+            "config_path": ACTIVE_RUNTIME_CONFIG_PATH,
+            "config_file_exists": ACTIVE_RUNTIME_CONFIG_PATH.exists(),
+            "primary_config_path": PROXY_CONFIG_PATH,
+            "config_candidate_paths": list_runtime_config_candidate_paths(),
             "db_label": STORAGE_DB_LABEL,
             "db_enabled": storage is not None,
+            "config_source": CONFIG_SOURCE,
         }
     )
 
 
 def save_runtime_config_to_disk() -> None:
+    global ACTIVE_RUNTIME_CONFIG_PATH
     payload = export_runtime_config_for_storage()
     save_runtime_config(
         payload,
@@ -1328,9 +1359,12 @@ def save_runtime_config_to_disk() -> None:
         logger=proxy_logger,
         db_label=STORAGE_DB_LABEL,
     )
+    ACTIVE_RUNTIME_CONFIG_PATH = PROXY_CONFIG_PATH
 
 
 def load_runtime_config_from_storage() -> bool:
+    global ACTIVE_RUNTIME_CONFIG_PATH
+    global CONFIG_SOURCE
     payload = load_runtime_config_from_db(
         storage=storage,
         storage_key=APP_CONFIG_STATE_KEY,
@@ -1340,6 +1374,8 @@ def load_runtime_config_from_storage() -> bool:
     if not payload:
         return False
     apply_runtime_config(payload, persist=False)
+    ACTIVE_RUNTIME_CONFIG_PATH = PROXY_CONFIG_PATH
+    CONFIG_SOURCE = "storage"
     return True
 
 
@@ -1378,6 +1414,8 @@ def apply_runtime_config(config_payload: dict | None, *, persist: bool) -> dict:
     global ENABLE_MODEL_CANDIDATE_RACE
     global MODEL_CANDIDATE_RACE_LIMIT
     global MODEL_CANDIDATE_RACE_TIMEOUT_SECONDS
+    global ACTIVE_RUNTIME_CONFIG_PATH
+    global CONFIG_SOURCE
 
     normalized_config = normalize_runtime_config_payload(
         config_payload,
@@ -1434,6 +1472,8 @@ def apply_runtime_config(config_payload: dict | None, *, persist: bool) -> dict:
         )
         if persist:
             save_runtime_config_to_disk()
+            ACTIVE_RUNTIME_CONFIG_PATH = PROXY_CONFIG_PATH
+            CONFIG_SOURCE = "storage" if storage is not None else "disk"
 
     log_runtime_config_update(
         logger=proxy_logger,
@@ -1455,13 +1495,18 @@ def apply_runtime_config(config_payload: dict | None, *, persist: bool) -> dict:
 
 
 def load_runtime_config_from_disk() -> bool:
+    global ACTIVE_RUNTIME_CONFIG_PATH
+    global CONFIG_SOURCE
+    active_path = pick_active_runtime_config_path()
     payload = load_runtime_config_from_file(
-        config_path=PROXY_CONFIG_PATH,
+        config_path=active_path,
         logger=proxy_logger,
     )
     if not payload:
         return False
     apply_runtime_config(payload, persist=False)
+    ACTIVE_RUNTIME_CONFIG_PATH = active_path
+    CONFIG_SOURCE = "disk"
     return True
 
 
@@ -1475,13 +1520,13 @@ def initialize_runtime_config() -> str:
                 proxy_logger.info(
                     "bootstrap_runtime_config_to_storage label=%s source=%s",
                     STORAGE_DB_LABEL,
-                    str(PROXY_CONFIG_PATH),
+                    str(ACTIVE_RUNTIME_CONFIG_PATH),
                 )
             except Exception as exc:  # pragma: no cover
                 proxy_logger.warning(
                     "bootstrap_runtime_config_to_storage_failed label=%s source=%s error=%s",
                     STORAGE_DB_LABEL,
-                    str(PROXY_CONFIG_PATH),
+                    str(ACTIVE_RUNTIME_CONFIG_PATH),
                     str(exc),
                 )
         return "disk"
@@ -2726,6 +2771,7 @@ def build_model_candidate_order_for_route(
     request_kwargs: dict,
     request_id: str,
 ) -> dict:
+    manual_supported_models = get_pool_supported_models_for_url(PROXY_POOLS, route_url, normalize_pool_url)
     route_specific_candidates = build_model_candidates_for_route(
         route_url,
         request_kwargs.get("json") if isinstance(request_kwargs, dict) else None,
@@ -2739,6 +2785,7 @@ def build_model_candidate_order_for_route(
         fetch_model_list=fetch_upstream_model_list,
         get_model_candidate_score=get_model_candidate_score,
         logger=proxy_logger,
+        manual_supported_models=manual_supported_models,
     )
 
 
@@ -2748,6 +2795,7 @@ def order_model_candidates_for_route(
     request_kwargs: dict,
     request_id: str,
 ) -> list[str]:
+    manual_supported_models = get_pool_supported_models_for_url(PROXY_POOLS, route_url, normalize_pool_url)
     route_specific_candidates = build_model_candidates_for_route(
         route_url,
         request_kwargs.get("json") if isinstance(request_kwargs, dict) else None,
@@ -2761,6 +2809,7 @@ def order_model_candidates_for_route(
         fetch_model_list=fetch_upstream_model_list,
         get_model_candidate_score=get_model_candidate_score,
         logger=proxy_logger,
+        manual_supported_models=manual_supported_models,
     )
 
 
@@ -3338,6 +3387,8 @@ def collect_local_model_ids() -> list[str]:
     for pool in PROXY_POOLS or []:
         if not isinstance(pool, dict):
             continue
+        for supported_model in parse_supported_model_ids(pool.get("supported_models_text")):
+            add(supported_model)
         route_aliases = parse_model_aliases(pool.get("model_aliases_text"))
         for logical_model, targets in route_aliases.items():
             add(logical_model)
@@ -3538,8 +3589,11 @@ def build_runtime_snapshot() -> dict:
             "db_label": STORAGE_DB_LABEL,
             "db_enabled": storage is not None,
             "cache_stats_snapshot": cache_stats.snapshot,
-            "config_path": PROXY_CONFIG_PATH,
-            "config_file_exists": PROXY_CONFIG_PATH.exists(),
+            "config_path": ACTIVE_RUNTIME_CONFIG_PATH,
+            "config_file_exists": ACTIVE_RUNTIME_CONFIG_PATH.exists(),
+            "primary_config_path": PROXY_CONFIG_PATH,
+            "config_candidate_paths": list_runtime_config_candidate_paths(),
+            "config_source": CONFIG_SOURCE,
             "max_retries": UPSTREAM_MAX_RETRIES,
             "retry_backoff_ms": UPSTREAM_RETRY_BACKOFF_MS,
             "retry_max_backoff_ms": UPSTREAM_RETRY_MAX_BACKOFF_MS,
@@ -3621,6 +3675,7 @@ def dashboard_state() -> dict:
             "active_session_affinity_keys": lambda: active_affinity_keys,
             "active_route_affinity_counts": lambda: dict(active_route_affinity_counts),
             "read_recent_log_lines": read_recent_log_lines,
+            "config_source": CONFIG_SOURCE,
         }
     )
 

@@ -1766,10 +1766,15 @@
       var upstreamCount = Number(data.upstream_url_count || (config.upstream_urls || []).length || 0);
       var pools = Array.isArray(config.pools) ? config.pools : [];
       var capabilityCount = Number(runtime.model_capability_count || config.model_capability_count || 0);
+      var routeSupportedModelCount = pools.reduce(function(total, pool) {
+        var text = String((pool && pool.supported_models_text) || "").trim();
+        if (!text) return total;
+        return total + text.split(/\r?\n|[;,]/).map(function(line) { return line.trim(); }).filter(Boolean).length;
+      }, 0);
       var routeModelMappingCount = pools.reduce(function(total, pool) {
         var text = String((pool && pool.model_aliases_text) || "").trim();
         if (!text) return total;
-        return total + text.split(/\r?\n|;/).map(function(line) { return line.trim(); }).filter(Boolean).length;
+        return total + text.split(/\r?\n|[;,]/).map(function(line) { return line.trim(); }).filter(Boolean).length;
       }, 0);
       var probeOn = !!(runtime.model_routing && runtime.model_routing.probe_enabled);
       var raceOn = !!(runtime.model_routing && runtime.model_routing.candidate_race_enabled);
@@ -1823,7 +1828,7 @@
         Number(image.task_poll_interval_seconds || config.image_task_poll_interval_seconds || 0) + "s"
       );
 
-      setText(configModelAliasInfoEl, routeModelMappingCount + " 条映射");
+      setText(configModelAliasInfoEl, routeSupportedModelCount + " 个支持模型 · " + routeModelMappingCount + " 条映射");
       setText(configModelAliasMetaEl, capabilityCount + " 条能力 · 路由命中 " + Number((runtime.model_routing && runtime.model_routing.cache_stats && runtime.model_routing.cache_stats.model_route_hits) || 0));
       setText(configResumeInfoEl, resumeEnabled ? "已启用" : "已关闭");
       setText(configResumeMetaEl, "注入 " + resumeInjected + " · 保存 " + resumeSaved + " · 清理 " + resumeCleared + " · 条目 " + interruptedEntries);
@@ -2004,9 +2009,14 @@
       var routeModelMappingCount = (Array.isArray(config.pools) ? config.pools : []).reduce(function(total, pool) {
         var text = String((pool && pool.model_aliases_text) || "").trim();
         if (!text) return total;
-        return total + text.split(/\r?\n|;/).map(function(line) { return line.trim(); }).filter(Boolean).length;
+        return total + text.split(/\r?\n|[;,]/).map(function(line) { return line.trim(); }).filter(Boolean).length;
       }, 0);
-      setText(heroModelInfoEl, routeModelMappingCount + " 映射 / " + (runtime.model_capability_count || config.model_capability_count || 0) + " 能力");
+      var routeSupportedModelCount = (Array.isArray(config.pools) ? config.pools : []).reduce(function(total, pool) {
+        var text = String((pool && pool.supported_models_text) || "").trim();
+        if (!text) return total;
+        return total + text.split(/\r?\n|[;,]/).map(function(line) { return line.trim(); }).filter(Boolean).length;
+      }, 0);
+      setText(heroModelInfoEl, routeSupportedModelCount + " 支持 / " + routeModelMappingCount + " 映射 / " + (runtime.model_capability_count || config.model_capability_count || 0) + " 能力");
       setText(heroUptimeEl, formatUptime(runtime.uptime_seconds || 0));
 
       setText(heroEndpointEl, "http://127.0.0.1:" + ((runtime.port || config.port) || "18765") + "/v1");
@@ -2424,6 +2434,7 @@
         priority: priority,
         urls: urls,
         keys: keys,
+        supported_models_text: String(pool.supported_models_text || "").trim(),
         model_aliases_text: String(pool.model_aliases_text || "").trim(),
         route_policy: {
           reasoning_effort: String(routePolicy.reasoning_effort || "medium"),
@@ -2573,6 +2584,11 @@
           " · 冷却 " + pool.route_policy.route_cooldown_seconds + "s x" + pool.route_policy.route_cooldown_multiplier
         ) + '</div>';
         html += '</div>';
+        html += '<div class="pool-inline-block"><label>支持模型</label>';
+        html += pool.supported_models_text
+          ? '<div class="pool-inline-item multiline"><div class="request-mono">' + escapeHtml(pool.supported_models_text) + '</div></div>'
+          : '<div class="pool-inline-empty">未配置，将继续依赖探测结果</div>';
+        html += '</div>';
         html += '<div class="pool-inline-block"><label>模型映射</label>';
         html += pool.model_aliases_text
           ? '<div class="pool-inline-item multiline"><div class="request-mono">' + escapeHtml(pool.model_aliases_text) + '</div></div>'
@@ -2633,6 +2649,7 @@
       html += '<div class="field"><label>优先级</label><input type="number" value="' + escapeAttr(pool.priority == null ? 100 : pool.priority) + '" min="0" step="1" data-field="priority"></div>';
       html += '<div class="pool-urls"><label>上游地址</label>' + urlRowsHtml(urls, 0) + '</div>';
       html += '<div class="pool-keys"><label>API Keys</label>' + keyRowsHtml(keys, 0) + '</div>';
+      html += '<div class="field full"><label>该线路支持模型</label><textarea data-field="supported_models_text" placeholder="deepseek-ai/deepseek-v4-flash&#10;deepseek-ai/deepseek-v4-pro">' + escapeHtml(pool.supported_models_text || "") + '</textarea><div class="pool-inline-note">按行填写该线路明确支持的上游模型 ID。填写后只会在这个列表里选，不再靠自动猜测。</div></div>';
       html += '<div class="field full"><label>该线路模型映射</label><textarea data-field="model_aliases_text" placeholder="deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash&#10;opencode/deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash">' + escapeHtml(pool.model_aliases_text || "") + '</textarea><div class="pool-inline-note">按“请求模型=该线路上游模型”逐行填写。只作用于当前连接池，不再只靠自动判断。</div></div>';
       html += '<div class="field"><label>思考强度</label><select data-field="reasoning_effort"><option value="low"' + (pool.route_policy.reasoning_effort === "low" ? " selected" : "") + '>低</option><option value="medium"' + (pool.route_policy.reasoning_effort === "medium" ? " selected" : "") + '>中</option><option value="high"' + (pool.route_policy.reasoning_effort === "high" ? " selected" : "") + '>高</option></select></div>';
       html += '<div class="field"><label>文本上游协议</label><select data-field="text_upstream_protocol"><option value="auto"' + (pool.route_policy.text_upstream_protocol === "auto" ? " selected" : "") + '>自动</option><option value="openai"' + (pool.route_policy.text_upstream_protocol === "openai" ? " selected" : "") + '>OpenAI 兼容</option><option value="responses"' + (pool.route_policy.text_upstream_protocol === "responses" ? " selected" : "") + '>Responses 原生</option></select><div class="pool-inline-note">控制该线路文本请求的上游协议。`/v1/responses` 在 OpenAI 兼容模式下会转到上游 `/chat/completions`。</div></div>';
@@ -2657,6 +2674,7 @@
       var nameEl = root.querySelector('[data-field="name"]');
       var enabledEl = root.querySelector('[data-field="enabled"]');
       var priorityEl = root.querySelector('[data-field="priority"]');
+      var supportedModelsTextEl = root.querySelector('[data-field="supported_models_text"]');
       var modelAliasesTextEl = root.querySelector('[data-field="model_aliases_text"]');
       var reasoningEl = root.querySelector('[data-field="reasoning_effort"]');
       var textProtocolEl = root.querySelector('[data-field="text_upstream_protocol"]');
@@ -2692,6 +2710,7 @@
         priority: priority,
         urls: urls,
         keys: keys,
+        supported_models_text: supportedModelsTextEl ? supportedModelsTextEl.value.trim() : "",
         model_aliases_text: modelAliasesTextEl ? modelAliasesTextEl.value.trim() : "",
         route_policy: {
           reasoning_effort: reasoningEl ? reasoningEl.value : "medium",

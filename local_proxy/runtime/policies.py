@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from local_proxy.upstream.models import parse_model_aliases
+from local_proxy.upstream.models import parse_model_aliases, parse_supported_model_ids
 
 
 DEFAULT_ROUTE_POLICY = {
@@ -182,3 +182,23 @@ def get_pool_model_aliases_for_url(pools: list[dict], route_url: str, normalize_
         if matches_route or matches_base:
             return parse_model_aliases(pool.get("model_aliases_text"))
     return {}
+
+
+def get_pool_supported_models_for_url(pools: list[dict], route_url: str, normalize_pool_url) -> list[str]:
+    route_text = str(route_url or "").strip()
+    normalized_url = normalize_pool_url(route_text.split("#__route=", 1)[0] if "#__route=" in route_text else route_text)
+    for pool in pools or []:
+        if not isinstance(pool, dict) or not pool.get("enabled", True):
+            continue
+        pool_name = str(pool.get("name") or "").strip()
+        route_urls = []
+        for route_ordinal, value in enumerate((pool.get("urls") or []), start=1):
+            route_urls.append(
+                f"{normalize_pool_url(value)}#__route={__import__('hashlib').sha1(f'{pool_name}|{normalize_pool_url(value)}|{int(route_ordinal)}'.encode('utf-8')).hexdigest()[:12]}"
+            )
+        matches_route = bool(route_text and route_text in route_urls)
+        urls = [normalize_pool_url(value) for value in (pool.get("urls") or [])]
+        matches_base = bool(normalized_url and normalized_url in urls)
+        if matches_route or matches_base:
+            return parse_supported_model_ids(pool.get("supported_models_text"))
+    return []

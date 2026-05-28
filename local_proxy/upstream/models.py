@@ -9,6 +9,10 @@ def normalize_model_aliases_text(raw_aliases: str | None) -> str:
     return str(raw_aliases or "").strip()
 
 
+def normalize_supported_models_text(raw_models: str | None) -> str:
+    return str(raw_models or "").strip()
+
+
 def normalize_model_alias_key(model_name: str | None) -> str:
     normalized = str(model_name or "").strip()
     if normalized.lower().startswith("models/"):
@@ -71,6 +75,45 @@ def parse_model_aliases(raw_aliases: str | dict | None) -> dict[str, list[str]]:
         if deduped_targets:
             aliases[normalize_model_alias_key(alias_text)] = deduped_targets
     return aliases
+
+
+def parse_supported_model_ids(raw_models: str | list | dict | None) -> list[str]:
+    values: list[object]
+    if isinstance(raw_models, list):
+        values = list(raw_models)
+    else:
+        raw_text = str(raw_models or "").strip()
+        if not raw_text:
+            return []
+        try:
+            parsed = json.loads(raw_text)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            values = list(parsed)
+        elif isinstance(parsed, dict):
+            nested = parsed.get("models")
+            if not isinstance(nested, list):
+                nested = parsed.get("data")
+            values = list(nested) if isinstance(nested, list) else []
+        else:
+            values = []
+            for raw_line in re.split(r"[\r\n;,]+", raw_text):
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                values.append(line)
+
+    model_ids = []
+    seen = set()
+    for item in values:
+        model_id = str(item or "").strip().removeprefix("models/")
+        model_key = normalize_model_alias_key(model_id)
+        if not model_id or not model_key or model_key in seen:
+            continue
+        seen.add(model_key)
+        model_ids.append(model_id)
+    return model_ids
 
 
 def deepseek_display_case(model_name: str) -> str:

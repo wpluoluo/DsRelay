@@ -12,6 +12,8 @@
           "key": "sk-your-upstream-key"
         }
       ],
+      "supported_models_text": "deepseek-ai/deepseek-v4-flash\ndeepseek-ai/deepseek-v4-pro",
+      "model_aliases_text": "deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash\nopencode/deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash\ndeepseek-v4-pro=deepseek-ai/deepseek-v4-pro",
       "route_policy": {
         "reasoning_effort": "high",
         "prompt_cache_mode": "exact",

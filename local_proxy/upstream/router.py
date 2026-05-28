@@ -380,6 +380,7 @@ def build_model_candidate_order_for_route(
     fetch_model_list: Callable[[str, dict, str], list[str]],
     get_model_candidate_score: Callable[[str, str, str], float | int],
     logger,
+    manual_supported_models: list[str] | None = None,
 ) -> dict:
     if not model_candidates:
         return {
@@ -397,11 +398,43 @@ def build_model_candidate_order_for_route(
         normalize_model_alias_key(candidate)
         for candidate in candidates
     }
+    manual_supported_models = dedupe_model_candidates(manual_supported_models or [])
+    manual_supported_by_key = {
+        normalize_model_alias_key(model_id): model_id
+        for model_id in manual_supported_models
+    }
+    manual_supported_keys = set(manual_supported_by_key)
+
     def compact(items: list[str], limit: int = 4) -> str:
         values = list(items or [])
         if len(values) <= limit:
             return ", ".join(values)
         return ", ".join(values[:limit]) + f" ... +{len(values) - limit}"
+    if manual_supported_models:
+        exact_available = [
+            manual_supported_by_key[normalize_model_alias_key(candidate)]
+            for candidate in candidates
+            if normalize_model_alias_key(candidate) in manual_supported_keys
+        ]
+        ordered = dedupe_model_candidates(exact_available)
+        logger.info(
+            "request_id=%s 模型候选 线路=%s 逻辑模型=%s 顺序=%s 已探测=%s 锁定映射=%s 手工支持=%s",
+            request_id,
+            route_url,
+            logical_model,
+            compact(ordered),
+            False,
+            alias_locked,
+            True,
+        )
+        return {
+            "candidates": ordered,
+            "cache_hit": False,
+            "probed": False,
+            "exact_available": bool(exact_available),
+            "discovered_count": 0,
+            "manual_list": True,
+        }
     cached_candidates = get_cached_route_candidates(logical_model, route_url)
     if alias_locked and cached_candidates:
         cached_candidates = [
@@ -475,6 +508,7 @@ def build_model_candidate_order_for_route(
         "probed": bool(available_models),
         "exact_available": bool(exact_available),
         "discovered_count": len(discovered),
+        "manual_list": False,
     }
 
 

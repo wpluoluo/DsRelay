@@ -51,6 +51,7 @@ class PoolConfigTests(unittest.TestCase):
                     "priority": "120",
                     "urls": [" https://api.example.com/v1/chat/completions ", ""],
                     "keys": [{"key": " sk-test-1 "}, {"key": ""}],
+                    "supported_models_text": "demo-model\nprovider/demo",
                     "model_aliases_text": "demo=provider/demo",
                     "route_policy": {
                         "reasoning_effort": "high",
@@ -70,6 +71,7 @@ class PoolConfigTests(unittest.TestCase):
         self.assertEqual(pools[0]["priority"], 120)
         self.assertEqual(pools[0]["urls"], ["https://api.example.com/v1"])
         self.assertEqual(pools[0]["keys"], [{"key": "sk-test-1"}])
+        self.assertEqual(pools[0]["supported_models_text"], "demo-model\nprovider/demo")
         self.assertEqual(pools[0]["model_aliases_text"], "demo=provider/demo")
         self.assertEqual(pools[0]["route_policy"]["reasoning_effort"], "high")
         self.assertEqual(pools[0]["route_policy"]["text_upstream_protocol"], "auto")
@@ -210,6 +212,46 @@ class PoolConfigTests(unittest.TestCase):
             pools[0]["model_aliases_text"],
             "deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash",
         )
+
+    def test_pool_supported_models_text_is_preserved_when_normalized(self):
+        pools = normalize_proxy_pools(
+            [
+                {
+                    "name": "nv-route",
+                    "enabled": True,
+                    "priority": 100,
+                    "urls": ["https://integrate.api.nvidia.com/v1"],
+                    "keys": [{"key": "nv-key-1"}],
+                    "supported_models_text": "deepseek-ai/deepseek-v4-flash\ndeepseek-ai/deepseek-v4-pro",
+                }
+            ]
+        )
+
+        self.assertEqual(
+            pools[0]["supported_models_text"],
+            "deepseek-ai/deepseek-v4-flash\ndeepseek-ai/deepseek-v4-pro",
+        )
+
+    def test_legacy_global_model_fields_migrate_into_each_pool(self):
+        payload = {
+            "supported_models_text": "deepseek-ai/deepseek-v4-flash",
+            "model_aliases_text": "deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash",
+            "pools": [
+                {
+                    "name": "nv-route",
+                    "enabled": True,
+                    "priority": 100,
+                    "urls": ["https://integrate.api.nvidia.com/v1"],
+                    "keys": [{"key": "nv-key-1"}],
+                }
+            ],
+        }
+
+        normalized = normalize_runtime_config_payload(payload, current=current_runtime_config())
+        pool = normalized["proxy_pools"][0]
+
+        self.assertEqual(pool["supported_models_text"], "deepseek-ai/deepseek-v4-flash")
+        self.assertEqual(pool["model_aliases_text"], "deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash")
 
 
 if __name__ == "__main__":

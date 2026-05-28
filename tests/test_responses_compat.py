@@ -139,6 +139,44 @@ class ResponsesCompatTests(unittest.TestCase):
 
         self.assertEqual(candidates, ["deepseek-ai/deepseek-v4-flash"])
 
+    def test_manual_supported_models_lock_route_candidate_selection(self):
+        order_info = build_model_candidate_order_for_route(
+            route_url="https://integrate.api.nvidia.com/v1/chat/completions#__route=test",
+            model_candidates=["deepseek-ai/deepseek-v4-flash"],
+            request_kwargs={"json": {"model": "deepseek-v4-flash-free"}},
+            request_id="req-manual-supported",
+            get_cached_route_candidates=lambda logical_model, route_url: ["deepseek-ai/deepseek-v4-flash"],
+            fetch_model_list=lambda route_url, request_kwargs, request_id: [
+                "deepseek-ai/deepseek-v4-flash",
+                "deepseek-ai/deepseek-v4-pro",
+            ],
+            get_model_candidate_score=lambda logical_model, route_url, model_candidate: 0,
+            logger=type("NullLogger", (), {"info": lambda *args, **kwargs: None})(),
+            manual_supported_models=["deepseek-ai/deepseek-v4-flash"],
+        )
+
+        self.assertEqual(order_info["candidates"], ["deepseek-ai/deepseek-v4-flash"])
+        self.assertTrue(order_info["manual_list"])
+
+    def test_manual_supported_models_can_block_route_when_requested_model_is_not_supported(self):
+        order_info = build_model_candidate_order_for_route(
+            route_url="https://integrate.api.nvidia.com/v1/chat/completions#__route=test",
+            model_candidates=["deepseek-ai/deepseek-v4-pro"],
+            request_kwargs={"json": {"model": "deepseek-v4-pro"}},
+            request_id="req-manual-supported-empty",
+            get_cached_route_candidates=lambda logical_model, route_url: ["deepseek-ai/deepseek-v4-pro"],
+            fetch_model_list=lambda route_url, request_kwargs, request_id: [
+                "deepseek-ai/deepseek-v4-pro",
+            ],
+            get_model_candidate_score=lambda logical_model, route_url, model_candidate: 0,
+            logger=type("NullLogger", (), {"info": lambda *args, **kwargs: None})(),
+            manual_supported_models=["deepseek-ai/deepseek-v4-flash"],
+        )
+
+        self.assertEqual(order_info["candidates"], [])
+        self.assertTrue(order_info["manual_list"])
+        self.assertFalse(order_info["exact_available"])
+
     def test_proxy_entrypoint_normalizes_duplicate_v1_prefix_before_upstream_request(self):
         seen = {}
 

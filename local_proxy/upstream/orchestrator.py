@@ -166,6 +166,37 @@ def request_upstream_with_retries(
         )
         ordered_model_candidates = list(order_info.get("candidates") or [])
         logical_model = model_candidates[0] if model_candidates else None
+        if logical_model and not ordered_model_candidates:
+            blocked_urls.add(attempt_url)
+            attempts.append(
+                {
+                    "attempt": len(attempts) + 1,
+                    "route_url": attempt_url,
+                    "upstream_url": request_url,
+                    "model": logical_model,
+                    "model_alias_applied": False,
+                    "pool_name": "",
+                    "api_key_index": None,
+                    "api_key_count": len(get_api_keys_for_url(attempt_url)),
+                    "api_key_id": "",
+                    "kind": "skipped",
+                    "reason": "no_supported_model_candidates",
+                    "action": "switch_route",
+                    "preview": "route has no explicit supported candidate for the requested model",
+                }
+            )
+            logger.warning(
+                "request_id=%s 切换线路 次数=%s 线路=%s 原因=当前线路未显式支持请求模型 剩余线路=%s 模型=%s",
+                request_id,
+                len(attempts),
+                attempt_url,
+                max(0, len(candidate_urls) - len(blocked_urls)),
+                logical_model,
+            )
+            if len(blocked_urls) >= len(candidate_urls):
+                break
+            route_cycle = build_attempt_url_cycle(candidate_urls, blocked_urls)
+            continue
 
         if (
             attempt_url not in raced_routes
