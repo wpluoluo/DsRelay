@@ -882,6 +882,7 @@ def merge_model_route_cache(target: dict, source: dict | None) -> dict:
 def load_model_route_cache_from_disk() -> None:
     global model_route_cache
     loaded_cache = {"routes": {}, "model_lists": {}, "capabilities": {}}
+    had_legacy_capabilities = False
     if storage is not None:
         try:
             merge_model_route_cache(loaded_cache, storage.load_model_route_cache())
@@ -901,8 +902,12 @@ def load_model_route_cache_from_disk() -> None:
             proxy_logger.warning("load_model_route_cache_json_failed path=%s error=%s", MODEL_ROUTE_CACHE_PATH, str(exc))
 
     # 模型能力以官方文档 / 官方 Models API / 手工配置为准，不复用历史错误学习缓存。
+    had_legacy_capabilities = bool(loaded_cache.get("capabilities"))
     loaded_cache["capabilities"] = {}
     model_route_cache = loaded_cache
+    if had_legacy_capabilities:
+        proxy_logger.info("clear_legacy_model_capability_cache source=official_only")
+        save_model_route_cache_to_disk()
 
 
 def save_model_route_cache_to_disk() -> None:
