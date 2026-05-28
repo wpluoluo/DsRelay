@@ -252,7 +252,7 @@ foreach ($cfg in $targetConfigs) {
     if ($cfg.AuthMode -eq "key" -and -not (Test-Path $cfg.SshKeyPath)) { throw "SSH key not found for target '$($cfg.Target)': $($cfg.SshKeyPath)" }
 }
 
-$gitStatus = & git -C $repoRoot status --short
+$gitStatus = & git -C $repoRoot status --short --untracked-files=no
 if ($LASTEXITCODE -ne 0) {
     throw "Unable to read git status."
 }
