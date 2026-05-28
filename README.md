@@ -274,6 +274,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18765/health"
 | `DEPLOY_<TARGET>_SSH_PASSWORD` | SSH 密码（`password` 模式，仅本地 `.env` 使用） |
 | `DEPLOY_<TARGET>_REMOTE_PATH` | 远端部署目录 |
 | `DEPLOY_<TARGET>_SERVICE_NAME` | `docker compose` 服务名 |
+| `DEPLOY_<TARGET>_COMPOSE_FILE` | 指定目标机使用的 compose 文件，例如 `docker-compose.host.yml` |
 | `DEPLOY_<TARGET>_APP_PORT` | 代理健康检查端口 |
 | `DEPLOY_<TARGET>_SHARED_DOCKER_NETWORK` | 目标机共享网络名 |
 | `DEPLOY_<TARGET>_STORAGE_DB_*` | 目标机远端 `.env` 中需要写入的 MySQL 连接参数 |
@@ -288,7 +289,14 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18765/health"
 .\scripts\deploy-remote.ps1 -AllTargets
 ```
 
-如果目标机是宝塔面板，推荐单独创建一个 Docker 共享网络（例如 `local-proxy-shared`），再把 `local-proxy` 和它自己的 MySQL 容器挂进去；这样不会和宝塔宿主机已有服务混在一起。
+如果目标机是宝塔面板，且数据库使用宿主机现有 MySQL，推荐直接让 `local-proxy` 使用 `docker-compose.host.yml` 运行在 host network；这样容器内可以直接访问 `127.0.0.1:3306`，同时避免桥接网络访问宿主机 MySQL 不通的问题。
+
+如果目标机需要直接连接宿主机 MySQL，可以把：
+
+- `DEPLOY_<TARGET>_COMPOSE_FILE=docker-compose.host.yml`
+- `DEPLOY_<TARGET>_STORAGE_DB_HOST=127.0.0.1`
+
+这样 `local-proxy` 会以 host network 方式运行，容器内可直接访问服务器本机的 `3306`。
 
 ### 渠道配置
 

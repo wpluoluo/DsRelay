@@ -1,0 +1,19 @@
+services:
+  local-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: local-proxy
+    restart: always
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      - PORT=${PORT:-18765}
+      - PYTHONUNBUFFERED=1
+      - RUNNING_IN_DOCKER=1
+    volumes:
+      - ./var/logs:/app/var/logs
+      - ./var/cache:/app/var/cache
+      - ./var/run:/app/var/run
+      - ./config:/app/config

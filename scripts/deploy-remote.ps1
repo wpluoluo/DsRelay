@@ -133,6 +133,7 @@ function Resolve-TargetConfig([string]$TargetName, [hashtable]$EnvMap) {
         SshPassword = Get-EnvOrEmpty $EnvMap ($prefix + "SSH_PASSWORD")
         RemoteDeployDir = Get-EnvOrEmpty $EnvMap ($prefix + "REMOTE_PATH")
         RemoteServiceName = Get-EnvOrEmpty $EnvMap ($prefix + "SERVICE_NAME")
+        ComposeFile = Get-EnvOrEmpty $EnvMap ($prefix + "COMPOSE_FILE")
         SharedDockerNetwork = Get-EnvOrEmpty $EnvMap ($prefix + "SHARED_DOCKER_NETWORK")
         AppPort = Get-EnvOrEmpty $EnvMap ($prefix + "APP_PORT")
         StorageDbHost = Get-EnvOrEmpty $EnvMap ($prefix + "STORAGE_DB_HOST")
@@ -233,6 +234,7 @@ if ($AllTargets) {
         SshPassword = $SshPassword
         RemoteDeployDir = $RemoteDeployDir
         RemoteServiceName = $RemoteServiceName
+        ComposeFile = ""
         SharedDockerNetwork = $resolvedSharedDockerNetwork
         AppPort = $resolvedAppPort
         StorageDbHost = [string]$envMap["DEPLOY_STORAGE_DB_HOST"]
@@ -282,6 +284,7 @@ foreach ($cfg in $targetConfigs) {
     $remoteBaseArgs = Build-RemoteArgs $cfg "exec"
     $uploadArgs = Build-RemoteArgs $cfg "upload"
     $passwordValue = if ($cfg.AuthMode -eq "password") { [string]$cfg.SshPassword } else { "" }
+    $composeFile = if ([string]::IsNullOrWhiteSpace([string]$cfg.ComposeFile)) { "docker-compose.yml" } else { [string]$cfg.ComposeFile }
 
     Write-Step "[$($cfg.Target)] Upload archive to $($cfg.ServerUser)@$($cfg.ServerHost):$remoteArchivePath"
     Invoke-RemoteHelper $pythonCommand ($uploadArgs + @("--local-path", $archivePath, "--remote-path", $remoteArchivePath)) $passwordValue
@@ -379,7 +382,7 @@ for relative in ("start.sh", "node_proxy.js", "app.py"):
 PY
 cd "__REMOTE_DEPLOY_DIR__"
 chmod +x ./start.sh
-docker compose up -d --build __REMOTE_SERVICE_NAME__
+docker compose -f "__COMPOSE_FILE__" up -d --build __REMOTE_SERVICE_NAME__
 attempt=1
 while [ "$attempt" -le 45 ]; do
   if curl -fsS http://127.0.0.1:__APP_PORT__/health >/dev/null; then
@@ -401,6 +404,7 @@ rm -rf "__REMOTE_EXTRACT_DIR__" "__REMOTE_ARCHIVE_PATH__"
     $deployCommand = $deployCommand.Replace("__REMOTE_EXTRACT_DIR__", $remoteExtractDir)
     $deployCommand = $deployCommand.Replace("__REMOTE_ARCHIVE_PATH__", $remoteArchivePath)
     $deployCommand = $deployCommand.Replace("__REMOTE_SERVICE_NAME__", [string]$cfg.RemoteServiceName)
+    $deployCommand = $deployCommand.Replace("__COMPOSE_FILE__", $composeFile)
     $deployCommand = $deployCommand.Replace("__APP_PORT__", [string]$cfg.AppPort)
     $deployCommandB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($deployCommand))
     Invoke-RemoteHelper $pythonCommand ($remoteBaseArgs + @("--command-b64", $deployCommandB64)) $passwordValue
