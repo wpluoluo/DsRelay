@@ -496,11 +496,13 @@ deepseek-v4-pro=deepseek-ai/deepseek-v4-pro
 
 ### 模型能力表
 
+模型能力表应以官方文档或官方 Models API 为准；代理不再根据上游报错自动学习并缓存 token 上限。
+
 ```text
 # 格式：模型名=上下文Token,最大输出Token
 deepseek-v4-flash=1048576,393216
 deepseek-v4-pro=1048576,393216
-gpt-5.5=1000000,128000
+gpt-5.5=1050000,128000
 ```
 
 ---

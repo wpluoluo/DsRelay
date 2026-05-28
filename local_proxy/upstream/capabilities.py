@@ -13,13 +13,13 @@ from local_proxy.upstream.models import (
 
 DEFAULT_MODEL_CAPABILITIES_TEXT = """
 # model=context_tokens,max_output_tokens
-# Verified from public provider docs; route-level upstream errors can still learn stricter caps.
+# Prefer official provider docs or official Models APIs where available.
 deepseek-v4-flash=1048576,393216
 deepseek-v4-pro=1048576,393216
 deepseek-ai/deepseek-v4-flash=1048576,393216
 deepseek-ai/deepseek-v4-pro=1048576,393216
-gpt-5.5=1000000,128000
-gpt-5.4=1000000,128000
+gpt-5.5=1050000,128000
+gpt-5.4=1050000,128000
 gpt-5.4-mini=400000,128000
 gpt-5.4-codex=400000,128000
 gpt-4.1=1047576,32768

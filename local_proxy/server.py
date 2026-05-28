@@ -141,8 +141,6 @@ from local_proxy.storage import ProxyStorage
 from local_proxy.upstream.capabilities import (
     DEFAULT_MODEL_CAPABILITIES_TEXT,
     clamp_payload_output_tokens,
-    extract_completion_token_limit_from_text,
-    extract_context_token_limit_from_text,
     find_context_window_overflow,
     find_model_capability,
     normalize_model_capabilities_text,
@@ -902,19 +900,26 @@ def load_model_route_cache_from_disk() -> None:
         except Exception as exc:  # pragma: no cover
             proxy_logger.warning("load_model_route_cache_json_failed path=%s error=%s", MODEL_ROUTE_CACHE_PATH, str(exc))
 
+    # 模型能力以官方文档 / 官方 Models API / 手工配置为准，不复用历史错误学习缓存。
+    loaded_cache["capabilities"] = {}
     model_route_cache = loaded_cache
 
 
 def save_model_route_cache_to_disk() -> None:
+    persisted_cache = {
+        "routes": model_route_cache.get("routes") if isinstance(model_route_cache.get("routes"), dict) else {},
+        "model_lists": model_route_cache.get("model_lists") if isinstance(model_route_cache.get("model_lists"), dict) else {},
+        "capabilities": {},
+    }
     if storage is not None:
         try:
-            storage.save_model_route_cache(model_route_cache)
+            storage.save_model_route_cache(persisted_cache)
         except Exception as exc:  # pragma: no cover
             proxy_logger.warning("save_model_route_cache_db_failed label=%s error=%s", STORAGE_DB_LABEL, str(exc))
     try:
         MODEL_ROUTE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         MODEL_ROUTE_CACHE_PATH.write_text(
-            json.dumps(model_route_cache, ensure_ascii=False, indent=2),
+            json.dumps(persisted_cache, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
     except Exception as exc:  # pragma: no cover
@@ -1093,17 +1098,7 @@ def record_model_candidate_result(
 
 
 def count_learned_model_capability_entries() -> int:
-    capabilities = model_route_cache.get("capabilities") if isinstance(model_route_cache, dict) else {}
-    if not isinstance(capabilities, dict):
-        return 0
-    total = 0
-    for logical_routes in capabilities.values():
-        if not isinstance(logical_routes, dict):
-            continue
-        for route_entries in logical_routes.values():
-            if isinstance(route_entries, dict):
-                total += len(route_entries)
-    return total
+    return 0
 
 
 def get_learned_model_capability(
@@ -1111,17 +1106,7 @@ def get_learned_model_capability(
     route_url: str,
     model_candidate: str | None,
 ) -> dict | None:
-    if not logical_model or not route_url or not model_candidate:
-        return None
-    capabilities = model_route_cache.setdefault("capabilities", {})
-    logical_routes = capabilities.get(normalize_model_alias_key(logical_model), {})
-    route_entries = logical_routes.get(route_url, {}) if isinstance(logical_routes, dict) else {}
-    entry = route_entries.get(normalize_model_alias_key(model_candidate)) if isinstance(route_entries, dict) else None
-    if not isinstance(entry, dict):
-        return None
-    if float(entry.get("expires_at", 0.0) or 0.0) <= time.time():
-        return None
-    return entry
+    return None
 
 
 def record_learned_model_capability(
@@ -1132,36 +1117,7 @@ def record_learned_model_capability(
     max_output_tokens: int | None = None,
     context_tokens: int | None = None,
 ) -> None:
-    if not logical_model or not route_url or not model_candidate:
-        return
-    if not max_output_tokens and not context_tokens:
-        return
-    now = time.time()
-    logical_key = normalize_model_alias_key(logical_model)
-    model_key = normalize_model_alias_key(model_candidate)
-    with state_lock:
-        capabilities = model_route_cache.setdefault("capabilities", {})
-        route_entries = capabilities.setdefault(logical_key, {}).setdefault(route_url, {})
-        entry = route_entries.setdefault(
-            model_key,
-            {
-                "model": model_candidate,
-                "source": "upstream_error",
-                "learned_at": now,
-                "expires_at": now + MODEL_ROUTE_CACHE_TTL_SECONDS,
-            },
-        )
-        entry["model"] = model_candidate
-        entry["source"] = "upstream_error"
-        entry["learned_at"] = now
-        entry["expires_at"] = now + MODEL_ROUTE_CACHE_TTL_SECONDS
-        if max_output_tokens:
-            existing = int(entry.get("max_output_tokens", 0) or 0)
-            entry["max_output_tokens"] = min(existing, max_output_tokens) if existing else int(max_output_tokens)
-        if context_tokens:
-            entry["context_tokens"] = int(context_tokens)
-        save_model_route_cache_to_disk()
-    bump_cache_stat("model_capability_learned")
+    return None
 
 
 def apply_learned_completion_limit_to_request_kwargs(
@@ -1171,19 +1127,15 @@ def apply_learned_completion_limit_to_request_kwargs(
     route_url: str,
     model_candidate: str | None,
 ) -> int:
-    capability = get_learned_model_capability(logical_model, route_url, model_candidate)
-    if not isinstance(capability, dict):
-        return 0
-    payload = request_kwargs.get("json")
-    return clamp_payload_output_tokens(payload, capability.get("max_output_tokens")) if isinstance(payload, dict) else 0
+    return 0
 
 
 def extract_completion_token_limit_from_response(response: requests.Response) -> int | None:
-    return extract_completion_token_limit_from_text(extract_response_text(response))
+    return None
 
 
 def extract_context_token_limit_from_response(response: requests.Response) -> tuple[int | None, int | None]:
-    return extract_context_token_limit_from_text(extract_response_text(response))
+    return None, None
 
 
 def load_pool_runtime_state_from_storage() -> None:
@@ -3626,7 +3578,6 @@ def build_runtime_snapshot() -> dict:
                 "Assistant text transcript -> tool_calls",
                 "Request-side tool schema normalization",
                 "Model-aware completion token auto-clamp",
-                "Route-level token limit learning",
                 "Model alias normalization",
                 "run_in_background tool-argument repair",
                 "Chinese system prompt injection",
