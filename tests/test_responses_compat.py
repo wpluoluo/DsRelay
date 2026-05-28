@@ -90,37 +90,11 @@ class ResponsesCompatTests(unittest.TestCase):
             "responses",
         )
 
-    def test_build_model_candidates_uses_only_configured_alias_targets_when_mapping_hits(self):
-        original_aliases = server.MODEL_ALIASES
+    def test_build_model_candidates_uses_request_model_when_no_route_mapping_exists(self):
         try:
-            server.MODEL_ALIASES = {
-                "deepseek-v4-flash": ["deepseek-ai/deepseek-v4-flash"],
-            }
             candidates = server.build_model_candidates_from_payload({"model": "deepseek-v4-flash"})
         finally:
-            server.MODEL_ALIASES = original_aliases
-
-        self.assertEqual(candidates, ["deepseek-ai/deepseek-v4-flash"])
-
-    def test_build_model_candidates_locks_deepseek_v4_pro_to_configured_alias_first(self):
-        original_aliases = server.MODEL_ALIASES
-        try:
-            server.MODEL_ALIASES = {
-                "deepseek-v4-pro": ["deepseek-ai/deepseek-v4-pro"],
-            }
-            candidates = server.build_model_candidates_from_payload({"model": "deepseek-v4-pro"})
-        finally:
-            server.MODEL_ALIASES = original_aliases
-
-        self.assertEqual(candidates, ["deepseek-ai/deepseek-v4-pro"])
-
-    def test_build_model_candidates_passthroughs_original_model_when_mapping_misses(self):
-        original_aliases = server.MODEL_ALIASES
-        try:
-            server.MODEL_ALIASES = {}
-            candidates = server.build_model_candidates_from_payload({"model": "deepseek-v4-flash"})
-        finally:
-            server.MODEL_ALIASES = original_aliases
+            pass
 
         self.assertEqual(candidates, ["deepseek-v4-flash"])
 
@@ -140,6 +114,30 @@ class ResponsesCompatTests(unittest.TestCase):
         )
 
         self.assertEqual(order_info["candidates"], ["deepseek-ai/deepseek-v4-flash"])
+
+    def test_route_specific_model_aliases_override_global_aliases_for_selected_route(self):
+        original_pools = server.PROXY_POOLS
+        try:
+            server.PROXY_POOLS = [
+                {
+                    "name": "nv",
+                    "enabled": True,
+                    "priority": 100,
+                    "urls": ["https://integrate.api.nvidia.com/v1"],
+                    "keys": [{"key": "nv-key"}],
+                    "model_aliases_text": "deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash",
+                    "route_policy": {"text_upstream_protocol": "auto"},
+                }
+            ]
+            route_url = "https://integrate.api.nvidia.com/v1/chat/completions#__route=" + server.ConnectionPoolState.route_id_for("nv", "https://integrate.api.nvidia.com/v1", 1).split("#__route=", 1)[1]
+            candidates = server.build_model_candidates_for_route(
+                route_url,
+                {"model": "deepseek-v4-flash-free"},
+            )
+        finally:
+            server.PROXY_POOLS = original_pools
+
+        self.assertEqual(candidates, ["deepseek-ai/deepseek-v4-flash"])
 
     def test_proxy_entrypoint_normalizes_duplicate_v1_prefix_before_upstream_request(self):
         seen = {}

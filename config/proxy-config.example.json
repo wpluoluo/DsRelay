@@ -25,7 +25,6 @@
       }
     }
   ],
-  "model_aliases_text": "deepseek-v4-flash=deepseek-ai/deepseek-v4-flash\ndeepseek-v4-pro=deepseek-ai/deepseek-v4-pro",
   "model_capabilities_text": "# model=context_tokens,max_output_tokens\ndeepseek-v4-flash=1048576,393216\ndeepseek-v4-pro=1048576,393216",
   "request_timeout": 600,
   "force_upstream_chat_stream": true,

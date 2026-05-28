@@ -7,9 +7,9 @@ from local_proxy.runtime.pools import ConnectionPoolState, normalize_proxy_pools
 def current_runtime_config(**overrides):
     current = {
         "PROXY_POOLS": [],
-        "MODEL_ALIASES_TEXT": "",
         "MODEL_CAPABILITIES_TEXT": "",
         "REQUEST_TIMEOUT": 600,
+        "STREAM_FIRST_EVENT_TIMEOUT_SECONDS": 600,
         "FORCE_UPSTREAM_CHAT_STREAM": True,
         "ENABLE_REQUEST_NORMALIZATION": True,
         "MAX_COMPLETION_TOKENS": 0,
@@ -51,6 +51,7 @@ class PoolConfigTests(unittest.TestCase):
                     "priority": "120",
                     "urls": [" https://api.example.com/v1/chat/completions ", ""],
                     "keys": [{"key": " sk-test-1 "}, {"key": ""}],
+                    "model_aliases_text": "demo=provider/demo",
                     "route_policy": {
                         "reasoning_effort": "high",
                         "route_cooldown_seconds": 45,
@@ -69,6 +70,7 @@ class PoolConfigTests(unittest.TestCase):
         self.assertEqual(pools[0]["priority"], 120)
         self.assertEqual(pools[0]["urls"], ["https://api.example.com/v1"])
         self.assertEqual(pools[0]["keys"], [{"key": "sk-test-1"}])
+        self.assertEqual(pools[0]["model_aliases_text"], "demo=provider/demo")
         self.assertEqual(pools[0]["route_policy"]["reasoning_effort"], "high")
         self.assertEqual(pools[0]["route_policy"]["text_upstream_protocol"], "auto")
         self.assertEqual(pools[0]["route_policy"]["prompt_cache_mode"], "exact")
@@ -189,6 +191,25 @@ class PoolConfigTests(unittest.TestCase):
         route_policy = normalized["proxy_pools"][0]["route_policy"]
 
         self.assertEqual(route_policy["text_upstream_protocol"], "responses")
+
+    def test_pool_model_alias_text_is_preserved_when_normalized(self):
+        pools = normalize_proxy_pools(
+            [
+                {
+                    "name": "mapped-route",
+                    "enabled": True,
+                    "priority": 100,
+                    "urls": ["https://integrate.api.nvidia.com/v1"],
+                    "keys": [{"key": "nv-key-1"}],
+                    "model_aliases_text": "deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash",
+                }
+            ]
+        )
+
+        self.assertEqual(
+            pools[0]["model_aliases_text"],
+            "deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash",
+        )
 
 
 if __name__ == "__main__":

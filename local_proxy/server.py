@@ -123,6 +123,7 @@ from local_proxy.runtime.state import CounterStore, RequestRecorder
 from local_proxy.runtime.pools import ConnectionPoolState, normalize_pool_url, normalize_proxy_pools
 from local_proxy.runtime.policies import (
     DEFAULT_ROUTE_POLICY,
+    get_pool_model_aliases_for_url,
     get_route_policy_for_url,
     normalize_pool_route_policies,
 )
@@ -148,14 +149,12 @@ from local_proxy.upstream.capabilities import (
     estimate_payload_tokens,
 )
 from local_proxy.upstream.models import (
-    DEFAULT_MODEL_ALIASES_TEXT,
     build_related_model_name_candidates,
     dedupe_model_candidates,
     discover_model_candidates_from_models,
     extract_model_ids_from_models_payload,
     model_list_url_from_endpoint,
     normalize_model_alias_key,
-    normalize_model_aliases_text,
     parse_model_aliases,
 )
 from local_proxy.upstream.logging_utils import summarize_attempt_routes, summarize_attempts_for_log
@@ -498,8 +497,6 @@ POOL_RUNTIME_STATE_KEY = "proxy_connection_pool"
 APP_CONFIG_STATE_KEY = "runtime_config"
 POOL_KEY_FAILURE_THRESHOLD = max(1, int(os.getenv("POOL_KEY_FAILURE_THRESHOLD", "2")))
 POOL_KEY_COOLDOWN_SECONDS = max(10, int(os.getenv("POOL_KEY_COOLDOWN_SECONDS", "180")))
-MODEL_ALIASES_TEXT = normalize_model_aliases_text(os.getenv("MODEL_ALIASES", DEFAULT_MODEL_ALIASES_TEXT))
-MODEL_ALIASES = parse_model_aliases(MODEL_ALIASES_TEXT)
 PORT = int(os.getenv("PORT", "18765"))
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "600"))
 PROXY_LOG_PATH = resolve_project_path(
@@ -770,13 +767,14 @@ def ensure_proxy_prompt_rules(prompt: str | None) -> str:
     return build_proxy_prompt_rules(prompt, DEFAULT_PROXY_SYSTEM_PROMPT_ZH, MARKDOWN_OUTPUT_PROMPT_RULE)
 
 
-def get_model_alias_targets(model_name: str | None) -> list[str]:
+def get_pool_model_alias_targets(route_url: str | None, model_name: str | None) -> list[str]:
     if not isinstance(model_name, str):
         return []
     normalized = model_name.strip()
     if not normalized:
         return []
-    return list(MODEL_ALIASES.get(normalize_model_alias_key(normalized), []))
+    route_aliases = get_pool_model_aliases_for_url(PROXY_POOLS, route_url or "", normalize_pool_url)
+    return list(route_aliases.get(normalize_model_alias_key(normalized), []))
 
 
 def build_model_candidates_from_payload(payload: dict | None) -> list[str]:
@@ -788,7 +786,6 @@ def build_model_candidates_from_payload(payload: dict | None) -> list[str]:
 
     candidates = []
     seen = set()
-    alias_targets = get_model_alias_targets(model_name)
 
     def add(candidate: str | None) -> None:
         candidate = str(candidate or "").strip()
@@ -797,8 +794,30 @@ def build_model_candidates_from_payload(payload: dict | None) -> list[str]:
         seen.add(candidate)
         candidates.append(candidate)
 
-    if alias_targets:
-        for alias_target in alias_targets:
+    add(model_name)
+    return candidates
+
+
+def build_model_candidates_for_route(route_url: str, payload: dict | None) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    model_name = payload.get("model")
+    if not isinstance(model_name, str) or not model_name.strip():
+        return []
+
+    candidates = []
+    seen = set()
+    route_alias_targets = get_pool_model_alias_targets(route_url, model_name)
+
+    def add(candidate: str | None) -> None:
+        candidate = str(candidate or "").strip()
+        if not candidate or candidate in seen:
+            return
+        seen.add(candidate)
+        candidates.append(candidate)
+
+    if route_alias_targets:
+        for alias_target in route_alias_targets:
             add(alias_target)
     else:
         add(model_name)
@@ -1217,7 +1236,6 @@ def export_runtime_config_for_storage() -> dict:
         {
             "proxy_api_key_records": PROXY_API_KEY_RECORDS,
             "proxy_pools": PROXY_POOLS,
-            "model_aliases_text": MODEL_ALIASES_TEXT,
             "model_capabilities_text": MODEL_CAPABILITIES_TEXT,
             "request_timeout": REQUEST_TIMEOUT,
             "stream_first_event_timeout_seconds": STREAM_FIRST_EVENT_TIMEOUT_SECONDS,
@@ -1261,8 +1279,6 @@ def build_runtime_config_payload() -> dict:
             "proxy_api_key_env_count": len(PROXY_API_KEYS),
             "public_proxy_api_key_record": public_proxy_api_key_record,
             "proxy_pools": PROXY_POOLS,
-            "model_aliases_text": MODEL_ALIASES_TEXT,
-            "model_alias_count": len(MODEL_ALIASES),
             "model_capabilities_text": MODEL_CAPABILITIES_TEXT,
             "model_capability_count": len(MODEL_CAPABILITIES),
             "request_timeout": REQUEST_TIMEOUT,
@@ -1334,8 +1350,6 @@ def apply_runtime_config(config_payload: dict | None, *, persist: bool) -> dict:
     global PROXY_API_KEY_RECORDS
     global PROXY_POOLS
     global URL_POOL_KEY_MAP
-    global MODEL_ALIASES_TEXT
-    global MODEL_ALIASES
     global MODEL_CAPABILITIES_TEXT
     global MODEL_CAPABILITIES
     global REQUEST_TIMEOUT
@@ -1370,7 +1384,6 @@ def apply_runtime_config(config_payload: dict | None, *, persist: bool) -> dict:
         current={
             "PROXY_POOLS": PROXY_POOLS,
             "PROXY_API_KEY_RECORDS": PROXY_API_KEY_RECORDS,
-            "MODEL_ALIASES_TEXT": MODEL_ALIASES_TEXT,
             "MODEL_CAPABILITIES_TEXT": MODEL_CAPABILITIES_TEXT,
             "REQUEST_TIMEOUT": REQUEST_TIMEOUT,
             "STREAM_FIRST_EVENT_TIMEOUT_SECONDS": STREAM_FIRST_EVENT_TIMEOUT_SECONDS,
@@ -1425,7 +1438,6 @@ def apply_runtime_config(config_payload: dict | None, *, persist: bool) -> dict:
     log_runtime_config_update(
         logger=proxy_logger,
         upstream_url_pool=UPSTREAM_URL_POOL,
-        model_aliases=MODEL_ALIASES,
         model_capabilities=MODEL_CAPABILITIES,
         state={
             "REQUEST_TIMEOUT": REQUEST_TIMEOUT,
@@ -2714,9 +2726,13 @@ def build_model_candidate_order_for_route(
     request_kwargs: dict,
     request_id: str,
 ) -> dict:
+    route_specific_candidates = build_model_candidates_for_route(
+        route_url,
+        request_kwargs.get("json") if isinstance(request_kwargs, dict) else None,
+    )
     return router_build_model_candidate_order_for_route(
         route_url=route_url,
-        model_candidates=model_candidates,
+        model_candidates=route_specific_candidates or model_candidates,
         request_kwargs=request_kwargs,
         request_id=request_id,
         get_cached_route_candidates=get_cached_route_model_candidates,
@@ -2732,9 +2748,13 @@ def order_model_candidates_for_route(
     request_kwargs: dict,
     request_id: str,
 ) -> list[str]:
+    route_specific_candidates = build_model_candidates_for_route(
+        route_url,
+        request_kwargs.get("json") if isinstance(request_kwargs, dict) else None,
+    )
     return router_order_model_candidates_for_route(
         route_url=route_url,
-        model_candidates=model_candidates,
+        model_candidates=route_specific_candidates or model_candidates,
         request_kwargs=request_kwargs,
         request_id=request_id,
         get_cached_route_candidates=get_cached_route_model_candidates,
@@ -3315,10 +3335,14 @@ def collect_local_model_ids() -> list[str]:
         seen.add(key)
         model_ids.append(text)
 
-    for logical_model, targets in (MODEL_ALIASES or {}).items():
-        add(logical_model)
-        for target in targets or []:
-            add(target)
+    for pool in PROXY_POOLS or []:
+        if not isinstance(pool, dict):
+            continue
+        route_aliases = parse_model_aliases(pool.get("model_aliases_text"))
+        for logical_model, targets in route_aliases.items():
+            add(logical_model)
+            for target in targets or []:
+                add(target)
 
     for capability_model in (MODEL_CAPABILITIES or {}).keys():
         add(capability_model)
@@ -3495,8 +3519,6 @@ def build_runtime_snapshot() -> dict:
             "proxy_api_key_managed_count": len(PROXY_API_KEY_RECORDS),
             "proxy_api_key_managed_enabled_count": len([r for r in PROXY_API_KEY_RECORDS if r.get("enabled") is not False]),
             "mask_secret": mask_secret,
-            "model_alias_count": len(MODEL_ALIASES),
-            "model_aliases": dict(MODEL_ALIASES),
             "enable_model_probe": ENABLE_MODEL_PROBE,
             "model_probe_timeout_seconds": MODEL_PROBE_TIMEOUT_SECONDS,
             "model_probe_ttl_seconds": MODEL_PROBE_TTL_SECONDS,

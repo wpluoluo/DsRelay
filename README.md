@@ -34,7 +34,7 @@
 **Local Proxy** 是一个部署在本地开发环境中的 AI API 代理网关。推荐拓扑为 `客户端 -> NEWAPI -> 代理 -> 上游模型`：客户端、NEWAPI、本项目和上游模型之间的鉴权彼此独立，代理负责协议转换、路由和上游认证。
 
 - **协议统一**：客户端只需使用 OpenAI 兼容协议，代理自动转换为 Anthropic、Gemini 等原生协议
-- **智能路由**：支持多上游链路、模型别名映射、自动探测与竞速选择
+- **智能路由**：支持多上游链路、线路模型映射、自动探测与竞速选择
 - **高可用**：请求失败自动重试、链路切换、退避策略，确保服务连续性
 - **请求修复**：自动修正常见客户端请求格式问题、工具调用参数问题
 - **监控运维**：提供 Web 监控面板，实时查看请求状态、路由缓存、链路健康
@@ -58,7 +58,7 @@
 
 ### 智能路由
 
-- **模型别名映射**：客户端使用短模型名，代理自动改写为上游真实模型名
+- **线路模型映射**：每条链路可单独声明“请求模型 -> 上游真实模型”，避免跨线路误判
 - **模型探测**：短超时探测上游 `/models` 接口，发现同语义模型名
 - **候选竞速**：首次请求时并发尝试多个候选模型名，取最快成功者
 - **路由记忆**：成功路由持久化到 SQLite，后续请求直接命中
@@ -244,7 +244,6 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18765/health"
 | `IMAGE_UPSTREAM_PROTOCOL` | `auto` | 图像生成协议（auto/openai/google/dashscope） |
 | `IMAGE_TASK_POLL_TIMEOUT_SECONDS` | `90` | 图像异步任务轮询超时（秒） |
 | `IMAGE_TASK_POLL_INTERVAL_SECONDS` | `2` | 图像异步任务轮询间隔（秒） |
-| `MODEL_ALIASES` | — | 模型别名映射（格式：`客户端名=上游名;...`） |
 | `MODEL_CAPABILITIES` | — | 模型能力表（格式：`模型名=上下文Token,最大输出Token`） |
 | `PROXY_CONFIG_PATH` | `config/proxy-config.json` | 渠道配置文件路径 |
 | `PROXY_LOG_PATH` | `var/logs/proxy.log` | 代理日志路径 |
@@ -263,6 +262,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18765/health"
       "priority": 100,
       "urls": ["https://your-upstream.example/v1"],
       "keys": [{"key": "sk-your-upstream-key"}],
+      "model_aliases_text": "deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash",
       "route_policy": {
         "reasoning_effort": "high",
         "prompt_cache_mode": "exact",
@@ -467,14 +467,14 @@ Invoke-RestMethod `
 └─────────────────────────────────┘
 ```
 
-### 模型别名配置
+### 线路模型映射配置
 
-在控制台"模型别名映射"或环境变量中配置：
+在控制台“连接池管理 -> 管理连接池 -> 该线路模型映射”中按线路填写：
 
 ```text
-# 格式：客户端模型名=上游模型名
-deepseek-v4-flash=deepseek-ai/deepseek-v4-flash
-deepseek-v4-pro=deepseek-ai/deepseek-v4-pro
+# 格式：请求模型=该线路上游模型
+deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash
+opencode/deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash
 ```
 
 ### 模型能力表
@@ -565,7 +565,7 @@ gpt-5.5=1000000,128000
         ├── orchestrator.py         # 请求编排
         ├── router.py               # 模型路由
         ├── retry.py                # 重试机制
-        ├── models.py               # 模型别名与候选
+        ├── models.py               # 线路模型映射解析与候选
         ├── capabilities.py         # 能力探测
         └── logging_utils.py        # 日志工具
 ```
@@ -593,7 +593,7 @@ gpt-5.5=1000000,128000
 
 ### 模型返回 "model not found"
 
-- 检查模型别名映射是否正确配置
+- 检查对应线路的模型映射是否正确配置
 - 检查上游服务是否支持该模型
 - 代理会自动尝试候选模型名并记住成功路由
 

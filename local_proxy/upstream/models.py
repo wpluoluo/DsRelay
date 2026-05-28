@@ -5,15 +5,8 @@ import re
 from urllib.parse import urlsplit, urlunsplit
 
 
-DEFAULT_MODEL_ALIASES_TEXT = """
-deepseek-v4-flash=deepseek-ai/deepseek-v4-flash
-deepseek-v4-pro=deepseek-ai/deepseek-v4-pro
-""".strip()
-
-
 def normalize_model_aliases_text(raw_aliases: str | None) -> str:
-    raw_text = str(raw_aliases or "").strip()
-    return raw_text or DEFAULT_MODEL_ALIASES_TEXT
+    return str(raw_aliases or "").strip()
 
 
 def normalize_model_alias_key(model_name: str | None) -> str:

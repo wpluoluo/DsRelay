@@ -41,6 +41,10 @@ def normalize_pool_key(value: object) -> str:
     return key
 
 
+def normalize_pool_model_aliases_text(value: object) -> str:
+    return str(value or "").strip()
+
+
 def normalize_proxy_pools(raw_pools: object) -> list[dict]:
     if not isinstance(raw_pools, list):
         return []
@@ -88,6 +92,7 @@ def normalize_proxy_pools(raw_pools: object) -> list[dict]:
                 "priority": priority,
                 "urls": urls,
                 "keys": keys,
+                "model_aliases_text": normalize_pool_model_aliases_text(item.get("model_aliases_text")),
                 "route_policy": item.get("route_policy") if isinstance(item.get("route_policy"), dict) else {},
             }
         )

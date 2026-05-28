@@ -388,7 +388,6 @@ class ProxyEntrypointAuthTests(unittest.TestCase):
         server.PROXY_REMOTE_CONFIG_PATH = Path(temp_dir.name) / "proxy-config.remote.json"
         server.PROXY_API_KEY_RECORDS = []
         server.PROXY_POOLS = []
-        server.MODEL_ALIASES_TEXT = ""
         server.MODEL_CAPABILITIES_TEXT = ""
         payload = {
             "proxy_api_key_records": [

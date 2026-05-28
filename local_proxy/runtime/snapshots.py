@@ -148,8 +148,6 @@ def build_runtime_snapshot(context: dict) -> dict:
         "proxy_api_key_env_count": int(context.get("proxy_api_key_env_count") or 0),
         "proxy_api_key_managed_count": int(context.get("proxy_api_key_managed_count") or 0),
         "proxy_api_key_managed_enabled_count": int(context.get("proxy_api_key_managed_enabled_count") or 0),
-        "model_alias_count": context["model_alias_count"],
-        "model_aliases": dict(context["model_aliases"]),
         "model_routing": {
             "probe_enabled": context["enable_model_probe"],
             "probe_timeout_seconds": context["model_probe_timeout_seconds"],

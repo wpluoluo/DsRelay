@@ -10,10 +10,6 @@ from local_proxy.upstream.capabilities import (
     normalize_model_capabilities_text,
     parse_model_capabilities,
 )
-from local_proxy.upstream.models import (
-    normalize_model_aliases_text,
-    parse_model_aliases,
-)
 
 
 def normalize_runtime_config_payload(
@@ -27,10 +23,6 @@ def normalize_runtime_config_payload(
     if "proxy_api_key_records" in config_payload:
         next_proxy_api_key_records = normalize_proxy_api_key_records(config_payload.get("proxy_api_key_records"))
 
-    next_model_aliases_text = normalize_model_aliases_text(
-        config_payload.get("model_aliases_text", current["MODEL_ALIASES_TEXT"])
-    )
-    next_model_aliases = parse_model_aliases(next_model_aliases_text)
     next_model_capabilities_text = normalize_model_capabilities_text(
         config_payload.get("model_capabilities_text", current["MODEL_CAPABILITIES_TEXT"])
     )
@@ -190,8 +182,6 @@ def normalize_runtime_config_payload(
     return {
         "proxy_api_key_records": next_proxy_api_key_records,
         "proxy_pools": next_pools,
-        "model_aliases_text": next_model_aliases_text,
-        "model_aliases": next_model_aliases,
         "model_capabilities_text": next_model_capabilities_text,
         "model_capabilities": next_model_capabilities,
         "request_timeout": next_request_timeout,
@@ -226,11 +216,10 @@ def normalize_runtime_config_payload(
     }
 
 
-def log_runtime_config_update(*, logger, upstream_url_pool: list[str], model_aliases: dict, model_capabilities: dict, state: dict, persisted: bool) -> None:
+def log_runtime_config_update(*, logger, upstream_url_pool: list[str], model_capabilities: dict, state: dict, persisted: bool) -> None:
     logger.info(
-        "运行配置已更新 上游线路=%s 模型别名数=%s 模型能力数=%s 超时秒=%s 重试次数=%s 随机轮询=%s 流式透传=%s 请求归一化=%s 默认输出上限=%s 中文提示=%s 图片协议=%s 已持久化=%s",
+        "运行配置已更新 上游线路=%s 模型能力数=%s 超时秒=%s 重试次数=%s 随机轮询=%s 流式透传=%s 请求归一化=%s 默认输出上限=%s 中文提示=%s 图片协议=%s 已持久化=%s",
         json.dumps(upstream_url_pool, ensure_ascii=False),
-        len(model_aliases),
         len(model_capabilities),
         state["REQUEST_TIMEOUT"],
         state["UPSTREAM_MAX_RETRIES"],
@@ -247,8 +236,6 @@ def log_runtime_config_update(*, logger, upstream_url_pool: list[str], model_ali
 def apply_runtime_globals(target_globals: dict, normalized_config: dict) -> None:
     target_globals["UPSTREAM_API_KEY"] = ""
     target_globals["PROXY_API_KEY_RECORDS"] = normalized_config["proxy_api_key_records"]
-    target_globals["MODEL_ALIASES_TEXT"] = normalized_config["model_aliases_text"]
-    target_globals["MODEL_ALIASES"] = normalized_config["model_aliases"]
     target_globals["MODEL_CAPABILITIES_TEXT"] = normalized_config["model_capabilities_text"]
     target_globals["MODEL_CAPABILITIES"] = normalized_config["model_capabilities"]
     target_globals["REQUEST_TIMEOUT"] = normalized_config["request_timeout"]

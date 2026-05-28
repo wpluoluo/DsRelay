@@ -26,8 +26,6 @@ class DashboardStateTests(unittest.TestCase):
                 "proxy_api_key_managed_count": 1,
                 "proxy_api_key_managed_enabled_count": 1,
                 "mask_secret": lambda value: str(value),
-                "model_alias_count": 1,
-                "model_aliases": {"deepseek-v4-pro": ["deepseek-ai/deepseek-v4-pro"]},
                 "enable_model_probe": True,
                 "model_probe_timeout_seconds": 4,
                 "model_probe_ttl_seconds": 300,
