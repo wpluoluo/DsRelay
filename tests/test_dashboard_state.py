@@ -110,7 +110,14 @@ class DashboardStateTests(unittest.TestCase):
                     "active_requests": [],
                     "recent_requests": [
                         {
-                            "request_id": "req-current",
+                            "request_id": "req-exact",
+                            "route_url": "https://integrate.api.nvidia.com/v1#__route=b",
+                            "upstream_url": "https://integrate.api.nvidia.com/v1/chat/completions",
+                            "pool_name": "nv-2",
+                            "status_code": 200,
+                        },
+                        {
+                            "request_id": "req-base-only",
                             "upstream_url": "https://integrate.api.nvidia.com/v1/chat/completions",
                             "pool_name": "nv-1",
                             "status_code": 200,
@@ -152,25 +159,98 @@ class DashboardStateTests(unittest.TestCase):
         )
 
         recent = state["recent_requests"]
-        self.assertEqual(len(recent), 2)
-        self.assertTrue(recent[0]["matches_current_route"])
-        self.assertFalse(recent[1]["matches_current_route"])
-        self.assertIn(
-            recent[0]["current_route_url"],
-            {
-                "https://integrate.api.nvidia.com/v1#__route=a",
-                "https://integrate.api.nvidia.com/v1#__route=b",
-            },
-        )
-        self.assertEqual(recent[1]["current_route_url"], "https://open.juece.cloud/v1/chat/completions")
+        self.assertEqual(len(recent), 3)
+        by_id = {item["request_id"]: item for item in recent}
+        self.assertTrue(by_id["req-exact"]["matches_current_route"])
+        self.assertTrue(by_id["req-exact"]["matches_current_route_base"])
+        self.assertEqual(by_id["req-exact"]["current_route_url"], "https://integrate.api.nvidia.com/v1#__route=b")
+        self.assertEqual(by_id["req-exact"]["route_resolution"], "exact")
+
+        self.assertFalse(by_id["req-base-only"]["matches_current_route"])
+        self.assertTrue(by_id["req-base-only"]["matches_current_route_base"])
+        self.assertTrue(by_id["req-base-only"]["base_route_ambiguous"])
+        self.assertEqual(by_id["req-base-only"]["current_route_url"], "https://integrate.api.nvidia.com/v1/chat/completions")
+        self.assertEqual(by_id["req-base-only"]["route_resolution"], "base_only_ambiguous")
+
+        self.assertFalse(by_id["req-old"]["matches_current_route"])
+        self.assertFalse(by_id["req-old"]["matches_current_route_base"])
+        self.assertEqual(by_id["req-old"]["current_route_url"], "https://open.juece.cloud/v1/chat/completions")
+        self.assertEqual(by_id["req-old"]["route_resolution"], "historical")
 
         routes = {item["route_url"]: item for item in state["route_observability"]}
         self.assertIn("https://integrate.api.nvidia.com/v1#__route=a", routes)
+        self.assertIn("https://integrate.api.nvidia.com/v1#__route=b", routes)
+        self.assertIn("https://integrate.api.nvidia.com/v1/chat/completions", routes)
         self.assertIn("https://open.juece.cloud/v1/chat/completions", routes)
-        self.assertFalse(routes["https://integrate.api.nvidia.com/v1#__route=a"]["historical_only"])
+        self.assertEqual(routes["https://integrate.api.nvidia.com/v1#__route=a"]["route_status"], "historical")
+        self.assertEqual(routes["https://integrate.api.nvidia.com/v1#__route=b"]["route_status"], "current")
+        self.assertEqual(routes["https://integrate.api.nvidia.com/v1/chat/completions"]["route_status"], "current_base_ambiguous")
+        self.assertTrue(routes["https://integrate.api.nvidia.com/v1/chat/completions"]["base_only"])
+        self.assertTrue(routes["https://integrate.api.nvidia.com/v1/chat/completions"]["base_route_ambiguous"])
         self.assertTrue(routes["https://open.juece.cloud/v1/chat/completions"]["historical_only"])
         self.assertEqual(routes["https://integrate.api.nvidia.com/v1#__route=a"]["route_policy"]["route_cooldown_seconds"], 5)
         self.assertEqual(state["config_source"], "storage")
+
+    def test_recent_request_route_fragment_matches_active_route_even_when_path_differs(self):
+        state = build_dashboard_state(
+            {
+                "build_runtime_snapshot": lambda: {
+                    "model_routing": {"cache_stats": {}, "db_label": "mysql://demo"},
+                    "config_source": "storage",
+                    "route_policies": {
+                        "https://integrate.api.nvidia.com/v1#__route=bfaf0e1e3061": {
+                            "route_cooldown_seconds": 5,
+                            "effective_route_cooldown_seconds": 10,
+                            "route_cooldown_max_seconds": 10,
+                        },
+                        "https://integrate.api.nvidia.com/v1#__route=bde822d527a8": {
+                            "route_cooldown_seconds": 5,
+                            "effective_route_cooldown_seconds": 10,
+                            "route_cooldown_max_seconds": 10,
+                        },
+                    },
+                },
+                "request_recorder_snapshot": lambda: {
+                    "stats": {},
+                    "active_requests": [],
+                    "recent_requests": [
+                        {
+                            "request_id": "req-fragment-match",
+                            "route_url": "https://integrate.api.nvidia.com/v1/chat/completions#__route=bfaf0e1e3061",
+                            "upstream_url": "https://integrate.api.nvidia.com/v1/chat/completions",
+                            "pool_name": "nv-1",
+                            "status_code": 200,
+                        }
+                    ],
+                },
+                "route_health": {},
+                "upstream_url": "https://integrate.api.nvidia.com/v1#__route=bfaf0e1e3061",
+                "upstream_urls": [
+                    "https://integrate.api.nvidia.com/v1#__route=bfaf0e1e3061",
+                    "https://integrate.api.nvidia.com/v1#__route=bde822d527a8",
+                ],
+                "proxy_pools": [{"name": "nv-1", "enabled": True}, {"name": "nv-2", "enabled": True}],
+                "log_path": "proxy.log",
+                "build_runtime_config_payload": lambda: {"config_source": "storage", "db_label": "mysql://demo"},
+                "connection_pool_snapshot": lambda: {
+                    "urls": {
+                        "https://integrate.api.nvidia.com/v1#__route=bfaf0e1e3061": {"pool_name": "nv-1"},
+                        "https://integrate.api.nvidia.com/v1#__route=bde822d527a8": {"pool_name": "nv-2"},
+                    }
+                },
+                "active_session_affinity_keys": lambda: 0,
+                "active_route_affinity_counts": lambda: {},
+                "read_recent_log_lines": lambda: [],
+                "config_source": "storage",
+            }
+        )
+
+        recent = state["recent_requests"]
+        self.assertEqual(len(recent), 1)
+        item = recent[0]
+        self.assertEqual(item["route_resolution"], "exact")
+        self.assertTrue(item["matches_current_route"])
+        self.assertEqual(item["current_route_url"], "https://integrate.api.nvidia.com/v1#__route=bfaf0e1e3061")
 
     def test_cached_execution_observability_exposes_upstream_subpath(self):
         execution = build_cached_execution(
@@ -200,6 +280,33 @@ class DashboardStateTests(unittest.TestCase):
         )
 
         self.assertEqual(meta["upstream_subpath"], "chat/completions")
+        self.assertEqual(meta["route_url"], "https://good.example/v1/chat/completions")
+
+    def test_request_result_meta_overrides_pending_stream_placeholders(self):
+        execution = {
+            "upstream_url": "https://integrate.api.nvidia.com/v1/chat/completions#__route=bfaf0e1e3061",
+            "route_pool_size": 4,
+            "retry_count": 1,
+            "attempts": [
+                {
+                    "upstream_url": "https://opencode.ai/zen/v1/chat/completions#__route=368f73533c3d",
+                    "route_url": "https://opencode.ai/zen/v1/chat/completions#__route=368f73533c3d",
+                },
+                {
+                    "upstream_url": "https://integrate.api.nvidia.com/v1/chat/completions#__route=bfaf0e1e3061",
+                    "route_url": "https://integrate.api.nvidia.com/v1/chat/completions#__route=bfaf0e1e3061",
+                },
+            ],
+        }
+
+        meta = server.build_request_result_meta(execution)
+
+        self.assertEqual(meta["upstream_url"], "https://integrate.api.nvidia.com/v1/chat/completions#__route=bfaf0e1e3061")
+        self.assertEqual(meta["retry_count"], 1)
+        self.assertEqual(
+            meta["upstream_attempt_chain"],
+            "https://opencode.ai/zen/v1/chat/completions#__route=368f73533c3d -> https://integrate.api.nvidia.com/v1/chat/completions#__route=bfaf0e1e3061",
+        )
 
     def test_dashboard_filters_reserved_example_requests_from_recent_rows(self):
         state = build_dashboard_state(

@@ -39,7 +39,7 @@ def route_expects_structured_success(route_hint: str | None) -> bool:
     return any(marker in lowered for marker in STRUCTURED_ROUTE_MARKERS)
 
 
-def openai_choice_has_meaningful_output(choice: dict | None) -> bool:
+def openai_choice_has_meaningful_output(choice: dict | None, *, include_reasoning: bool = False) -> bool:
     if not isinstance(choice, dict):
         return False
 
@@ -57,21 +57,23 @@ def openai_choice_has_meaningful_output(choice: dict | None) -> bool:
     tool_calls = message.get("tool_calls") or []
     if isinstance(tool_calls, list) and tool_calls:
         return True
-    reasoning = message.get("reasoning") or message.get("reasoning_content")
-    if isinstance(reasoning, str) and reasoning.strip():
-        return True
+    if include_reasoning:
+        reasoning = message.get("reasoning") or message.get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning.strip():
+            return True
 
     delta = choice.get("delta") or {}
     if isinstance(delta.get("content"), str) and delta.get("content", "").strip():
         return True
-    delta_reasoning = delta.get("reasoning") or delta.get("reasoning_content")
-    if isinstance(delta_reasoning, str) and delta_reasoning.strip():
-        return True
+    if include_reasoning:
+        delta_reasoning = delta.get("reasoning") or delta.get("reasoning_content")
+        if isinstance(delta_reasoning, str) and delta_reasoning.strip():
+            return True
     delta_tool_calls = delta.get("tool_calls") or []
     return isinstance(delta_tool_calls, list) and bool(delta_tool_calls)
 
 
-def openai_response_has_meaningful_output(response_body: dict | None) -> bool:
+def openai_response_has_meaningful_output(response_body: dict | None, *, include_reasoning: bool = False) -> bool:
     if not isinstance(response_body, dict):
         return False
 
@@ -82,17 +84,21 @@ def openai_response_has_meaningful_output(response_body: dict | None) -> bool:
     if not isinstance(choices, list) or not choices:
         return False
 
-    return any(openai_choice_has_meaningful_output(choice) for choice in choices)
+    return any(openai_choice_has_meaningful_output(choice, include_reasoning=include_reasoning) for choice in choices)
 
 
-def openai_stream_events_have_meaningful_output(response_events: list[dict] | None) -> bool:
+def openai_stream_events_have_meaningful_output(
+    response_events: list[dict] | None,
+    *,
+    include_reasoning: bool = False,
+) -> bool:
     if not isinstance(response_events, list) or not response_events:
         return False
     for event in response_events:
         if not isinstance(event, dict):
             continue
         for choice in event.get("choices") or []:
-            if openai_choice_has_meaningful_output(choice):
+            if openai_choice_has_meaningful_output(choice, include_reasoning=include_reasoning):
                 return True
     return False
 

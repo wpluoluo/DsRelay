@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import requests
 
@@ -10,7 +11,7 @@ from local_proxy.server import (
     should_send_upstream_stream,
 )
 from local_proxy.upstream.orchestrator import request_upstream_with_retries
-from local_proxy.upstream.router import build_attempt_url_cycle, mark_route_failure
+from local_proxy.upstream.router import build_attempt_url_cycle, build_route_selection_debug, mark_route_failure
 
 
 class NullLogger:
@@ -28,6 +29,20 @@ def make_response(status_code: int, body: str, url: str) -> requests.Response:
     response.url = url
     response.headers["Content-Type"] = "text/html" if body.startswith("<html") else "application/json"
     return response
+
+
+class StreamingSuccessResponse:
+    def __init__(self, url: str):
+        self.status_code = 200
+        self.url = url
+        self.headers = {"Content-Type": "text/event-stream"}
+
+    @property
+    def content(self):
+        raise AssertionError("stream body should not be consumed before proxy handoff")
+
+    def close(self):
+        return None
 
 
 class GatewayFailoverTests(unittest.TestCase):
@@ -50,7 +65,6 @@ class GatewayFailoverTests(unittest.TestCase):
 
         self.assertNotEqual(prepared["timeout"], (20, 600))
         self.assertLessEqual(prepared["timeout"][0], prepared["timeout"][1])
-        self.assertGreaterEqual(prepared["timeout"][1], REQUEST_TIMEOUT)
         self.assertGreaterEqual(prepared["timeout"][1], prepared["timeout"][0])
 
     def test_prepare_route_switch_stream_request_kwargs_treats_same_base_route_ids_as_independent_routes(self):
@@ -83,7 +97,7 @@ class GatewayFailoverTests(unittest.TestCase):
             )["timeout"],
         )
 
-    def test_prepare_route_switch_stream_request_kwargs_never_shortens_read_timeout_below_request_timeout(self):
+    def test_prepare_route_switch_stream_request_kwargs_uses_first_event_budget_even_when_lower_than_request_timeout(self):
         request_kwargs = {
             "method": "POST",
             "url": "https://integrate.api.nvidia.com/v1/chat/completions",
@@ -92,16 +106,50 @@ class GatewayFailoverTests(unittest.TestCase):
             "timeout": (20, 600),
         }
 
-        prepared = prepare_route_switch_stream_request_kwargs(
-            request_kwargs,
-            upstream_urls=[
-                "https://integrate.api.nvidia.com/v1/chat/completions#__route=one",
-                "https://integrate.api.nvidia.com/v1/chat/completions#__route=two",
-                "https://integrate.api.nvidia.com/v1/chat/completions#__route=three",
-            ],
-        )
+        with patch("local_proxy.server.REQUEST_TIMEOUT", 180), patch(
+            "local_proxy.server.STREAM_FIRST_EVENT_TIMEOUT_SECONDS",
+            20,
+        ), patch("local_proxy.server.STREAM_ROUTE_SWITCH_CONNECT_TIMEOUT_SECONDS", 5), patch(
+            "local_proxy.server.UPSTREAM_ROUTE_SWITCH_WINDOW_SECONDS",
+            60,
+        ):
+            prepared = prepare_route_switch_stream_request_kwargs(
+                request_kwargs,
+                upstream_urls=[
+                    "https://integrate.api.nvidia.com/v1/chat/completions#__route=one",
+                    "https://integrate.api.nvidia.com/v1/chat/completions#__route=two",
+                    "https://integrate.api.nvidia.com/v1/chat/completions#__route=three",
+                ],
+            )
 
-        self.assertGreaterEqual(prepared["timeout"][1], REQUEST_TIMEOUT)
+        self.assertEqual(prepared["timeout"], (5, 20))
+
+    def test_prepare_route_switch_stream_request_kwargs_caps_preconnect_read_timeout_by_route_window(self):
+        request_kwargs = {
+            "method": "POST",
+            "url": "https://integrate.api.nvidia.com/v1/chat/completions",
+            "json": {"model": "demo", "stream": True},
+            "stream": True,
+            "timeout": (20, 600),
+        }
+
+        with patch("local_proxy.server.REQUEST_TIMEOUT", 180), patch(
+            "local_proxy.server.STREAM_FIRST_EVENT_TIMEOUT_SECONDS",
+            20,
+        ), patch("local_proxy.server.STREAM_ROUTE_SWITCH_CONNECT_TIMEOUT_SECONDS", 5), patch(
+            "local_proxy.server.UPSTREAM_ROUTE_SWITCH_WINDOW_SECONDS",
+            5,
+        ):
+            prepared = prepare_route_switch_stream_request_kwargs(
+                request_kwargs,
+                upstream_urls=[
+                    "https://integrate.api.nvidia.com/v1/chat/completions#__route=one",
+                    "https://integrate.api.nvidia.com/v1/chat/completions#__route=two",
+                    "https://integrate.api.nvidia.com/v1/chat/completions#__route=three",
+                ],
+            )
+
+        self.assertEqual(prepared["timeout"], (5, 5))
 
     def test_prepare_route_switch_stream_request_kwargs_does_not_shorten_timeout_for_non_stream_requests(self):
         request_kwargs = {
@@ -219,6 +267,237 @@ class GatewayFailoverTests(unittest.TestCase):
         )
 
         self.assertEqual(ordered[0], "https://b.example/v1/chat/completions")
+
+    def test_route_cycle_ignores_fingerprint_affinity_when_randomization_enabled(self):
+        route_health = {}
+        route_selection_state = {
+            "affinity:session:v1:fingerprint:test": {
+                "route_url": "https://b.example/v1/chat/completions",
+                "last_used_at": 1.0,
+            }
+        }
+
+        class DummyLock:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with patch("builtins.hash", return_value=0), patch("local_proxy.upstream.router.random.shuffle", lambda seq: None):
+            ordered = build_attempt_url_cycle(
+                [
+                    "https://a.example/v1/chat/completions",
+                    "https://b.example/v1/chat/completions",
+                    "https://c.example/v1/chat/completions",
+                ],
+                set(),
+                route_health=route_health,
+                route_selection_state=route_selection_state,
+                state_lock=DummyLock(),
+                randomize_endpoints=True,
+                route_score_provider=lambda url: 10.0 if url.endswith("c.example/v1/chat/completions") else 0.0,
+                session_affinity_key="session:v1:fingerprint:test",
+            )
+
+        self.assertEqual(ordered[0], "https://c.example/v1/chat/completions")
+
+    def test_route_cycle_keeps_explicit_affinity_even_when_randomization_enabled(self):
+        route_health = {}
+        route_selection_state = {
+            "affinity:session:v1:explicit:test": {
+                "route_url": "https://b.example/v1/chat/completions",
+                "last_used_at": 1.0,
+            }
+        }
+
+        class DummyLock:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with patch("builtins.hash", return_value=0), patch("local_proxy.upstream.router.random.shuffle", lambda seq: None):
+            ordered = build_attempt_url_cycle(
+                [
+                    "https://a.example/v1/chat/completions",
+                    "https://b.example/v1/chat/completions",
+                    "https://c.example/v1/chat/completions",
+                ],
+                set(),
+                route_health=route_health,
+                route_selection_state=route_selection_state,
+                state_lock=DummyLock(),
+                randomize_endpoints=True,
+                route_score_provider=lambda url: 10.0 if url.endswith("c.example/v1/chat/completions") else 0.0,
+                session_affinity_key="session:v1:explicit:test",
+            )
+
+        self.assertEqual(ordered[0], "https://b.example/v1/chat/completions")
+
+    def test_route_cycle_keeps_highest_priority_route_first_across_repeated_calls(self):
+        route_health = {}
+        route_selection_state = {}
+
+        class DummyLock:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        route_scores = {
+            "https://a.example/v1/chat/completions": 103.0,
+            "https://b.example/v1/chat/completions": 102.0,
+            "https://c.example/v1/chat/completions": 101.0,
+        }
+
+        with patch("local_proxy.upstream.router.time.time", return_value=1000.0):
+            ordered_first = build_attempt_url_cycle(
+                list(route_scores.keys()),
+                set(),
+                route_health=route_health,
+                route_selection_state=route_selection_state,
+                state_lock=DummyLock(),
+                randomize_endpoints=False,
+                route_score_provider=lambda url: route_scores[url],
+                session_affinity_key="",
+            )
+            ordered_second = build_attempt_url_cycle(
+                list(route_scores.keys()),
+                set(),
+                route_health=route_health,
+                route_selection_state=route_selection_state,
+                state_lock=DummyLock(),
+                randomize_endpoints=False,
+                route_score_provider=lambda url: route_scores[url],
+                session_affinity_key="",
+            )
+
+        self.assertEqual(ordered_first[0], "https://a.example/v1/chat/completions")
+        self.assertEqual(ordered_second[0], "https://a.example/v1/chat/completions")
+
+    def test_route_cycle_randomization_does_not_demote_higher_priority_route(self):
+        route_health = {}
+        route_selection_state = {}
+
+        class DummyLock:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        route_scores = {
+            "https://a.example/v1/chat/completions": 103.0,
+            "https://b.example/v1/chat/completions": 102.0,
+            "https://c.example/v1/chat/completions": 101.0,
+        }
+
+        with patch("local_proxy.upstream.router.time.time", return_value=1000.0), patch("builtins.hash", return_value=2):
+            ordered = build_attempt_url_cycle(
+                list(route_scores.keys()),
+                set(),
+                route_health=route_health,
+                route_selection_state=route_selection_state,
+                state_lock=DummyLock(),
+                randomize_endpoints=True,
+                route_score_provider=lambda url: route_scores[url],
+                session_affinity_key="",
+            )
+
+        self.assertEqual(ordered[0], "https://a.example/v1/chat/completions")
+
+    def test_route_selection_debug_marks_randomized_fingerprint_as_ignored(self):
+        route_health = {}
+
+        class DummyLock:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        debug_meta = build_route_selection_debug(
+            [
+                "https://a.example/v1/chat/completions",
+                "https://b.example/v1/chat/completions",
+            ],
+            set(),
+            route_health=route_health,
+            state_lock=DummyLock(),
+            randomize_endpoints=True,
+            session_affinity_key="session:v1:fingerprint:test",
+        )
+
+        self.assertEqual(debug_meta["session_affinity_type"], "fingerprint")
+        self.assertFalse(debug_meta["session_affinity_applied"])
+        self.assertEqual(debug_meta["rotation_reason"], "randomized_ignore_fingerprint_affinity")
+
+    def test_streaming_success_response_is_returned_without_preconsuming_body(self):
+        stream_response = StreamingSuccessResponse("https://slow.example/v1/chat/completions")
+
+        response, attempts, error = request_upstream_with_retries(
+            {
+                "method": "POST",
+                "url": "https://slow.example/v1/chat/completions",
+                "json": {"model": "demo", "stream": True},
+                "headers": {"Content-Type": "application/json"},
+                "stream": True,
+                "timeout": (5, 5),
+            },
+            subpath="chat/completions",
+            request_id="test-stream-success-deferred",
+            upstream_urls=["https://slow.example/v1/chat/completions"],
+            model_candidates=["demo"],
+            should_retry_request=lambda subpath, method: True,
+            max_retries=1,
+            should_enforce_route_switch_window=lambda urls, retry_allowed: True,
+            route_switch_window_seconds=5,
+            build_attempt_url_cycle=lambda urls, blocked: [url for url in urls if url not in blocked],
+            build_model_candidate_order_for_route=lambda route, models, kwargs, request_id: {"candidates": models},
+            should_race_model_candidates_for_route=lambda **kwargs: False,
+            get_api_keys_for_url=lambda url: [],
+            choose_api_key_for_url=lambda url, exclude=None: {},
+            mark_api_key_success=lambda url, key: None,
+            mark_api_key_failure=lambda url, key, reason, force_cooldown=False: None,
+            mark_route_success=lambda url: None,
+            mark_route_failure=lambda url, reason: None,
+            response_indicates_model_unavailable=lambda response: (_ for _ in ()).throw(
+                AssertionError("stream success should not be classified before handoff")
+            ),
+            classify_upstream_response=lambda response: (_ for _ in ()).throw(
+                AssertionError("stream success should not be classified before handoff")
+            ),
+            extract_error_preview_from_response=lambda response: (_ for _ in ()).throw(
+                AssertionError("stream success preview should not be read before handoff")
+            ),
+            apply_model_candidate_to_request_kwargs=lambda kwargs, model: dict(kwargs),
+            apply_learned_completion_limit_to_request_kwargs=lambda *args, **kwargs: 0,
+            extract_completion_token_limit_from_response=lambda response: None,
+            extract_context_token_limit_from_response=lambda response: (None, None),
+            clamp_payload_output_tokens=lambda payload, limit: 0,
+            record_learned_model_capability=lambda **kwargs: None,
+            record_model_candidate_result=lambda **kwargs: None,
+            compute_retry_delay_ms=lambda attempt, response=None: 0,
+            remaining_retry_window_ms=lambda deadline: 5000,
+            append_race_attempts=lambda attempts, race_attempts, **kwargs: set(),
+            model_candidate_differs_from_logical=lambda logical, candidate: False,
+            logger=NullLogger(),
+            cache_stat_bump=lambda key: None,
+            model_candidate_race_limit=1,
+            model_candidate_race_timeout_seconds=1,
+            enable_model_candidate_race=False,
+            request_sender=lambda **kwargs: stream_response,
+        )
+
+        self.assertIsNone(error)
+        self.assertIs(response, stream_response)
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0]["status_code"], 200)
+        self.assertEqual(attempts[0]["action"], "return")
+        self.assertEqual(attempts[0]["reason"], "stream_success_deferred_200")
 
     def test_html_504_switches_to_next_healthy_route_before_key_rotation(self):
         sent_urls = []
@@ -467,7 +746,7 @@ class GatewayFailoverTests(unittest.TestCase):
         self.assertEqual(route_failures, [("https://timeout.example/v1/chat/completions", "request_exception")])
         self.assertEqual(key_failures, [])
 
-    def test_request_exception_can_continue_switching_routes_within_short_window(self):
+    def test_request_exception_allows_only_one_immediate_followup_after_window_expires(self):
         sent_urls = []
 
         def sender(**kwargs):
@@ -529,18 +808,91 @@ class GatewayFailoverTests(unittest.TestCase):
             request_sender=sender,
         )
 
-        self.assertIsNone(error)
-        self.assertIsNotNone(response)
-        self.assertEqual(response.status_code, 200)
+        self.assertIsInstance(error, requests.Timeout)
+        self.assertIsNone(response)
         self.assertEqual(
             sent_urls,
             [
                 "https://bad-a.example/v1/chat/completions",
                 "https://bad-b.example/v1/chat/completions",
-                "https://good.example/v1/chat/completions",
             ],
         )
-        self.assertEqual(len(attempts), 3)
+        self.assertEqual(len(attempts), 2)
+
+    def test_request_exception_clamps_followup_stream_timeout_to_remaining_window(self):
+        seen_timeouts = []
+
+        remaining_values = iter([5000, 0, 0])
+
+        def remaining_window(_deadline):
+            return next(remaining_values, 0)
+
+        def sender(**kwargs):
+            seen_timeouts.append(kwargs.get("timeout"))
+            raise requests.Timeout("read timed out")
+
+        response, attempts, error = request_upstream_with_retries(
+            {
+                "method": "POST",
+                "url": "https://bad-a.example/v1/chat/completions",
+                "json": {"model": "demo", "stream": True},
+                "stream": True,
+                "timeout": (3, 6),
+            },
+            subpath="chat/completions",
+            request_id="test-timeout-clamp",
+            upstream_urls=[
+                "https://bad-a.example/v1/chat/completions",
+                "https://bad-b.example/v1/chat/completions",
+                "https://good.example/v1/chat/completions",
+            ],
+            model_candidates=["demo"],
+            should_retry_request=lambda subpath, method: True,
+            max_retries=3,
+            should_enforce_route_switch_window=lambda urls, retry_allowed: True,
+            route_switch_window_seconds=5,
+            build_attempt_url_cycle=lambda urls, blocked: [url for url in urls if url not in blocked],
+            build_model_candidate_order_for_route=lambda route, models, kwargs, request_id: {"candidates": models},
+            should_race_model_candidates_for_route=lambda **kwargs: False,
+            get_api_keys_for_url=lambda url: ["key-a"],
+            choose_api_key_for_url=lambda url, exclude=None: {
+                "key": "key-a",
+                "from_pool": True,
+                "pool_name": "pool",
+                "key_index": 0,
+                "key_count": 1,
+                "key_id": "key-a",
+            },
+            mark_api_key_success=lambda url, key: None,
+            mark_api_key_failure=lambda url, key, reason, force_cooldown=False: None,
+            mark_route_success=lambda url: None,
+            mark_route_failure=lambda url, reason: None,
+            response_indicates_model_unavailable=lambda response: False,
+            classify_upstream_response=lambda response: ("return", f"status_{response.status_code}"),
+            extract_error_preview_from_response=lambda response: response.text[:120],
+            apply_model_candidate_to_request_kwargs=lambda kwargs, model: dict(kwargs),
+            apply_learned_completion_limit_to_request_kwargs=lambda *args, **kwargs: 0,
+            extract_completion_token_limit_from_response=lambda response: None,
+            extract_context_token_limit_from_response=lambda response: (None, None),
+            clamp_payload_output_tokens=lambda payload, limit: 0,
+            record_learned_model_capability=lambda **kwargs: None,
+            record_model_candidate_result=lambda **kwargs: None,
+            compute_retry_delay_ms=lambda attempt, response=None: 0,
+            remaining_retry_window_ms=remaining_window,
+            append_race_attempts=lambda attempts, race_attempts, **kwargs: set(),
+            model_candidate_differs_from_logical=lambda logical, candidate: False,
+            logger=NullLogger(),
+            cache_stat_bump=lambda key: None,
+            model_candidate_race_limit=1,
+            model_candidate_race_timeout_seconds=1,
+            enable_model_candidate_race=False,
+            request_sender=sender,
+        )
+
+        self.assertIsNone(response)
+        self.assertIsInstance(error, requests.Timeout)
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(seen_timeouts, [(3, 5), (1, 1)])
 
     def test_route_switch_replaces_authorization_in_isolated_headers(self):
         sent_headers = []
@@ -779,6 +1131,83 @@ class GatewayFailoverTests(unittest.TestCase):
         self.assertEqual(attempts[0]["status_code"], 429)
         self.assertEqual(attempts[0]["action"], "switch_route")
         self.assertEqual(route_failures, [("https://limited.example/v1/chat/completions", "route_switch_429")])
+
+    def test_non_requests_exception_switches_to_next_route_and_preserves_attempt_route(self):
+        sent_urls = []
+        route_failures = []
+
+        def sender(**kwargs):
+            url = kwargs["url"]
+            sent_urls.append(url)
+            if url == "https://broken.example/v1/chat/completions":
+                raise RuntimeError("unexpected sender boom")
+            return make_response(200, '{"ok":true}', url)
+
+        response, attempts, error = request_upstream_with_retries(
+            {"method": "POST", "url": "https://broken.example/v1/chat/completions", "json": {"model": "demo"}},
+            subpath="chat/completions",
+            request_id="test-non-requests-exception-switch",
+            upstream_urls=[
+                "https://broken.example/v1/chat/completions",
+                "https://good.example/v1/chat/completions",
+            ],
+            model_candidates=["demo"],
+            should_retry_request=lambda subpath, method: True,
+            max_retries=3,
+            should_enforce_route_switch_window=lambda urls, retry_allowed: True,
+            route_switch_window_seconds=30,
+            build_attempt_url_cycle=lambda urls, blocked: [url for url in urls if url not in blocked],
+            build_model_candidate_order_for_route=lambda route, models, kwargs, request_id: {"candidates": models},
+            should_race_model_candidates_for_route=lambda **kwargs: False,
+            get_api_keys_for_url=lambda url: ["key-a"],
+            choose_api_key_for_url=lambda url, exclude=None: {
+                "key": "key-a",
+                "from_pool": True,
+                "pool_name": "pool",
+                "key_index": 0,
+                "key_count": 1,
+                "key_id": "key-a",
+            },
+            mark_api_key_success=lambda url, key: None,
+            mark_api_key_failure=lambda url, key, reason, force_cooldown=False: None,
+            mark_route_success=lambda url: None,
+            mark_route_failure=lambda url, reason: route_failures.append((url, reason)),
+            response_indicates_model_unavailable=lambda response: False,
+            classify_upstream_response=lambda response: ("return", f"status_{response.status_code}"),
+            extract_error_preview_from_response=lambda response: response.text[:120],
+            apply_model_candidate_to_request_kwargs=lambda kwargs, model: dict(kwargs),
+            apply_learned_completion_limit_to_request_kwargs=lambda *args, **kwargs: 0,
+            extract_completion_token_limit_from_response=lambda response: None,
+            extract_context_token_limit_from_response=lambda response: (None, None),
+            clamp_payload_output_tokens=lambda payload, limit: 0,
+            record_learned_model_capability=lambda **kwargs: None,
+            record_model_candidate_result=lambda **kwargs: None,
+            compute_retry_delay_ms=lambda attempt, response=None: 0,
+            remaining_retry_window_ms=lambda deadline: 30000,
+            append_race_attempts=lambda attempts, race_attempts, **kwargs: set(),
+            model_candidate_differs_from_logical=lambda logical, candidate: False,
+            logger=NullLogger(),
+            cache_stat_bump=lambda key: None,
+            model_candidate_race_limit=1,
+            model_candidate_race_timeout_seconds=1,
+            enable_model_candidate_race=False,
+            request_sender=sender,
+        )
+
+        self.assertIsNone(error)
+        self.assertIsNotNone(response)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            sent_urls,
+            [
+                "https://broken.example/v1/chat/completions",
+                "https://good.example/v1/chat/completions",
+            ],
+        )
+        self.assertEqual(attempts[0]["route_url"], "https://broken.example/v1/chat/completions")
+        self.assertEqual(attempts[0]["kind"], "exception")
+        self.assertEqual(attempts[0]["error"], "unexpected sender boom")
+        self.assertEqual(route_failures, [("https://broken.example/v1/chat/completions", "request_exception")])
 
     def test_429_switches_between_distinct_routes_even_when_request_url_is_same(self):
         sent_urls = []

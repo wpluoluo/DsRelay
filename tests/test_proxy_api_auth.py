@@ -142,6 +142,40 @@ class ProxyApiAuthParserTests(unittest.TestCase):
         self.assertEqual(len(diagnostics["managed_key_previews"]), 1)
         self.assertTrue(diagnostics["managed_key_previews"][0].startswith("sk-"))
 
+    def test_build_session_affinity_key_uses_proxy_headers_for_explicit_affinity(self):
+        from flask import Flask
+        from local_proxy.server import build_session_affinity_key
+
+        app = Flask(__name__)
+        with app.test_request_context(
+            "/v1/chat/completions",
+            headers={"X-Proxy-Session-Key": "session-explicit"},
+            json={"model": "demo", "messages": [{"role": "user", "content": "hello"}]},
+        ):
+            key = build_session_affinity_key(
+                "openai_chat_completions",
+                {"model": "demo", "messages": [{"role": "user", "content": "hello"}]},
+            )
+
+        self.assertTrue(key.startswith("session:v1:explicit:"))
+
+    def test_build_session_affinity_key_treats_generic_session_headers_as_fingerprint_only(self):
+        from flask import Flask
+        from local_proxy.server import build_session_affinity_key
+
+        app = Flask(__name__)
+        with app.test_request_context(
+            "/v1/chat/completions",
+            headers={"X-Session-Id": "generic-session"},
+            json={"model": "demo", "messages": [{"role": "user", "content": "hello"}]},
+        ):
+            key = build_session_affinity_key(
+                "openai_chat_completions",
+                {"model": "demo", "messages": [{"role": "user", "content": "hello"}]},
+            )
+
+        self.assertTrue(key.startswith("session:v1:fingerprint:"))
+
 
 class ProxyEntrypointAuthTests(unittest.TestCase):
     def load_server_with_keys(self, value: str):
@@ -379,6 +413,45 @@ class ProxyEntrypointAuthTests(unittest.TestCase):
         self.assertEqual(server.STREAM_FIRST_EVENT_TIMEOUT_SECONDS, 650)
         saved_payload = __import__("json").loads(server.PROXY_CONFIG_PATH.read_text(encoding="utf-8"))
         self.assertEqual(saved_payload["stream_first_event_timeout_seconds"], 650)
+
+    def test_saving_public_config_payload_keeps_stream_first_event_timeout_below_request_timeout(self):
+        server = self.load_server_with_keys("")
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        server.PROXY_CONFIG_PATH = Path(temp_dir.name) / "proxy-config.json"
+        client = server.app.test_client()
+        with client.session_transaction() as session:
+            session["_proxy_authed"] = True
+
+        config_payload = client.get("/debug/config").get_json()["config"]
+        config_payload["request_timeout"] = 180
+        config_payload["stream_first_event_timeout_seconds"] = 20
+        save_response = client.post("/debug/config", json=config_payload)
+
+        self.assertEqual(save_response.status_code, 200)
+        self.assertEqual(server.REQUEST_TIMEOUT, 180)
+        self.assertEqual(server.STREAM_FIRST_EVENT_TIMEOUT_SECONDS, 20)
+        saved_payload = __import__("json").loads(server.PROXY_CONFIG_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(saved_payload["request_timeout"], 180)
+        self.assertEqual(saved_payload["stream_first_event_timeout_seconds"], 20)
+
+    def test_saving_public_config_payload_persists_request_timeout_below_30(self):
+        server = self.load_server_with_keys("")
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        server.PROXY_CONFIG_PATH = Path(temp_dir.name) / "proxy-config.json"
+        client = server.app.test_client()
+        with client.session_transaction() as session:
+            session["_proxy_authed"] = True
+
+        config_payload = client.get("/debug/config").get_json()["config"]
+        config_payload["request_timeout"] = 5
+        save_response = client.post("/debug/config", json=config_payload)
+
+        self.assertEqual(save_response.status_code, 200)
+        self.assertEqual(server.REQUEST_TIMEOUT, 5)
+        saved_payload = __import__("json").loads(server.PROXY_CONFIG_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(saved_payload["request_timeout"], 5)
 
     def test_initialize_runtime_config_bootstraps_disk_payload_into_mysql_storage(self):
         server = self.load_server_with_keys("")

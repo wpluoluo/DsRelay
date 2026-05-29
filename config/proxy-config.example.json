@@ -13,7 +13,7 @@
         }
       ],
       "supported_models_text": "deepseek-ai/deepseek-v4-flash\ndeepseek-ai/deepseek-v4-pro",
-      "model_aliases_text": "deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash\nopencode/deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash\ndeepseek-v4-pro=deepseek-ai/deepseek-v4-pro",
+      "model_aliases_text": "deepseek-v4-flash=deepseek-ai/deepseek-v4-flash\ndeepseek-v4-pro=deepseek-ai/deepseek-v4-pro",
       "route_policy": {
         "reasoning_effort": "high",
         "prompt_cache_mode": "exact",
@@ -29,6 +29,7 @@
   ],
   "model_capabilities_text": "# model=context_tokens,max_output_tokens\ndeepseek-v4-flash=1048576,393216\ndeepseek-v4-pro=1048576,393216",
   "request_timeout": 600,
+  "stream_first_event_timeout_seconds": 30,
   "force_upstream_chat_stream": true,
   "enable_request_normalization": true,
   "max_completion_tokens": 0,

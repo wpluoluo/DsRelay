@@ -49,31 +49,6 @@ def normalize_pool_supported_models_text(value: object) -> str:
     return str(value or "").strip()
 
 
-def apply_legacy_pool_text_defaults(
-    raw_pools: object,
-    *,
-    legacy_model_aliases_text: object = None,
-    legacy_supported_models_text: object = None,
-) -> object:
-    if not isinstance(raw_pools, list):
-        return raw_pools
-
-    alias_text = normalize_pool_model_aliases_text(legacy_model_aliases_text)
-    supported_models_text = normalize_pool_supported_models_text(legacy_supported_models_text)
-    migrated = []
-    for item in raw_pools:
-        if not isinstance(item, dict):
-            migrated.append(item)
-            continue
-        pool = dict(item)
-        if alias_text and not normalize_pool_model_aliases_text(pool.get("model_aliases_text")):
-            pool["model_aliases_text"] = alias_text
-        if supported_models_text and not normalize_pool_supported_models_text(pool.get("supported_models_text")):
-            pool["supported_models_text"] = supported_models_text
-        migrated.append(pool)
-    return migrated
-
-
 def normalize_proxy_pools(raw_pools: object) -> list[dict]:
     if not isinstance(raw_pools, list):
         return []

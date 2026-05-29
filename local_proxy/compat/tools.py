@@ -235,6 +235,9 @@ COMMAND_ALIASES = (
 COMMON_FIELD_ALIASES = {
     "command": COMMAND_ALIASES + ("cmdline",),
     "query": ("q", "search", "search_query", "keyword", "keywords"),
+    "queries": ("query", "q", "search", "search_query", "queries_text", "keyword", "keywords"),
+    "tool_names": ("toolNames", "toolnames", "tools", "tool_names_text", "toolNamesText"),
+    "skill": ("skill_name", "skillName", "name"),
     "filePath": ("path", "file_path", "filepath", "file"),
     "target_directory": ("targetDirectory", "directory", "dir", "folder", "path"),
     "targetDirectory": ("target_directory", "directory", "dir", "folder", "path"),
@@ -300,6 +303,29 @@ TOOL_NAME_ALIAS_GROUPS = (
     ("glob", "find_file", "search_file"),
     ("list", "list_dir", "list_directory", "ls"),
 )
+
+SPECIAL_TOOL_SCHEMAS = {
+    "toolsearch": {
+        "required": [],
+        "required_any": [("queries", "tool_names")],
+        "properties": ["queries", "tool_names"],
+        "additional_properties": False,
+        "property_types": {
+            "queries": "array",
+            "tool_names": "array",
+        },
+    },
+    "skill": {
+        "required": [],
+        "required_any": [("skill", "command")],
+        "properties": ["skill", "command"],
+        "additional_properties": False,
+        "property_types": {
+            "skill": "string",
+            "command": "string",
+        },
+    },
+}
 
 EDIT_PATH_FIELD_CANONICALS = {"filepath", "path", "file", "targetfile", "targetfilepath"}
 EDIT_OLD_FIELD_CANONICALS = {"oldstring", "oldtext", "search", "searchtext", "before"}
@@ -1141,6 +1167,18 @@ def extract_tool_schemas(request_payload: dict | None) -> dict:
             },
         }
 
+    for tool_name, schema in SPECIAL_TOOL_SCHEMAS.items():
+        matched_name = resolve_tool_name(tool_name, schemas) if schemas else None
+        if matched_name and matched_name in schemas:
+            merged = dict(schemas[matched_name])
+            merged["required_any"] = list(schema.get("required_any") or [])
+            merged["properties"] = list(dict.fromkeys(list(merged.get("properties") or []) + list(schema.get("properties") or [])))
+            merged["property_types"] = {
+                **dict(schema.get("property_types") or {}),
+                **dict(merged.get("property_types") or {}),
+            }
+            schemas[matched_name] = merged
+
     return schemas
 
 
@@ -1523,6 +1561,59 @@ def normalize_array_like_value(field_name: str, value):
     return value, False
 
 
+def normalize_string_array_value(value):
+    modified = False
+    raw_value = value
+    if isinstance(raw_value, str):
+        stripped = raw_value.strip()
+        if stripped in {"", "{}", "[]", "null", "None"}:
+            return [], True
+        if stripped.startswith("[") or (len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {'"', "'"}):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                parsed = None
+            if parsed is not None:
+                raw_value = parsed
+                modified = True
+        elif "," in stripped or "\n" in stripped:
+            raw_value = [part.strip() for part in stripped.replace("\r", "\n").replace(",", "\n").split("\n") if part.strip()]
+            modified = True
+        else:
+            return [stripped], True
+
+    if isinstance(raw_value, list):
+        normalized_items = []
+        for item in raw_value:
+            if item is None:
+                modified = True
+                continue
+            if isinstance(item, str):
+                stripped = item.strip()
+                if not stripped:
+                    modified = True
+                    continue
+                normalized_items.append(stripped)
+                modified = modified or stripped != item
+            else:
+                normalized_items.append(str(item))
+                modified = True
+        return normalized_items, modified
+
+    if isinstance(raw_value, dict):
+        normalized_items = []
+        for nested in raw_value.values():
+            if isinstance(nested, str) and nested.strip():
+                normalized_items.append(nested.strip())
+            elif nested is not None:
+                normalized_items.append(str(nested))
+        return normalized_items, True
+
+    if raw_value is None:
+        return [], True
+    return [str(raw_value)], True
+
+
 def normalize_object_like_value(field_name: str, value):
     if isinstance(value, dict):
         return value, False
@@ -1654,6 +1745,9 @@ def coerce_payload_values_by_schema(normalized: dict, tool_name: str | None, too
             coerced_value, changed = normalize_string_like_value(field_name, current_value)
         elif field_type == "array":
             coerced_value, changed = normalize_array_like_value(field_name, current_value)
+            if field_name in {"queries", "tool_names"}:
+                coerced_value, extra_changed = normalize_string_array_value(coerced_value)
+                changed = changed or extra_changed
         elif field_type == "object":
             coerced_value, changed = normalize_object_like_value(field_name, current_value)
         else:
@@ -1773,15 +1867,31 @@ def tool_requires_arguments_before_stream_header(tool_name: str | None, tool_sch
 
     schema = tool_schemas.get(resolved_name, {})
     required = list(schema.get("required") or [])
+    required_any = list(schema.get("required_any") or [])
+
+    def field_requires_input(field_name: str | None) -> bool:
+        if not field_name:
+            return False
+        if field_is_run_in_background(field_name):
+            return False
+        if canonicalize_name(field_name) in EMPTY_TOOL_META_FIELD_CANONICALS:
+            return False
+        return True
+
     if not required:
+        for field_group in required_any:
+            if isinstance(field_group, (list, tuple, set)):
+                field_names = list(field_group)
+            else:
+                field_names = [field_group]
+            for field_name in field_names:
+                if field_requires_input(field_name):
+                    return True
         return False
 
     for field_name in required:
-        if field_is_run_in_background(field_name):
-            continue
-        if canonicalize_name(field_name) in EMPTY_TOOL_META_FIELD_CANONICALS:
-            continue
-        return True
+        if field_requires_input(field_name):
+            return True
 
     return False
 
@@ -1879,6 +1989,7 @@ def tool_call_lacks_required_input_signal(tool_name: str | None, payload, tool_s
     resolved_name = resolve_tool_name(tool_name, tool_schemas) or tool_name or ""
     schema = tool_schemas.get(resolved_name, {})
     required = list(schema.get("required") or [])
+    required_any = list(schema.get("required_any") or [])
     property_types = dict(schema.get("property_types") or {})
     payload_object = parse_tool_arguments_object(payload)
 
@@ -1902,6 +2013,17 @@ def tool_call_lacks_required_input_signal(tool_name: str | None, payload, tool_s
         checked_any_required = True
         field_value = extract_tool_field_value(payload_object, field_name)
         if not required_field_has_meaningful_value(property_types.get(field_name), field_value):
+            return True
+
+    for field_group in required_any:
+        checked_any_required = True
+        group_satisfied = False
+        for field_name in field_group:
+            field_value = extract_tool_field_value(payload_object, field_name)
+            if required_field_has_meaningful_value(property_types.get(field_name), field_value):
+                group_satisfied = True
+                break
+        if not group_satisfied:
             return True
 
     return False if checked_any_required else False

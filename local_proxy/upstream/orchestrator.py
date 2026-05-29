@@ -38,6 +38,22 @@ DETERMINISTIC_FAILURE_MARKERS = (
 )
 
 
+def clamp_stream_timeout_to_retry_window(timeout_value, remaining_window_ms: int):
+    if not (isinstance(timeout_value, tuple) and len(timeout_value) == 2):
+        return timeout_value
+    try:
+        connect_timeout = int(timeout_value[0])
+        read_timeout = int(timeout_value[1])
+    except Exception:
+        return timeout_value
+
+    budget_ms = max(0, int(remaining_window_ms or 0))
+    budget_seconds = max(1, (budget_ms + 999) // 1000)
+    connect_timeout = max(1, min(connect_timeout, budget_seconds))
+    read_timeout = max(connect_timeout, min(read_timeout, budget_seconds))
+    return (connect_timeout, read_timeout)
+
+
 def _is_deterministic_upstream_failure(status_code: int, reason: str, preview: str) -> bool:
     searchable = f"{reason or ''} {preview or ''}".lower()
     return status_code in DETERMINISTIC_ROUTE_FAILURE_STATUS_CODES or any(
@@ -104,7 +120,7 @@ def request_upstream_with_retries(
     enable_model_candidate_race: bool,
     request_sender: Any,
     initial_blocked_urls: set[str] | None = None,
-) -> tuple[requests.Response | None, list[dict], requests.RequestException | None]:
+) -> tuple[requests.Response | None, list[dict], Exception | None]:
     request_kwargs = dict(request_kwargs or {})
     request_kwargs.pop("meta", None)
     retry_allowed = should_retry_request(subpath, str(request_kwargs.get("method", "GET")))
@@ -134,17 +150,20 @@ def request_upstream_with_retries(
     raced_routes = set()
     route_key_failures: dict[str, set[str]] = {}
     route_cycle = build_attempt_url_cycle(candidate_urls, blocked_urls)
+    last_logged_route_debug = None
     deadline_monotonic = (
         time.monotonic() + route_switch_window_seconds
         if enforce_route_window
         else time.monotonic()
     )
-    immediate_followup_budget = 0
+    immediate_followup_available = False
+    immediate_followup_consumed = False
 
     for attempt_number in range(1, max_attempts + 1):
         if attempt_number > 1 and enforce_route_window and remaining_retry_window_ms(deadline_monotonic) <= 0:
-            if immediate_followup_budget > 0:
-                immediate_followup_budget -= 1
+            if immediate_followup_available and not immediate_followup_consumed:
+                immediate_followup_available = False
+                immediate_followup_consumed = True
             else:
                 break
 
@@ -152,6 +171,26 @@ def request_upstream_with_retries(
             route_cycle = build_attempt_url_cycle(candidate_urls, blocked_urls)
         if not route_cycle:
             break
+
+        route_debug = None
+        if hasattr(build_attempt_url_cycle, "__globals__"):
+            route_debug = build_attempt_url_cycle.__globals__.get("route_selection_state", {}).get("__last_route_selection_debug__")
+        if logger and isinstance(route_debug, dict):
+            current_debug = json.dumps(route_debug, ensure_ascii=False, sort_keys=True)
+            if current_debug != last_logged_route_debug:
+                logger.info(
+                    "request_id=%s 线路选路 session_affinity_type=%s affinity_applied=%s reason=%s randomize=%s selected=%s ordered=%s blocked=%s cooldown=%s",
+                    request_id,
+                    route_debug.get("session_affinity_type", ""),
+                    str(bool(route_debug.get("session_affinity_applied"))).lower(),
+                    route_debug.get("rotation_reason", ""),
+                    str(bool(route_debug.get("randomize_endpoints"))).lower(),
+                    route_debug.get("selected_url", ""),
+                    json.dumps(route_debug.get("ordered_urls", []), ensure_ascii=False),
+                    json.dumps(route_debug.get("blocked_urls", []), ensure_ascii=False),
+                    json.dumps(route_debug.get("cooldown_urls", []), ensure_ascii=False),
+                )
+                last_logged_route_debug = current_debug
 
         attempt_url = route_cycle.pop(0)
         request_url = _base_request_url(attempt_url)
@@ -260,6 +299,11 @@ def request_upstream_with_retries(
         model_candidate = ordered_model_candidates[model_index] if model_index < len(ordered_model_candidates) else None
         current_request_kwargs = apply_model_candidate_to_request_kwargs(request_kwargs, model_candidate)
         current_request_kwargs["url"] = request_url
+        if enforce_route_window:
+            current_request_kwargs["timeout"] = clamp_stream_timeout_to_retry_window(
+                current_request_kwargs.get("timeout"),
+                remaining_retry_window_ms(deadline_monotonic),
+            )
         key_choice = choose_api_key_for_url(attempt_url, exclude=route_key_failures.get(attempt_url, set()))
         attempt_key = str(key_choice.get("key") or "")
         available_keys_for_route = get_api_keys_for_url(attempt_url)
@@ -330,7 +374,64 @@ def request_upstream_with_retries(
             )
             if len(candidate_urls) - len(blocked_urls) > 1:
                 blocked_urls.add(attempt_url)
-                immediate_followup_budget += 1
+                if not immediate_followup_consumed:
+                    immediate_followup_available = True
+                logger.warning(
+                    "request_id=%s 切换线路 次数=%s 线路=%s 原因=请求异常 剩余线路=%s 错误=%s",
+                    request_id,
+                    current_attempt_number,
+                    attempt_url,
+                    max(0, len(candidate_urls) - len(blocked_urls)),
+                    str(exc),
+                )
+                route_cycle = build_attempt_url_cycle(candidate_urls, blocked_urls)
+                continue
+            if attempt_number >= max_attempts or not retry_allowed:
+                break
+
+            delay_ms = compute_retry_delay_ms(current_attempt_number)
+            if enforce_route_window:
+                delay_ms = min(delay_ms, remaining_retry_window_ms(deadline_monotonic))
+            logger.warning(
+                "request_id=%s 上游重试 次数=%s 线路=%s 原因=请求异常 延迟毫秒=%s 错误=%s",
+                request_id,
+                current_attempt_number,
+                attempt_url,
+                delay_ms,
+                str(exc),
+            )
+            if delay_ms <= 0:
+                break
+            time.sleep(delay_ms / 1000)
+            continue
+        except Exception as exc:
+            last_exception = exc
+            attempts.append(
+                {
+                    "attempt": current_attempt_number,
+                    "route_url": attempt_url,
+                    "upstream_url": request_url,
+                    "model": model_candidate,
+                    "model_alias_applied": model_candidate_differs_from_logical(logical_model, model_candidate),
+                    "pool_name": key_choice.get("pool_name"),
+                    "api_key_index": key_choice.get("key_index"),
+                    "api_key_count": key_choice.get("key_count"),
+                    "api_key_id": key_choice.get("key_id"),
+                    "kind": "exception",
+                    "error": str(exc),
+                }
+            )
+            mark_route_failure(attempt_url, "request_exception")
+            record_model_candidate_result(
+                logical_model=logical_model,
+                route_url=attempt_url,
+                model_candidate=model_candidate,
+                success=False,
+            )
+            if len(candidate_urls) - len(blocked_urls) > 1:
+                blocked_urls.add(attempt_url)
+                if not immediate_followup_consumed:
+                    immediate_followup_available = True
                 logger.warning(
                     "request_id=%s 切换线路 次数=%s 线路=%s 原因=请求异常 剩余线路=%s 错误=%s",
                     request_id,
@@ -360,8 +461,13 @@ def request_upstream_with_retries(
             time.sleep(delay_ms / 1000)
             continue
 
-        retry_action, reason = classify_upstream_response(response)
-        preview = extract_error_preview_from_response(response) if response.status_code >= 400 else ""
+        defer_stream_success_evaluation = bool(current_request_kwargs.get("stream")) and response.status_code < 400
+        if defer_stream_success_evaluation:
+            retry_action, reason = ("return", f"stream_success_deferred_{response.status_code}")
+            preview = ""
+        else:
+            retry_action, reason = classify_upstream_response(response)
+            preview = extract_error_preview_from_response(response) if response.status_code >= 400 else ""
         attempts.append(
             {
                 "attempt": current_attempt_number,
@@ -384,11 +490,13 @@ def request_upstream_with_retries(
         last_response = response
 
         client_gone_response = reason.startswith("client_gone")
-        model_unavailable_response = response_indicates_model_unavailable(response)
+        model_unavailable_response = (
+            False if defer_stream_success_evaluation else response_indicates_model_unavailable(response)
+        )
         learned_output_limit = extract_completion_token_limit_from_response(response) if response.status_code >= 400 else None
         learned_input_tokens = None
         learned_context_limit = None
-        if response.status_code >= 400:
+        if not defer_stream_success_evaluation and response.status_code >= 400:
             learned_input_tokens, learned_context_limit = extract_context_token_limit_from_response(response)
         token_limit_adjustable = bool(
             (learned_output_limit and learned_output_limit > 0)
@@ -449,7 +557,8 @@ def request_upstream_with_retries(
                     preview,
                 )
                 response.close()
-                immediate_followup_budget += 1
+                if not immediate_followup_consumed:
+                    immediate_followup_available = True
                 route_cycle.insert(0, attempt_url)
                 continue
             if learned_context_limit and learned_context_limit > 0:
@@ -481,7 +590,8 @@ def request_upstream_with_retries(
                     reason,
                 )
                 response.close()
-                immediate_followup_budget += 1
+                if not immediate_followup_consumed:
+                    immediate_followup_available = True
                 route_cycle.insert(0, attempt_url)
                 continue
 
@@ -507,7 +617,8 @@ def request_upstream_with_retries(
                 max(0, len(candidate_urls) - len(blocked_urls)),
             )
             response.close()
-            immediate_followup_budget += 1
+            if not immediate_followup_consumed:
+                immediate_followup_available = True
             route_cycle = build_attempt_url_cycle(candidate_urls, blocked_urls)
             continue
 
@@ -528,7 +639,8 @@ def request_upstream_with_retries(
                 max(0, len(candidate_urls) - len(blocked_urls)),
             )
             response.close()
-            immediate_followup_budget += 1
+            if not immediate_followup_consumed:
+                immediate_followup_available = True
             route_cycle = build_attempt_url_cycle(candidate_urls, blocked_urls)
             continue
 
@@ -554,7 +666,8 @@ def request_upstream_with_retries(
                 response.status_code,
             )
             response.close()
-            immediate_followup_budget += 1
+            if not immediate_followup_consumed:
+                immediate_followup_available = True
             route_cycle.insert(0, attempt_url)
             continue
 
@@ -572,7 +685,8 @@ def request_upstream_with_retries(
             if len(blocked_urls) >= len(candidate_urls):
                 return response, attempts, None
             response.close()
-            immediate_followup_budget += 1
+            if not immediate_followup_consumed:
+                immediate_followup_available = True
             route_cycle = build_attempt_url_cycle(candidate_urls, blocked_urls)
             continue
 

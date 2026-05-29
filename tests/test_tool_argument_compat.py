@@ -49,6 +49,32 @@ TASKSTOP_TOOL_SCHEMAS = {
     }
 }
 
+TOOLSEARCH_TOOL_SCHEMAS = {
+    "ToolSearch": {
+        "required": [],
+        "required_any": [("queries", "tool_names")],
+        "properties": ["queries", "tool_names"],
+        "additional_properties": False,
+        "property_types": {
+            "queries": "array",
+            "tool_names": "array",
+        },
+    }
+}
+
+SKILL_TOOL_SCHEMAS = {
+    "Skill": {
+        "required": [],
+        "required_any": [("skill", "command")],
+        "properties": ["skill", "command"],
+        "additional_properties": False,
+        "property_types": {
+            "skill": "string",
+            "command": "string",
+        },
+    }
+}
+
 
 class ToolArgumentCompatTests(unittest.TestCase):
     def test_bash_alias_argument_is_normalized_to_command(self):
@@ -268,6 +294,247 @@ class ToolArgumentCompatTests(unittest.TestCase):
 
         self.assertFalse("run_in_background" in normalized)
         self.assertEqual(normalized, {"task_id": "bca9cjr2x"})
+
+    def test_toolsearch_query_alias_is_normalized_to_queries_array(self):
+        normalized, modified = normalize_tool_arguments_payload(
+            "ToolSearch",
+            {"query": "browser automation"},
+            TOOLSEARCH_TOOL_SCHEMAS,
+        )
+
+        self.assertTrue(modified)
+        self.assertEqual(normalized, {"queries": ["browser automation"]})
+
+    def test_toolsearch_tool_names_alias_is_normalized_to_array(self):
+        normalized, modified = normalize_tool_arguments_payload(
+            "ToolSearch",
+            {"toolNames": "automation_update, list_threads"},
+            TOOLSEARCH_TOOL_SCHEMAS,
+        )
+
+        self.assertTrue(modified)
+        self.assertEqual(normalized, {"tool_names": ["automation_update", "list_threads"]})
+
+    def test_empty_toolsearch_call_is_suppressed_before_client_validation(self):
+        tool_calls = [
+            {
+                "id": "call_empty_toolsearch",
+                "type": "function",
+                "function": {
+                    "name": "ToolSearch",
+                    "arguments": "{}",
+                },
+            }
+        ]
+
+        normalized_calls, repaired = normalize_tool_call_list(tool_calls, TOOLSEARCH_TOOL_SCHEMAS)
+
+        self.assertGreater(repaired, 0)
+        self.assertEqual(normalized_calls, [])
+
+    def test_stream_toolsearch_name_without_arguments_does_not_end_as_tool_call(self):
+        choice_states = {}
+        name_only = {
+            "id": "chatcmpl-toolsearch",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "demo",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_toolsearch",
+                                "type": "function",
+                                "function": {"name": "ToolSearch"},
+                            }
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        }
+        terminal = {
+            "id": "chatcmpl-toolsearch",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "demo",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+        }
+
+        normalized_line, _, repaired, event = normalize_sse_line(
+            "data: " + json.dumps(name_only),
+            choice_states,
+            TOOLSEARCH_TOOL_SCHEMAS,
+        )
+        self.assertIsNone(normalized_line)
+        self.assertEqual(event["choices"], [])
+        self.assertGreaterEqual(repaired, 0)
+
+        normalized_terminal, _, terminal_repairs, terminal_event = normalize_sse_line(
+            "data: " + json.dumps(terminal),
+            choice_states,
+            TOOLSEARCH_TOOL_SCHEMAS,
+        )
+        self.assertGreaterEqual(terminal_repairs, 0)
+        self.assertIsNotNone(normalized_terminal)
+        self.assertEqual(terminal_event["choices"][0]["finish_reason"], "stop")
+        self.assertNotIn("tool_calls", json.dumps(terminal_event))
+
+    def test_skill_name_alias_is_normalized(self):
+        normalized, modified = normalize_tool_arguments_payload(
+            "Skill",
+            {"name": "clear"},
+            SKILL_TOOL_SCHEMAS,
+        )
+
+        self.assertTrue(modified)
+        self.assertEqual(normalized, {"skill": "clear"})
+
+    def test_empty_skill_call_is_suppressed_before_client_validation(self):
+        tool_calls = [
+            {
+                "id": "call_empty_skill",
+                "type": "function",
+                "function": {
+                    "name": "Skill",
+                    "arguments": "{}",
+                },
+            }
+        ]
+
+        normalized_calls, repaired = normalize_tool_call_list(tool_calls, SKILL_TOOL_SCHEMAS)
+
+        self.assertGreater(repaired, 0)
+        self.assertEqual(normalized_calls, [])
+
+    def test_stream_skill_name_without_arguments_does_not_end_as_tool_call(self):
+        choice_states = {}
+        name_only = {
+            "id": "chatcmpl-skill",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "demo",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_skill",
+                                "type": "function",
+                                "function": {"name": "Skill"},
+                            }
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        }
+        terminal = {
+            "id": "chatcmpl-skill",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "demo",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+        }
+
+        normalized_line, _, repaired, event = normalize_sse_line(
+            "data: " + json.dumps(name_only),
+            choice_states,
+            SKILL_TOOL_SCHEMAS,
+        )
+        self.assertIsNone(normalized_line)
+        self.assertEqual(event["choices"], [])
+        self.assertGreaterEqual(repaired, 0)
+
+        normalized_terminal, _, terminal_repairs, terminal_event = normalize_sse_line(
+            "data: " + json.dumps(terminal),
+            choice_states,
+            SKILL_TOOL_SCHEMAS,
+        )
+        self.assertGreaterEqual(terminal_repairs, 0)
+        self.assertIsNotNone(normalized_terminal)
+        self.assertEqual(terminal_event["choices"][0]["finish_reason"], "stop")
+        self.assertNotIn("tool_calls", json.dumps(terminal_event))
+
+    def test_stream_visible_text_then_empty_skill_call_keeps_text_and_stops(self):
+        choice_states = {}
+        text_chunk = {
+            "id": "chatcmpl-skill-text",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "demo",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": "好，检查一下当前组件库的完成状态。"},
+                    "finish_reason": None,
+                }
+            ],
+        }
+        name_only = {
+            "id": "chatcmpl-skill-text",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "demo",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_skill",
+                                "type": "function",
+                                "function": {"name": "Skill"},
+                            }
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        }
+        terminal = {
+            "id": "chatcmpl-skill-text",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "demo",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+        }
+
+        normalized_text_line, _, _, text_event = normalize_sse_line(
+            "data: " + json.dumps(text_chunk),
+            choice_states,
+            SKILL_TOOL_SCHEMAS,
+        )
+        self.assertIsNotNone(normalized_text_line)
+        self.assertEqual(
+            text_event["choices"][0]["delta"]["content"],
+            "好，检查一下当前组件库的完成状态。",
+        )
+
+        normalized_name_line, _, name_repairs, name_event = normalize_sse_line(
+            "data: " + json.dumps(name_only),
+            choice_states,
+            SKILL_TOOL_SCHEMAS,
+        )
+        self.assertIsNone(normalized_name_line)
+        self.assertEqual(name_event["choices"], [])
+        self.assertGreaterEqual(name_repairs, 0)
+
+        normalized_terminal, _, terminal_repairs, terminal_event = normalize_sse_line(
+            "data: " + json.dumps(terminal),
+            choice_states,
+            SKILL_TOOL_SCHEMAS,
+        )
+        self.assertGreaterEqual(terminal_repairs, 0)
+        self.assertIsNotNone(normalized_terminal)
+        self.assertEqual(terminal_event["choices"][0]["finish_reason"], "stop")
+        self.assertNotIn("tool_calls", json.dumps(terminal_event))
 
 
 if __name__ == "__main__":

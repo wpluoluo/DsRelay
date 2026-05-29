@@ -268,6 +268,8 @@ if (-not $commit) {
 }
 
 $archivePath = Join-Path $repoRoot "local-proxy-$commit.tar"
+$runtimeConfigPath = Join-Path $repoRoot "config\proxy-config.json"
+$hasRuntimeConfig = Test-Path $runtimeConfigPath
 
 Write-Step "Archive commit $commit"
 if (Test-Path $archivePath) {
@@ -280,6 +282,8 @@ if ($LASTEXITCODE -ne 0) {
 
 foreach ($cfg in $targetConfigs) {
     $remoteArchivePath = "/tmp/local-proxy-$commit-$($cfg.Target).tar"
+    $remoteRuntimeConfigPath = "/tmp/local-proxy-runtime-config-$commit-$($cfg.Target).json"
+    $remoteRuntimeConfigResultPath = "/tmp/local-proxy-runtime-config-result-$commit-$($cfg.Target).json"
     $remoteExtractDir = "/tmp/local-proxy-$commit-$($cfg.Target)"
     $remoteBaseArgs = Build-RemoteArgs $cfg "exec"
     $uploadArgs = Build-RemoteArgs $cfg "upload"
@@ -288,6 +292,10 @@ foreach ($cfg in $targetConfigs) {
 
     Write-Step "[$($cfg.Target)] Upload archive to $($cfg.ServerUser)@$($cfg.ServerHost):$remoteArchivePath"
     Invoke-RemoteHelper $pythonCommand ($uploadArgs + @("--local-path", $archivePath, "--remote-path", $remoteArchivePath)) $passwordValue
+    if ($hasRuntimeConfig) {
+        Write-Step "[$($cfg.Target)] Upload local runtime config"
+        Invoke-RemoteHelper $pythonCommand ($uploadArgs + @("--local-path", $runtimeConfigPath, "--remote-path", $remoteRuntimeConfigPath)) $passwordValue
+    }
 
     $remoteEnvUpdates = [ordered]@{
         STORAGE_DB_HOST = [string]$cfg.StorageDbHost
@@ -342,7 +350,7 @@ PY
         Invoke-RemoteHelper $pythonCommand ($remoteBaseArgs + @("--command-b64", $envSyncCommandB64)) $passwordValue
     }
 
-    Write-Step "[$($cfg.Target)] Sync tracked code while preserving remote .env, config/proxy-config.json and var/"
+    Write-Step "[$($cfg.Target)] Sync tracked code while preserving remote .env and var/; runtime config is synced separately"
     $deployCommand = @'
 set -e
 mkdir -p "__REMOTE_DEPLOY_DIR__"
@@ -398,11 +406,98 @@ while [ "$attempt" -le 45 ]; do
   attempt=$((attempt + 1))
 done
 curl -fsS http://127.0.0.1:__APP_PORT__/health
+if [ -f "__REMOTE_RUNTIME_CONFIG_PATH__" ]; then
+  python3 - <<'PY'
+import json
+import re
+from html import unescape
+from http.cookiejar import CookieJar
+from pathlib import Path
+from urllib.parse import urlencode
+from urllib.request import HTTPCookieProcessor, Request, build_opener
+
+env = {}
+env_path = Path("__REMOTE_DEPLOY_DIR__") / ".env"
+for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+    line = raw_line.strip()
+    if not line or line.startswith("#") or "=" not in raw_line:
+        continue
+    key, value = raw_line.split("=", 1)
+    env[key.strip()] = value
+
+username = env.get("ADMIN_USERNAME", "admin").strip()
+password = env.get("ADMIN_PASSWORD", "").strip()
+if not password:
+    raise SystemExit("missing ADMIN_PASSWORD in remote .env")
+
+base_url = "http://127.0.0.1:__APP_PORT__"
+cookie_jar = CookieJar()
+opener = build_opener(HTTPCookieProcessor(cookie_jar))
+
+login_html = opener.open(base_url + "/login", timeout=30).read().decode("utf-8", errors="replace")
+match = re.search(r'name="_csrf_token" value="([^"]+)"', login_html)
+if not match:
+    raise SystemExit("login csrf token not found while syncing runtime config")
+
+csrf_token = unescape(match.group(1))
+login_payload = urlencode(
+    {
+        "username": username,
+        "password": password,
+        "_csrf_token": csrf_token,
+    }
+).encode("utf-8")
+login_response = opener.open(
+    Request(
+        base_url + "/login?next=/debug/config",
+        data=login_payload,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    ),
+    timeout=30,
+)
+login_body = login_response.read().decode("utf-8", errors="replace")
+if "/login" in str(getattr(login_response, "geturl", lambda: "")()) and "_csrf_token" in login_body:
+    raise SystemExit("login failed while syncing runtime config")
+if not any(cookie.name for cookie in cookie_jar):
+    raise SystemExit("login did not establish a session cookie")
+
+sync_response = opener.open(
+    Request(
+        base_url + "/debug/config",
+        data=Path("__REMOTE_RUNTIME_CONFIG_PATH__").read_bytes(),
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    ),
+    timeout=120,
+)
+sync_text = sync_response.read().decode("utf-8", errors="replace")
+Path("__REMOTE_RUNTIME_CONFIG_RESULT_PATH__").write_text(sync_text, encoding="utf-8")
+
+payload = json.loads(sync_text)
+config = payload.get("config") if isinstance(payload, dict) else {}
+runtime = payload.get("runtime") if isinstance(payload, dict) else {}
+print(
+    "runtime_config_synced request_timeout={request_timeout} stream_first_event_timeout_seconds={stream_first_event_timeout_seconds} "
+    "max_retries={max_retries} route_switch_window_seconds={route_switch_window_seconds} model_capability_count={model_capability_count}".format(
+        request_timeout=config.get("request_timeout"),
+        stream_first_event_timeout_seconds=config.get("stream_first_event_timeout_seconds"),
+        max_retries=config.get("max_retries"),
+        route_switch_window_seconds=config.get("route_switch_window_seconds"),
+        model_capability_count=runtime.get("model_capability_count"),
+    )
+)
+PY
+fi
+rm -f "__REMOTE_RUNTIME_CONFIG_PATH__" "__REMOTE_RUNTIME_CONFIG_RESULT_PATH__"
 rm -rf "__REMOTE_EXTRACT_DIR__" "__REMOTE_ARCHIVE_PATH__"
 '@
     $deployCommand = $deployCommand.Replace("__REMOTE_DEPLOY_DIR__", [string]$cfg.RemoteDeployDir)
     $deployCommand = $deployCommand.Replace("__REMOTE_EXTRACT_DIR__", $remoteExtractDir)
     $deployCommand = $deployCommand.Replace("__REMOTE_ARCHIVE_PATH__", $remoteArchivePath)
+    $deployCommand = $deployCommand.Replace("__REMOTE_RUNTIME_CONFIG_PATH__", $remoteRuntimeConfigPath)
+    $deployCommand = $deployCommand.Replace("__REMOTE_RUNTIME_CONFIG_RESULT_PATH__", $remoteRuntimeConfigResultPath)
     $deployCommand = $deployCommand.Replace("__REMOTE_SERVICE_NAME__", [string]$cfg.RemoteServiceName)
     $deployCommand = $deployCommand.Replace("__COMPOSE_FILE__", $composeFile)
     $deployCommand = $deployCommand.Replace("__APP_PORT__", [string]$cfg.AppPort)

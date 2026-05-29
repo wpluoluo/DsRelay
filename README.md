@@ -312,7 +312,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18765/health"
       "urls": ["https://your-upstream.example/v1"],
       "keys": [{"key": "sk-your-upstream-key"}],
       "supported_models_text": "deepseek-ai/deepseek-v4-flash\ndeepseek-ai/deepseek-v4-pro",
-      "model_aliases_text": "deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash\ndeepseek-v4-pro=deepseek-ai/deepseek-v4-pro",
+      "model_aliases_text": "deepseek-v4-flash=deepseek-ai/deepseek-v4-flash\ndeepseek-v4-pro=deepseek-ai/deepseek-v4-pro",
       "route_policy": {
         "reasoning_effort": "high",
         "prompt_cache_mode": "exact",
@@ -329,6 +329,8 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18765/health"
   ]
 }
 ```
+
+注意：`supported_models_text` 和 `model_aliases_text` 现在只允许配置在各自线路的 pool 内。旧版顶层同名字段已移除，写了也不会生效。线路专属逻辑模型也只能留在所属线路里，不要再跨线路复用同一个别名。
 
 **路由策略参数说明：**
 
@@ -537,8 +539,7 @@ deepseek-ai/deepseek-v4-pro
 
 ```text
 # 该线路模型映射（格式：请求模型=该线路上游模型）
-deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash
-opencode/deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash
+deepseek-v4-flash=deepseek-ai/deepseek-v4-flash
 deepseek-v4-pro=deepseek-ai/deepseek-v4-pro
 ```
 

@@ -4,6 +4,10 @@ import unittest
 import requests
 
 import local_proxy.server as server
+from local_proxy.upstream.capabilities import (
+    normalize_model_capabilities_text,
+    parse_model_capabilities,
+)
 
 
 class ModelCapabilitySourceTests(unittest.TestCase):
@@ -51,6 +55,33 @@ class ModelCapabilitySourceTests(unittest.TestCase):
             ),
             0,
         )
+
+    def test_official_deepseek_v4_output_cap_is_enforced(self):
+        capabilities = parse_model_capabilities(
+            "deepseek-v4-flash=1048576,393216\n"
+            "deepseek-v4-pro=1048576,393216\n"
+            "deepseek-ai/deepseek-v4-flash=1048576,393216\n"
+            "deepseek-ai/deepseek-v4-pro=1048576,393216\n"
+        )
+
+        self.assertEqual(capabilities["deepseek-v4-flash"]["max_output_tokens"], 262144)
+        self.assertEqual(capabilities["deepseek-v4-pro"]["max_output_tokens"], 262144)
+        self.assertEqual(capabilities["deepseek-ai/deepseek-v4-flash"]["max_output_tokens"], 262144)
+        self.assertEqual(capabilities["deepseek-ai/deepseek-v4-pro"]["max_output_tokens"], 262144)
+
+    def test_normalized_model_capabilities_text_deduplicates_default_block(self):
+        normalized = normalize_model_capabilities_text(
+            "# model=context_tokens,max_output_tokens\n"
+            "# Prefer official provider docs or official Models APIs where available.\n"
+            "deepseek-v4-flash=1048576,393216\n"
+            "deepseek-v4-pro=1048576,393216\n"
+            "gpt-5.5=1000000,128000\n"
+        )
+
+        lines = normalized.splitlines()
+        self.assertEqual(lines.count("# model=context_tokens,max_output_tokens"), 1)
+        self.assertEqual(lines.count("deepseek-v4-flash=1048576,262144"), 1)
+        self.assertIn("deepseek-v4-flash=1048576,262144", normalized)
 
 
 if __name__ == "__main__":

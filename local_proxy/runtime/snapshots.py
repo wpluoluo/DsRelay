@@ -44,14 +44,128 @@ def _normalize_route_url(url: object) -> str:
     return normalized
 
 
-def _canonical_route_url(url: object, *, active_routes_by_base: dict[str, str]) -> str:
+def _route_fragment(url: object) -> str:
     text = str(url or "").strip()
     if not text:
         return ""
+    fragment = str(urlsplit(text).fragment or "").strip()
+    return fragment if fragment.startswith("__route=") else ""
+
+
+def _resolve_request_route(
+    url: object,
+    *,
+    active_route_urls: set[str],
+    active_routes_by_base: dict[str, list[str]],
+    active_routes_by_fragment: dict[str, list[str]],
+) -> dict:
+    text = str(url or "").strip()
+    if not text:
+        return {
+            "route_url": "",
+            "route_base_url": "",
+            "route_resolution": "missing",
+            "matches_current_route": False,
+            "matches_current_route_base": False,
+            "base_route_ambiguous": False,
+        }
     base_url = _normalize_route_url(text)
+    fragment = _route_fragment(text)
+    if text in active_route_urls:
+        return {
+            "route_url": text,
+            "route_base_url": base_url,
+            "route_resolution": "exact",
+            "matches_current_route": True,
+            "matches_current_route_base": True,
+            "base_route_ambiguous": len(active_routes_by_base.get(base_url) or []) > 1,
+        }
+    active_fragment_routes = list(active_routes_by_fragment.get(fragment) or [])
+    if fragment and active_fragment_routes:
+        canonical_route_url = active_fragment_routes[0]
+        canonical_base_url = _normalize_route_url(canonical_route_url)
+        return {
+            "route_url": canonical_route_url,
+            "route_base_url": canonical_base_url,
+            "route_resolution": "exact",
+            "matches_current_route": True,
+            "matches_current_route_base": True,
+            "base_route_ambiguous": len(active_routes_by_base.get(canonical_base_url) or []) > 1,
+        }
+    active_base_routes = list(active_routes_by_base.get(base_url) or [])
+    matches_current_base = bool(base_url and active_base_routes)
+    base_ambiguous = len(active_base_routes) > 1
     if not base_url:
-        return text
-    return active_routes_by_base.get(base_url, text)
+        resolution = "raw"
+    elif not matches_current_base:
+        resolution = "historical"
+    elif base_ambiguous:
+        resolution = "base_only_ambiguous"
+    else:
+        resolution = "base_only"
+    canonical_route_url = active_base_routes[0] if len(active_base_routes) == 1 else text
+    return {
+        "route_url": canonical_route_url,
+        "route_base_url": base_url,
+        "route_resolution": resolution,
+        "matches_current_route": resolution == "exact",
+        "matches_current_route_base": matches_current_base,
+        "base_route_ambiguous": base_ambiguous,
+    }
+
+
+def _merge_route_observability_entry(target: dict, source: dict) -> None:
+    current_rank = _route_status_rank(target)
+    next_rank = _route_status_rank(source)
+    if next_rank < current_rank:
+        target["historical_only"] = bool(source.get("historical_only"))
+        target["base_only"] = bool(source.get("base_only"))
+        target["base_route_ambiguous"] = bool(source.get("base_route_ambiguous"))
+        return
+    if next_rank > current_rank:
+        return
+    target["historical_only"] = bool(target.get("historical_only")) and bool(source.get("historical_only"))
+    target["base_only"] = bool(target.get("base_only")) or bool(source.get("base_only"))
+    target["base_route_ambiguous"] = bool(target.get("base_route_ambiguous")) or bool(source.get("base_route_ambiguous"))
+
+
+def _route_status_label(entry: dict) -> str:
+    if bool(entry.get("historical_only")):
+        return "historical"
+    if bool(entry.get("base_only")):
+        return "current_base_ambiguous" if bool(entry.get("base_route_ambiguous")) else "current_base"
+    return "current"
+
+
+def _route_status_rank(entry: dict) -> int:
+    status = _route_status_label(entry)
+    if status == "current":
+        return 0
+    if status == "current_base":
+        return 1
+    if status == "current_base_ambiguous":
+        return 2
+    return 3
+
+
+def _route_status_text(status: str) -> str:
+    if status == "current":
+        return "当前线路"
+    if status == "current_base":
+        return "当前基线"
+    if status == "current_base_ambiguous":
+        return "当前基线(待确认)"
+    return "历史链路"
+
+
+def _route_status_note(status: str) -> str:
+    if status == "current_base":
+        return "仅命中当前基线，已按唯一活跃线路归因"
+    if status == "current_base_ambiguous":
+        return "仅命中当前基线，但同基线存在多条活跃线路，无法精确还原"
+    if status == "historical":
+        return "不在当前活跃线路中"
+    return ""
 
 
 def _route_policy_snapshot(route_url: object, *, build_route_policy, route_switch_window_seconds: int) -> dict:
@@ -210,11 +324,18 @@ def build_dashboard_state(context: dict) -> dict:
         for route_url, entry in (context.get("route_health") or {}).items()
     }
     active_upstream_urls = list(context["upstream_urls"])
-    active_routes_by_base = {
-        _normalize_route_url(route_url): str(route_url)
-        for route_url in active_upstream_urls
-        if _normalize_route_url(route_url)
-    }
+    active_route_urls = {str(route_url) for route_url in active_upstream_urls if str(route_url or "").strip()}
+    active_routes_by_base: dict[str, list[str]] = {}
+    active_routes_by_fragment: dict[str, list[str]] = {}
+    for route_url in active_upstream_urls:
+        normalized_base = _normalize_route_url(route_url)
+        if not normalized_base:
+            continue
+        route_text = str(route_url)
+        active_routes_by_base.setdefault(normalized_base, []).append(route_text)
+        fragment = _route_fragment(route_text)
+        if fragment:
+            active_routes_by_fragment.setdefault(fragment, []).append(route_text)
     route_policy_map = (runtime_snapshot.get("route_policies") or {}) if isinstance(runtime_snapshot, dict) else {}
     recent_requests = []
     for item in request_snapshot["recent_requests"]:
@@ -226,17 +347,19 @@ def build_dashboard_state(context: dict) -> dict:
         ):
             continue
         next_item = dict(item)
-        canonical_route_url = _canonical_route_url(
+        resolved_route = _resolve_request_route(
             next_item.get("route_url") or next_item.get("upstream_url") or "",
+            active_route_urls=active_route_urls,
             active_routes_by_base=active_routes_by_base,
+            active_routes_by_fragment=active_routes_by_fragment,
         )
-        upstream_url = str(next_item.get("upstream_url") or "").strip()
-        upstream_base_url = _normalize_route_url(upstream_url)
-        next_item["current_route_url"] = canonical_route_url
-        next_item["current_route_base_url"] = upstream_base_url
-        next_item["matches_current_route"] = bool(
-            upstream_base_url and upstream_base_url in active_routes_by_base
-        )
+        next_item["current_route_url"] = resolved_route["route_url"]
+        next_item["current_route_base_url"] = resolved_route["route_base_url"]
+        next_item["route_resolution"] = resolved_route["route_resolution"]
+        next_item["matches_current_route"] = bool(resolved_route["matches_current_route"])
+        next_item["matches_current_route_base"] = bool(resolved_route["matches_current_route_base"])
+        next_item["base_route_ambiguous"] = bool(resolved_route["base_route_ambiguous"])
+        next_item["historical_only"] = not bool(resolved_route["matches_current_route_base"])
         recent_requests.append(next_item)
     cache_stats = (runtime_snapshot.get("model_routing") or {}).get("cache_stats") or {}
     local_response_cache_hits = int(cache_stats.get("prompt_cache_hits", 0) or 0)
@@ -305,6 +428,9 @@ def build_dashboard_state(context: dict) -> dict:
             "cooling": False,
             "consecutive_failures": 0,
             "last_reason": "",
+            "historical_only": True,
+            "base_only": False,
+            "base_route_ambiguous": False,
             "route_policy": dict(route_policy_map.get(str(route_url)) or {}),
         }
     connection_pool = context["connection_pool_snapshot"]() or {}
@@ -330,6 +456,9 @@ def build_dashboard_state(context: dict) -> dict:
                 "cooling": False,
                 "consecutive_failures": 0,
                 "last_reason": "",
+                "historical_only": True,
+                "base_only": False,
+                "base_route_ambiguous": False,
                 "route_policy": dict(route_policy_map.get(str(route_url)) or {}),
             },
         )
@@ -359,6 +488,9 @@ def build_dashboard_state(context: dict) -> dict:
                 "cooling": False,
                 "consecutive_failures": 0,
                 "last_reason": "",
+                "historical_only": True,
+                "base_only": False,
+                "base_route_ambiguous": False,
                 "route_policy": dict(route_policy_map.get(route_url) or {}),
             },
         )
@@ -384,7 +516,13 @@ def build_dashboard_state(context: dict) -> dict:
             entry["hint_applied_count"] += 1
         if not entry["pool_name"]:
             entry["pool_name"] = str(item.get("pool_name") or "")
-        entry["historical_only"] = not bool(item.get("matches_current_route"))
+        status_is_historical = not bool(item.get("matches_current_route_base"))
+        next_status = {
+            "historical_only": status_is_historical,
+            "base_only": bool(item.get("matches_current_route_base")) and not bool(item.get("matches_current_route")),
+            "base_route_ambiguous": bool(item.get("base_route_ambiguous")),
+        }
+        _merge_route_observability_entry(entry, next_status)
     for route_url, sessions in route_sessions.items():
         entry = route_observability.setdefault(
             route_url,
@@ -407,6 +545,9 @@ def build_dashboard_state(context: dict) -> dict:
                 "cooling": False,
                 "consecutive_failures": 0,
                 "last_reason": "",
+                "historical_only": True,
+                "base_only": False,
+                "base_route_ambiguous": False,
                 "route_policy": dict(route_policy_map.get(route_url) or {}),
             },
         )
@@ -444,6 +585,9 @@ def build_dashboard_state(context: dict) -> dict:
                 "cooling": False,
                 "consecutive_failures": 0,
                 "last_reason": "",
+                "historical_only": True,
+                "base_only": False,
+                "base_route_ambiguous": False,
                 "route_policy": dict(route_policy_map.get(str(route_url)) or {}),
             },
         )
@@ -463,6 +607,8 @@ def build_dashboard_state(context: dict) -> dict:
                 "pool_name": entry["pool_name"],
                 "route_policy": dict(entry.get("route_policy") or {}),
                 "historical_only": bool(entry.get("historical_only")),
+                "base_only": bool(entry.get("base_only")),
+                "base_route_ambiguous": bool(entry.get("base_route_ambiguous")),
                 "request_count": request_count,
                 "success_count": int(entry.get("success_count") or 0),
                 "error_count": int(entry.get("error_count") or 0),
@@ -491,10 +637,14 @@ def build_dashboard_state(context: dict) -> dict:
                 "cooling": bool(entry.get("cooling")),
                 "consecutive_failures": int(entry.get("consecutive_failures") or 0),
                 "last_reason": str(entry.get("last_reason") or ""),
+                "route_status": _route_status_label(entry),
+                "route_status_text": _route_status_text(_route_status_label(entry)),
+                "route_status_note": _route_status_note(_route_status_label(entry)),
             }
         )
     route_observability_rows.sort(
         key=lambda item: (
+            _route_status_rank(item),
             -int(item.get("request_count") or 0),
             -int(item.get("status_429_count") or 0),
             str(item.get("route_url") or ""),

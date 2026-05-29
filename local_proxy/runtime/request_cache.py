@@ -167,15 +167,16 @@ def build_cached_execution(
 ) -> dict:
     cached_body = deepcopy(cached_payload.get("response_body") or {})
     upstream_url = str(cached_payload.get("upstream_url") or "")
+    route_url = str(cached_payload.get("route_url") or upstream_url)
     upstream_subpath = str(cached_payload.get("path") or "").strip("/")
-    upstream_url_pool = [upstream_url] if upstream_url else []
+    upstream_url_pool = [route_url] if route_url else ([upstream_url] if upstream_url else [])
     return {
         "cache_hit": True,
         "cache_key": cache_key,
         "cached_at": float(cached_payload.get("created_at", 0.0) or 0.0),
         "cache_source": str(cached_payload.get("source") or "sqlite"),
         "upstream_url": upstream_url,
-        "route_url": upstream_url,
+        "route_url": route_url,
         "upstream_subpath": upstream_subpath,
         "upstream_pool_name": str(cached_payload.get("pool_name") or ""),
         "upstream_key_index": cached_payload.get("key_index"),
@@ -212,6 +213,7 @@ def build_cache_record(
     route_policy: dict | None,
     response_body: dict,
     upstream_url: str,
+    route_url: str | None = None,
     model_name: str | None,
     pool_name: str | None = None,
     key_index: int | None = None,
@@ -232,6 +234,7 @@ def build_cache_record(
         "route_policy": deepcopy(route_policy or {}),
         "response_body": deepcopy(response_body or {}),
         "upstream_url": str(upstream_url or ""),
+        "route_url": str(route_url or upstream_url or ""),
         "model_name": str(model_name or ""),
         "pool_name": str(pool_name or ""),
         "key_index": key_index,

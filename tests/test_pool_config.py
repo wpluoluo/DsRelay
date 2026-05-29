@@ -1,7 +1,12 @@
+import time
 import unittest
+from unittest.mock import patch
 
+import local_proxy.server as server_module
 from local_proxy.runtime.config_runtime import normalize_runtime_config_payload
 from local_proxy.runtime.pools import ConnectionPoolState, normalize_proxy_pools
+from local_proxy.runtime.policies import get_pool_priority_for_url
+from local_proxy.upstream.models import normalize_model_alias_key
 
 
 def current_runtime_config(**overrides):
@@ -42,6 +47,41 @@ def current_runtime_config(**overrides):
 
 
 class PoolConfigTests(unittest.TestCase):
+    def test_request_timeout_is_no_longer_clamped_to_30_or_3600(self):
+        normalized = normalize_runtime_config_payload(
+            {"request_timeout": 5},
+            current=current_runtime_config(),
+        )
+
+        self.assertEqual(normalized["request_timeout"], 5)
+
+        normalized = normalize_runtime_config_payload(
+            {"request_timeout": 7200},
+            current=current_runtime_config(),
+        )
+
+        self.assertEqual(normalized["request_timeout"], 7200)
+
+    def test_model_probe_timeout_is_no_longer_clamped_to_30(self):
+        normalized = normalize_runtime_config_payload(
+            {"model_probe_timeout_seconds": 45},
+            current=current_runtime_config(),
+        )
+
+        self.assertEqual(normalized["model_probe_timeout_seconds"], 45)
+
+    def test_stream_first_event_timeout_can_be_lower_than_request_timeout(self):
+        normalized = normalize_runtime_config_payload(
+            {
+                "request_timeout": 180,
+                "stream_first_event_timeout_seconds": 20,
+            },
+            current=current_runtime_config(),
+        )
+
+        self.assertEqual(normalized["request_timeout"], 180)
+        self.assertEqual(normalized["stream_first_event_timeout_seconds"], 20)
+
     def test_new_pool_payload_keeps_route_and_key(self):
         payload = {
             "pools": [
@@ -110,6 +150,27 @@ class PoolConfigTests(unittest.TestCase):
         self.assertEqual(state.get_api_keys_for_url("https://api.example.com/v1"), ["sk-a", "sk-b"])
         self.assertEqual(choice["key"], "sk-a")
         self.assertEqual(choice["pool_name"], "pool")
+
+    def test_pool_state_rebuild_keeps_keyless_route(self):
+        pools = normalize_proxy_pools(
+            [
+                {
+                    "name": "zen-no-key",
+                    "enabled": True,
+                    "priority": 100,
+                    "urls": ["https://opencode.ai/zen/v1"],
+                    "keys": [],
+                }
+            ]
+        )
+        state = ConnectionPoolState()
+
+        urls = state.rebuild(pools)
+
+        self.assertEqual(len(urls), 1)
+        self.assertTrue(urls[0].startswith("https://opencode.ai/zen/v1#__route="))
+        self.assertEqual(state.get_api_keys_for_url("https://opencode.ai/zen/v1"), [])
+        self.assertIsNone(state.choose_key("https://opencode.ai/zen/v1/chat/completions"))
 
     def test_pool_state_keeps_same_url_pools_as_distinct_routes(self):
         pools = normalize_proxy_pools(
@@ -203,14 +264,14 @@ class PoolConfigTests(unittest.TestCase):
                     "priority": 100,
                     "urls": ["https://integrate.api.nvidia.com/v1"],
                     "keys": [{"key": "nv-key-1"}],
-                    "model_aliases_text": "deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash",
+                    "model_aliases_text": "deepseek-v4-flash=deepseek-ai/deepseek-v4-flash",
                 }
             ]
         )
 
         self.assertEqual(
             pools[0]["model_aliases_text"],
-            "deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash",
+            "deepseek-v4-flash=deepseek-ai/deepseek-v4-flash",
         )
 
     def test_pool_supported_models_text_is_preserved_when_normalized(self):
@@ -232,10 +293,10 @@ class PoolConfigTests(unittest.TestCase):
             "deepseek-ai/deepseek-v4-flash\ndeepseek-ai/deepseek-v4-pro",
         )
 
-    def test_legacy_global_model_fields_migrate_into_each_pool(self):
+    def test_legacy_global_model_fields_no_longer_migrate_into_each_pool(self):
         payload = {
             "supported_models_text": "deepseek-ai/deepseek-v4-flash",
-            "model_aliases_text": "deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash",
+            "model_aliases_text": "deepseek-v4-flash=deepseek-ai/deepseek-v4-flash",
             "pools": [
                 {
                     "name": "nv-route",
@@ -250,8 +311,92 @@ class PoolConfigTests(unittest.TestCase):
         normalized = normalize_runtime_config_payload(payload, current=current_runtime_config())
         pool = normalized["proxy_pools"][0]
 
-        self.assertEqual(pool["supported_models_text"], "deepseek-ai/deepseek-v4-flash")
-        self.assertEqual(pool["model_aliases_text"], "deepseek-v4-flash-free=deepseek-ai/deepseek-v4-flash")
+        self.assertEqual(pool["supported_models_text"], "")
+        self.assertEqual(pool["model_aliases_text"], "")
+
+    def test_route_selection_score_prefers_pool_priority_over_learned_route_score(self):
+        high_priority_url = ConnectionPoolState.route_id_for("high-priority", "https://integrate.api.nvidia.com/v1", 1)
+        low_priority_url = ConnectionPoolState.route_id_for("low-priority", "https://integrate.api.nvidia.com/v1", 1)
+        pools = normalize_proxy_pools(
+            [
+                {
+                    "name": "high-priority",
+                    "enabled": True,
+                    "priority": 103,
+                    "urls": ["https://integrate.api.nvidia.com/v1"],
+                    "keys": [{"key": "high-key"}],
+                },
+                {
+                    "name": "low-priority",
+                    "enabled": True,
+                    "priority": 100,
+                    "urls": ["https://integrate.api.nvidia.com/v1"],
+                    "keys": [{"key": "low-key"}],
+                },
+            ]
+        )
+        expires_at = time.time() + 300
+        cache_payload = {
+            "routes": {
+                normalize_model_alias_key("demo-model"): {
+                    high_priority_url: {
+                        "demo-model": {
+                            "model": "demo-model",
+                            "score": 0.0,
+                            "successes": 0,
+                            "failures": 0,
+                            "expires_at": expires_at,
+                            "cooldown_until": 0.0,
+                            "last_success_at": 0.0,
+                        }
+                    },
+                    low_priority_url: {
+                        "demo-model": {
+                            "model": "demo-model",
+                            "score": 500.0,
+                            "successes": 20,
+                            "failures": 0,
+                            "expires_at": expires_at,
+                            "cooldown_until": 0.0,
+                            "last_success_at": expires_at - 10,
+                        }
+                    },
+                }
+            }
+        }
+
+        with patch.object(server_module, "PROXY_POOLS", pools), patch.dict(server_module.model_route_cache, cache_payload, clear=True):
+            self.assertGreater(
+                server_module.get_route_selection_score("demo-model", high_priority_url),
+                server_module.get_route_selection_score("demo-model", low_priority_url),
+            )
+
+    def test_get_pool_priority_for_route_url_with_subpath_keeps_route_identity(self):
+        pools = normalize_proxy_pools(
+            [
+                {
+                    "name": "nv1",
+                    "enabled": True,
+                    "priority": 102,
+                    "urls": ["https://integrate.api.nvidia.com/v1"],
+                    "keys": [{"key": "nv-key-1"}],
+                },
+                {
+                    "name": "nv",
+                    "enabled": True,
+                    "priority": 100,
+                    "urls": ["https://integrate.api.nvidia.com/v1"],
+                    "keys": [{"key": "nv-key-2"}],
+                },
+            ]
+        )
+        route_url = ConnectionPoolState.route_id_for("nv1", "https://integrate.api.nvidia.com/v1", 1)
+        route_with_subpath = route_url.replace("/v1#__route=", "/v1/chat/completions#__route=")
+
+        self.assertEqual(
+            get_pool_priority_for_url(pools, route_with_subpath, server_module.normalize_pool_url),
+            102,
+        )
 
 
 if __name__ == "__main__":

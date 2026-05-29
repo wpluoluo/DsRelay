@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from local_proxy.upstream.models import parse_model_aliases, parse_supported_model_ids
+from local_proxy.upstream.models import (
+    dedupe_model_candidates,
+    normalize_model_alias_key,
+    parse_model_aliases,
+    parse_supported_model_ids,
+)
 
 
 DEFAULT_ROUTE_POLICY = {
@@ -146,59 +151,89 @@ def normalize_pool_route_policies(raw_pools: object) -> list[dict]:
     return normalized
 
 
-def get_route_policy_for_url(pools: list[dict], route_url: str, normalize_pool_url) -> dict:
+def _route_lookup_parts(route_url: str, normalize_pool_url) -> tuple[str, str, str, bool]:
     route_text = str(route_url or "").strip()
-    normalized_url = normalize_pool_url(route_text.split("#__route=", 1)[0] if "#__route=" in route_text else route_text)
+    base_text, fragment = route_text.split("#", 1) if "#" in route_text else (route_text, "")
+    normalized_base = normalize_pool_url(base_text)
+    normalized_identity = f"{normalized_base}#{fragment}" if normalized_base and fragment.startswith("__route=") else ""
+    return route_text, normalized_base, normalized_identity, bool(normalized_identity)
+
+
+def _build_pool_route_urls(pool: dict, normalize_pool_url) -> list[str]:
+    pool_name = str(pool.get("name") or "").strip()
+    route_urls = []
+    for route_ordinal, value in enumerate((pool.get("urls") or []), start=1):
+        normalized_value = normalize_pool_url(value)
+        route_urls.append(
+            f"{normalized_value}#__route={__import__('hashlib').sha1(f'{pool_name}|{normalized_value}|{int(route_ordinal)}'.encode('utf-8')).hexdigest()[:12]}"
+        )
+    return route_urls
+
+
+def get_route_policy_for_url(pools: list[dict], route_url: str, normalize_pool_url) -> dict:
+    route_text, normalized_url, normalized_identity, route_has_identity = _route_lookup_parts(route_url, normalize_pool_url)
     for pool in pools or []:
         if not isinstance(pool, dict) or not pool.get("enabled", True):
             continue
-        pool_name = str(pool.get("name") or "").strip()
-        route_urls = []
-        for route_ordinal, value in enumerate((pool.get("urls") or []), start=1):
-            route_urls.append(f"{normalize_pool_url(value)}#__route={__import__('hashlib').sha1(f'{pool_name}|{normalize_pool_url(value)}|{int(route_ordinal)}'.encode('utf-8')).hexdigest()[:12]}")
+        route_urls = _build_pool_route_urls(pool, normalize_pool_url)
+        if route_has_identity and normalized_identity and normalized_identity in route_urls:
+            return normalize_route_policy(pool.get("route_policy"))
         if route_text and route_text in route_urls:
             return normalize_route_policy(pool.get("route_policy"))
         urls = [normalize_pool_url(value) for value in (pool.get("urls") or [])]
-        if normalized_url and normalized_url in urls:
+        if not route_has_identity and normalized_url and normalized_url in urls:
             return normalize_route_policy(pool.get("route_policy"))
     return normalize_route_policy(None)
 
 
 def get_pool_model_aliases_for_url(pools: list[dict], route_url: str, normalize_pool_url) -> dict[str, list[str]]:
-    route_text = str(route_url or "").strip()
-    normalized_url = normalize_pool_url(route_text.split("#__route=", 1)[0] if "#__route=" in route_text else route_text)
+    route_text, normalized_url, normalized_identity, route_has_identity = _route_lookup_parts(route_url, normalize_pool_url)
     for pool in pools or []:
         if not isinstance(pool, dict) or not pool.get("enabled", True):
             continue
-        pool_name = str(pool.get("name") or "").strip()
-        route_urls = []
-        for route_ordinal, value in enumerate((pool.get("urls") or []), start=1):
-            route_urls.append(
-                f"{normalize_pool_url(value)}#__route={__import__('hashlib').sha1(f'{pool_name}|{normalize_pool_url(value)}|{int(route_ordinal)}'.encode('utf-8')).hexdigest()[:12]}"
-            )
-        matches_route = bool(route_text and route_text in route_urls)
+        route_urls = _build_pool_route_urls(pool, normalize_pool_url)
+        matches_route = bool((route_has_identity and normalized_identity and normalized_identity in route_urls) or (route_text and route_text in route_urls))
         urls = [normalize_pool_url(value) for value in (pool.get("urls") or [])]
-        matches_base = bool(normalized_url and normalized_url in urls)
+        matches_base = bool((not route_has_identity) and normalized_url and normalized_url in urls)
         if matches_route or matches_base:
             return parse_model_aliases(pool.get("model_aliases_text"))
     return {}
 
 
 def get_pool_supported_models_for_url(pools: list[dict], route_url: str, normalize_pool_url) -> list[str]:
-    route_text = str(route_url or "").strip()
-    normalized_url = normalize_pool_url(route_text.split("#__route=", 1)[0] if "#__route=" in route_text else route_text)
+    route_text, normalized_url, normalized_identity, route_has_identity = _route_lookup_parts(route_url, normalize_pool_url)
     for pool in pools or []:
         if not isinstance(pool, dict) or not pool.get("enabled", True):
             continue
-        pool_name = str(pool.get("name") or "").strip()
-        route_urls = []
-        for route_ordinal, value in enumerate((pool.get("urls") or []), start=1):
-            route_urls.append(
-                f"{normalize_pool_url(value)}#__route={__import__('hashlib').sha1(f'{pool_name}|{normalize_pool_url(value)}|{int(route_ordinal)}'.encode('utf-8')).hexdigest()[:12]}"
-            )
-        matches_route = bool(route_text and route_text in route_urls)
+        route_urls = _build_pool_route_urls(pool, normalize_pool_url)
+        matches_route = bool((route_has_identity and normalized_identity and normalized_identity in route_urls) or (route_text and route_text in route_urls))
         urls = [normalize_pool_url(value) for value in (pool.get("urls") or [])]
-        matches_base = bool(normalized_url and normalized_url in urls)
+        matches_base = bool((not route_has_identity) and normalized_url and normalized_url in urls)
         if matches_route or matches_base:
-            return parse_supported_model_ids(pool.get("supported_models_text"))
+            supported_models = parse_supported_model_ids(pool.get("supported_models_text"))
+            route_aliases = parse_model_aliases(pool.get("model_aliases_text"))
+            expanded_supported_models = []
+            for model_id in supported_models:
+                expanded_supported_models.append(model_id)
+                for alias_target in route_aliases.get(normalize_model_alias_key(model_id), []):
+                    expanded_supported_models.append(alias_target)
+            return dedupe_model_candidates(expanded_supported_models)
     return []
+
+
+def get_pool_priority_for_url(pools: list[dict], route_url: str, normalize_pool_url) -> int:
+    route_text, normalized_url, normalized_identity, route_has_identity = _route_lookup_parts(route_url, normalize_pool_url)
+    for pool in pools or []:
+        if not isinstance(pool, dict) or not pool.get("enabled", True):
+            continue
+        try:
+            priority = int(pool.get("priority", 100) or 100)
+        except Exception:
+            priority = 100
+        route_urls = _build_pool_route_urls(pool, normalize_pool_url)
+        matches_route = bool((route_has_identity and normalized_identity and normalized_identity in route_urls) or (route_text and route_text in route_urls))
+        urls = [normalize_pool_url(value) for value in (pool.get("urls") or [])]
+        matches_base = bool((not route_has_identity) and normalized_url and normalized_url in urls)
+        if matches_route or matches_base:
+            return priority
+    return 0

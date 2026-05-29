@@ -10,12 +10,12 @@ import uuid
 from collections import deque
 from pathlib import Path
 import logging
-from threading import Event, Lock
+from threading import Event, Lock, local
 from copy import deepcopy
 
 import requests
 from requests.adapters import HTTPAdapter
-from flask import Flask, Response, copy_current_request_context, render_template_string, request
+from flask import Flask, Response, copy_current_request_context, has_request_context, render_template_string, request
 
 from local_proxy.compat.tools import (
     append_preview_text,
@@ -124,6 +124,7 @@ from local_proxy.runtime.pools import ConnectionPoolState, normalize_pool_url, n
 from local_proxy.runtime.policies import (
     DEFAULT_ROUTE_POLICY,
     get_pool_model_aliases_for_url,
+    get_pool_priority_for_url,
     get_pool_supported_models_for_url,
     get_route_policy_for_url,
     normalize_pool_route_policies,
@@ -164,6 +165,7 @@ from local_proxy.upstream.router import (
     append_race_attempts as router_append_race_attempts,
     apply_model_candidate_to_request_kwargs,
     build_attempt_url_cycle as router_build_attempt_url_cycle,
+    build_route_selection_debug as router_build_route_selection_debug,
     build_model_candidate_order_for_route as router_build_model_candidate_order_for_route,
     build_upstream_url_candidates as router_build_upstream_url_candidates,
     cache_model_list as router_cache_model_list,
@@ -268,7 +270,7 @@ def build_upstream_timeout(*, requested_stream: bool) -> int | tuple[int, int]:
 def effective_stream_first_event_timeout_seconds() -> int:
     return max(
         1,
-        max(REQUEST_TIMEOUT, STREAM_FIRST_EVENT_TIMEOUT_SECONDS),
+        STREAM_FIRST_EVENT_TIMEOUT_SECONDS,
     )
 
 
@@ -282,12 +284,16 @@ def build_stream_route_switch_timeout(*, route_pool_size: int) -> tuple[int, int
         read_timeout = max(connect_timeout, STREAM_READ_TIMEOUT_SECONDS)
         return (connect_timeout, read_timeout)
 
-    # Route ids in the same base URL are still independent routes. When we
-    # switch among them, keep the first-event budget intact instead of letting
-    # the route-switch window silently clamp the upstream read timeout.
+    # Before we receive the upstream response object, the "read timeout" here
+    # is really the wait budget for response headers / stream open. Cap it by
+    # the route-switch window so background stream setup cannot spend the full
+    # first-event budget on every candidate route in sequence.
     read_timeout = max(
         connect_timeout,
-        effective_stream_first_event_timeout_seconds(),
+        min(
+            effective_stream_first_event_timeout_seconds(),
+            max(1, UPSTREAM_ROUTE_SWITCH_WINDOW_SECONDS),
+        ),
     )
     return (connect_timeout, read_timeout)
 
@@ -303,9 +309,11 @@ def freeze_request_context_snapshot() -> dict:
     }
 
 
-SESSION_AFFINITY_HEADER_NAMES = (
+EXPLICIT_SESSION_AFFINITY_HEADER_NAMES = (
     "X-Proxy-Session-Key",
     "X-Proxy-Conversation-Id",
+)
+FINGERPRINT_SESSION_HINT_HEADER_NAMES = (
     "X-Conversation-Id",
     "X-Session-Id",
     "X-Thread-Id",
@@ -416,6 +424,51 @@ def build_openai_stream_usage_packet(response_body: dict, request_payload: dict 
             "model": response_body.get("model"),
             "choices": [],
             "usage": usage,
+        }
+    )
+
+
+def build_openai_stream_terminal_packet(
+    response_body: dict | None,
+    request_payload: dict | None,
+    *,
+    finish_reason: str = "stop",
+) -> bytes:
+    body = response_body if isinstance(response_body, dict) else {}
+    choices_payload = []
+    response_choices = body.get("choices")
+    if isinstance(response_choices, list) and response_choices:
+        for fallback_index, choice in enumerate(response_choices):
+            if not isinstance(choice, dict):
+                continue
+            try:
+                choice_index = int(choice.get("index", fallback_index) or 0)
+            except Exception:
+                choice_index = fallback_index
+            choices_payload.append(
+                {
+                    "index": choice_index,
+                    "delta": {},
+                    "finish_reason": str(choice.get("finish_reason") or finish_reason),
+                }
+            )
+    if not choices_payload:
+        expected_choice_count = openai_stream_expected_choice_count(request_payload)
+        for choice_index in range(max(1, expected_choice_count)):
+            choices_payload.append(
+                {
+                    "index": choice_index,
+                    "delta": {},
+                    "finish_reason": finish_reason,
+                }
+            )
+    return format_openai_sse_payload(
+        {
+            "id": body.get("id", f"chatcmpl-{uuid.uuid4().hex[:16]}"),
+            "object": "chat.completion.chunk",
+            "created": int(body.get("created") or time.time()),
+            "model": body.get("model"),
+            "choices": choices_payload,
         }
     )
 
@@ -769,6 +822,7 @@ cache_stats = CounterStore(
 )
 route_health = {}
 route_selection_state = {}
+route_selection_thread_context = local()
 model_route_cache = {
     "routes": {},
     "model_lists": {},
@@ -847,6 +901,126 @@ def build_model_candidates_for_route(route_url: str, payload: dict | None) -> li
     else:
         add(model_name)
     return candidates
+
+
+def route_explicitly_supports_payload_model(route_url: str, payload: dict | None) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    model_name = str(payload.get("model") or "").strip()
+    if not model_name:
+        return False
+
+    requested_key = normalize_model_alias_key(model_name)
+    route_alias_targets = get_pool_model_alias_targets(route_url, model_name)
+    if route_alias_targets:
+        return True
+
+    manual_supported_models = get_pool_supported_models_for_url(PROXY_POOLS, route_url, normalize_pool_url)
+    if not manual_supported_models:
+        return False
+
+    supported_keys = {
+        normalize_model_alias_key(model_id)
+        for model_id in manual_supported_models
+        if str(model_id or "").strip()
+    }
+    if requested_key in supported_keys:
+        return True
+
+    route_candidates = build_model_candidates_for_route(route_url, payload)
+    candidate_keys = {
+        normalize_model_alias_key(candidate)
+        for candidate in route_candidates
+        if str(candidate or "").strip()
+    }
+    return bool(candidate_keys & supported_keys)
+
+
+def filter_route_urls_for_payload_model(route_urls: list[str], payload: dict | None) -> list[str]:
+    filtered_urls = [str(url or "").strip() for url in (route_urls or []) if str(url or "").strip()]
+    if not filtered_urls or not isinstance(payload, dict):
+        return filtered_urls
+    model_name = str(payload.get("model") or "").strip()
+    if not model_name:
+        return filtered_urls
+
+    explicitly_supported_urls = [
+        route_url
+        for route_url in filtered_urls
+        if route_explicitly_supports_payload_model(route_url, payload)
+    ]
+    return explicitly_supported_urls or filtered_urls
+
+
+def build_candidate_route_targets_for_request(subpath: str, request_payload: dict | None) -> list[tuple[str, str]]:
+    route_urls = list(UPSTREAM_URL_POOL)
+    if not route_urls:
+        route_urls = [
+            ConnectionPoolState.base_url_from_route_url(url) or url
+            for url in build_upstream_url_candidates(subpath)
+            if str(url or "").strip()
+        ]
+    route_urls = filter_route_urls_for_payload_model(route_urls, request_payload)
+    route_targets: list[tuple[str, str]] = []
+    for candidate_route_url in route_urls:
+        candidate_route_policy = build_route_policy(candidate_route_url)
+        candidate_subpath = resolve_upstream_text_subpath(subpath, candidate_route_policy, request_payload)
+        candidate_upstream_urls = router_build_upstream_url_candidates([candidate_route_url], "", candidate_subpath)
+        if candidate_upstream_urls:
+            route_targets.append((candidate_route_url, candidate_upstream_urls[0]))
+    return route_targets
+
+
+def build_candidate_upstream_urls_for_request(subpath: str, request_payload: dict | None) -> list[str]:
+    return [upstream_url for _, upstream_url in build_candidate_route_targets_for_request(subpath, request_payload)]
+
+
+def get_thread_route_selection_debug(request_id: str | None = None) -> dict:
+    debug_meta = getattr(route_selection_thread_context, "last_debug", None)
+    if not isinstance(debug_meta, dict):
+        return {}
+    expected_request_id = str(request_id or "").strip()
+    debug_request_id = str(
+        debug_meta.get("request_id")
+        or getattr(route_selection_thread_context, "request_id", "")
+        or ""
+    ).strip()
+    if expected_request_id and debug_request_id and debug_request_id != expected_request_id:
+        return {}
+    return dict(debug_meta)
+
+
+def resolve_failure_route_url_from_exception(
+    exc: BaseException | None,
+    *,
+    request_id: str,
+    upstream_url_pool: list[str] | None,
+) -> str:
+    debug_meta = getattr(exc, "_proxy_route_selection_debug", None)
+    if not isinstance(debug_meta, dict):
+        debug_meta = get_thread_route_selection_debug(request_id)
+    if not isinstance(debug_meta, dict):
+        return ""
+
+    candidate_pool = {
+        str(item or "").strip()
+        for item in (upstream_url_pool or [])
+        if str(item or "").strip()
+    }
+    ordered_candidates = [
+        str(debug_meta.get("selected_url") or "").strip(),
+        *[
+            str(item or "").strip()
+            for item in (debug_meta.get("ordered_urls") or [])
+            if str(item or "").strip()
+        ],
+    ]
+    for candidate in ordered_candidates:
+        if not candidate:
+            continue
+        if not candidate_pool or candidate in candidate_pool:
+            return candidate
+    return ""
 
 
 def merge_model_route_cache(target: dict, source: dict | None) -> dict:
@@ -1010,6 +1184,15 @@ def get_route_score(logical_model: str | None, route_url: str) -> float:
     return (total / count) + freshness
 
 
+ROUTE_PRIORITY_SCORE_MULTIPLIER = 1_000_000.0
+
+
+def get_route_selection_score(logical_model: str | None, route_url: str) -> float:
+    priority = float(get_pool_priority_for_url(PROXY_POOLS, route_url, normalize_pool_url) or 0)
+    priority_bonus = priority * ROUTE_PRIORITY_SCORE_MULTIPLIER
+    return priority_bonus + get_route_score(logical_model, route_url)
+
+
 def get_cached_route_model_candidates(
     logical_model: str,
     route_url: str,
@@ -1170,7 +1353,6 @@ def rebuild_pool_state() -> None:
     URL_POOL_KEY_MAP = {
         url: connection_pool_state.get_api_keys_for_url(url)
         for url in UPSTREAM_URL_POOL
-        if connection_pool_state.get_api_keys_for_url(url)
     }
     save_pool_runtime_state_to_storage()
 
@@ -1756,24 +1938,35 @@ def build_session_affinity_key(
     payload: dict | None,
     request_context: dict | None = None,
 ) -> str:
-    header_name = ""
-    header_value = ""
+    explicit_header_name = ""
+    explicit_header_value = ""
+    fingerprint_header_name = ""
+    fingerprint_header_value = ""
     source_headers = (request_context or {}).get("headers") if isinstance(request_context, dict) else None
     if isinstance(source_headers, dict):
         lowered = {str(key or "").lower(): str(value or "").strip() for key, value in source_headers.items()}
-        for name in SESSION_AFFINITY_HEADER_NAMES:
+        for name in EXPLICIT_SESSION_AFFINITY_HEADER_NAMES:
             candidate = lowered.get(name.lower(), "")
             if candidate:
-                header_name = name
-                header_value = candidate
+                explicit_header_name = name
+                explicit_header_value = candidate
                 break
-    if not header_value:
-        header_name, header_value = get_request_header_value(SESSION_AFFINITY_HEADER_NAMES)
-    if header_value:
+        if not explicit_header_value:
+            for name in FINGERPRINT_SESSION_HINT_HEADER_NAMES:
+                candidate = lowered.get(name.lower(), "")
+                if candidate:
+                    fingerprint_header_name = name
+                    fingerprint_header_value = candidate
+                    break
+    if not explicit_header_value:
+        explicit_header_name, explicit_header_value = get_request_header_value(EXPLICIT_SESSION_AFFINITY_HEADER_NAMES)
+    if not fingerprint_header_value:
+        fingerprint_header_name, fingerprint_header_value = get_request_header_value(FINGERPRINT_SESSION_HINT_HEADER_NAMES)
+    if explicit_header_value:
         return "session:v1:explicit:" + stable_resume_hash(
             {
-                "header": header_name.lower(),
-                "value": header_value,
+                "header": explicit_header_name.lower(),
+                "value": explicit_header_value,
             }
         )
     model = str((payload or {}).get("model") or "").strip()
@@ -1794,6 +1987,8 @@ def build_session_affinity_key(
             "instruction": re.sub(r"\s+", " ", first_instruction).strip()[:1200],
             "first_user": re.sub(r"\s+", " ", first_user).strip()[:2000],
             "tools": tool_names,
+            "session_hint_header": fingerprint_header_name.lower(),
+            "session_hint_value": fingerprint_header_value,
         }
     )
 
@@ -1936,6 +2131,23 @@ def build_resume_hint_message(record: dict) -> dict:
             f"{partial_text}"
         ),
     }
+
+
+def inject_runtime_resume_hint(payload: dict | None, partial_text: str) -> tuple[dict | None, int]:
+    text = str(partial_text or "").strip()
+    if not text or not isinstance(payload, dict) or not isinstance(payload.get("messages"), list):
+        return payload, 0
+    if payload_has_resume_hint(payload):
+        return payload, 0
+
+    next_payload = dict(payload)
+    messages = list(next_payload.get("messages") or [])
+    insert_at = 0
+    while insert_at < len(messages) and isinstance(messages[insert_at], dict) and messages[insert_at].get("role") in {"system", "developer"}:
+        insert_at += 1
+    messages.insert(insert_at, build_resume_hint_message({"partial_text": text}))
+    next_payload["messages"] = messages
+    return next_payload, 1
 
 
 def payload_has_resume_hint(payload: dict | None) -> bool:
@@ -2168,14 +2380,8 @@ def execute_upstream_request(
     bypass_inflight_coalescing: bool = False,
 ) -> dict:
     requested_stream = bool(isinstance(request_payload, dict) and request_payload.get("stream"))
-    route_urls = list(UPSTREAM_URL_POOL)
-    if not route_urls:
-        route_urls = [
-            ConnectionPoolState.base_url_from_route_url(url) or url
-            for url in build_upstream_url_candidates(subpath)
-            if str(url or "").strip()
-        ]
-    if not route_urls:
+    route_targets = build_candidate_route_targets_for_request(subpath, request_payload)
+    if not route_targets:
         return {
             "upstream_url": "",
             "upstream_url_pool": [],
@@ -2193,34 +2399,10 @@ def execute_upstream_request(
             "forced_error_payload": build_no_upstream_configured_error_payload(),
             "forced_error_status": 400,
         }
-    route_url = route_urls[0]
+    route_url = route_targets[0][0]
+    upstream_urls = [upstream_url for _, upstream_url in route_targets]
     route_policy = build_route_policy(route_url)
     upstream_subpath = resolve_upstream_text_subpath(subpath, route_policy, request_payload)
-    upstream_urls = []
-    for candidate_route_url in route_urls:
-        candidate_route_policy = build_route_policy(candidate_route_url)
-        candidate_subpath = resolve_upstream_text_subpath(subpath, candidate_route_policy, request_payload)
-        candidate_upstream_urls = router_build_upstream_url_candidates([candidate_route_url], "", candidate_subpath)
-        if candidate_upstream_urls:
-            upstream_urls.append(candidate_upstream_urls[0])
-    if not upstream_urls:
-        return {
-            "upstream_url": "",
-            "upstream_url_pool": [],
-            "route_pool_size": 0,
-            "tool_schemas": extract_tool_schemas(request_payload),
-            "upstream_payload": request_payload if isinstance(request_payload, dict) else None,
-            "upstream_stream": requested_stream,
-            "upstream_response": None,
-            "attempts": [],
-            "request_exception": None,
-            "retry_count": 0,
-            "request_repairs": 0,
-            "model_candidates": [],
-            "initial_key_choice": {},
-            "forced_error_payload": build_no_upstream_configured_error_payload(),
-            "forced_error_status": 400,
-        }
     upstream_url = base_upstream_url(upstream_urls[0])
     upstream_payload, upstream_stream, request_repairs, model_candidates = build_upstream_json_payload(
         upstream_subpath,
@@ -2459,6 +2641,12 @@ def execute_upstream_request(
             complete_inflight_request(coalescing_key, result=result)
         return result
     except BaseException as exc:
+        route_debug = get_thread_route_selection_debug(request_id)
+        if route_debug:
+            try:
+                setattr(exc, "_proxy_route_selection_debug", route_debug)
+            except Exception:
+                pass
         if not bypass_inflight_coalescing:
             complete_inflight_request(coalescing_key, error=exc)
         raise
@@ -2474,17 +2662,91 @@ def start_background_upstream_execution(subpath: str, request_payload: dict | No
     request_method = request.method
     raw_body = request.get_data(cache=True)
     request_context = freeze_request_context_snapshot()
+    request_protocol = "openai_chat_completions" if resolve_upstream_text_subpath(subpath, {}, request_payload) == "chat/completions" else subpath.replace("/", "_")
+
+    def build_background_execution_failure_result(exc: BaseException) -> dict:
+        requested_stream = bool(isinstance(request_payload, dict) and request_payload.get("stream"))
+        route_targets = build_candidate_route_targets_for_request(subpath, request_payload)
+        upstream_url_pool = [candidate_upstream_url for _, candidate_upstream_url in route_targets]
+        if not upstream_url_pool:
+            upstream_url_pool = [
+                str(candidate or "").strip()
+                for candidate in build_upstream_url_candidates(subpath)
+                if str(candidate or "").strip()
+            ]
+        initial_route_url = resolve_failure_route_url_from_exception(
+            exc,
+            request_id=request_id,
+            upstream_url_pool=upstream_url_pool,
+        )
+        if not initial_route_url:
+            initial_route_url = str(upstream_url_pool[0] if upstream_url_pool else "").strip()
+        initial_upstream_url = base_upstream_url(initial_route_url)
+        failure_attempts = []
+        if initial_route_url or initial_upstream_url:
+            failure_attempts.append(
+                {
+                    "attempt": 1,
+                    "route_url": initial_route_url,
+                    "upstream_url": initial_upstream_url,
+                    "kind": "exception",
+                    "error": str(exc),
+                }
+            )
+        return {
+            "upstream_url": initial_upstream_url,
+            "route_url": initial_route_url,
+            "upstream_subpath": resolve_upstream_text_subpath(subpath, {}, request_payload),
+            "upstream_url_pool": upstream_url_pool,
+            "route_pool_size": len(upstream_url_pool),
+            "tool_schemas": extract_tool_schemas(request_payload),
+            "upstream_payload": request_payload if isinstance(request_payload, dict) else None,
+            "upstream_stream": requested_stream,
+            "upstream_response": None,
+            "attempts": failure_attempts,
+            "request_exception": exc,
+            "retry_count": 0,
+            "request_repairs": 0,
+            "model_candidates": build_model_candidates_from_payload(request_payload),
+            "route_policy": build_route_policy(route_targets[0][0]) if route_targets else {},
+            "route_policy_metrics": {},
+            "interruption_resume": {},
+            "request_context": request_context,
+            "cache_hit": False,
+            "cache_key": "",
+            "coalescing_key": "",
+            "coalesced": False,
+            "session_affinity_key": build_session_affinity_key(
+                request_protocol,
+                request_payload if isinstance(request_payload, dict) else None,
+                request_context=request_context,
+            ),
+            "initial_key_choice": {},
+            "logical_model": str((request_payload or {}).get("model") or "") if isinstance(request_payload, dict) else "",
+            "resolved_model": str((request_payload or {}).get("model") or "") if isinstance(request_payload, dict) else "",
+            "selected_pool_name": "",
+            "attempted_pool_names": [],
+            "selected_key_index": None,
+            "selected_route_index": (
+                upstream_url_pool.index(initial_route_url)
+                if initial_route_url and initial_route_url in upstream_url_pool
+                else (0 if upstream_url_pool else None)
+            ),
+        }
 
     @copy_current_request_context
     def run_execution():
-        return execute_upstream_request(
-            subpath,
-            request_payload,
-            request_id,
-            request_method=request_method,
-            raw_body=raw_body,
-            request_context=request_context,
-        )
+        try:
+            return execute_upstream_request(
+                subpath,
+                request_payload,
+                request_id,
+                request_method=request_method,
+                raw_body=raw_body,
+                request_context=request_context,
+            )
+        except BaseException as exc:  # pragma: no cover
+            return build_background_execution_failure_result(exc)
 
     return BackgroundExecution(
         run_execution,
@@ -2651,18 +2913,34 @@ def mark_route_failure(route_url: str, reason: str) -> None:
 
 
 def build_attempt_url_cycle(candidate_urls: list[str], blocked_urls: set[str]) -> list[str]:
-    logical_model = route_selection_state.get("__current_logical_model__")
-    session_affinity_key = route_selection_state.get("__current_session_affinity_key__")
-    return router_build_attempt_url_cycle(
+    logical_model = str(getattr(route_selection_thread_context, "logical_model", "") or "").strip()
+    session_affinity_key = str(getattr(route_selection_thread_context, "session_affinity_key", "") or "").strip()
+    request_id = str(getattr(route_selection_thread_context, "request_id", "") or "").strip()
+    ordered = router_build_attempt_url_cycle(
         candidate_urls,
         blocked_urls,
         route_health=route_health,
         route_selection_state=route_selection_state,
         state_lock=state_lock,
         randomize_endpoints=UPSTREAM_RANDOMIZE_ENDPOINTS,
-        route_score_provider=(lambda route_url: get_route_score(logical_model, route_url)),
+        route_score_provider=(lambda route_url: get_route_selection_score(logical_model, route_url)),
         session_affinity_key=session_affinity_key,
     )
+    debug_meta = router_build_route_selection_debug(
+        candidate_urls,
+        blocked_urls,
+        route_health=route_health,
+        state_lock=state_lock,
+        randomize_endpoints=UPSTREAM_RANDOMIZE_ENDPOINTS,
+        session_affinity_key=session_affinity_key,
+    )
+    debug_meta["ordered_urls"] = list(ordered or [])
+    debug_meta["selected_url"] = ordered[0] if ordered else ""
+    if request_id:
+        debug_meta["request_id"] = request_id
+    route_selection_thread_context.last_debug = dict(debug_meta)
+    route_selection_state["__last_route_selection_debug__"] = debug_meta
+    return ordered
 
 
 def should_enforce_route_switch_window(candidate_urls: list[str], retry_allowed: bool) -> bool:
@@ -2736,6 +3014,7 @@ def build_model_candidate_order_for_route(
     return router_build_model_candidate_order_for_route(
         route_url=route_url,
         model_candidates=route_specific_candidates or model_candidates,
+        logical_model=model_candidates[0] if model_candidates else None,
         request_kwargs=request_kwargs,
         request_id=request_id,
         get_cached_route_candidates=get_cached_route_model_candidates,
@@ -2760,6 +3039,7 @@ def order_model_candidates_for_route(
     return router_order_model_candidates_for_route(
         route_url=route_url,
         model_candidates=route_specific_candidates or model_candidates,
+        logical_model=model_candidates[0] if model_candidates else None,
         request_kwargs=request_kwargs,
         request_id=request_id,
         get_cached_route_candidates=get_cached_route_model_candidates,
@@ -2811,13 +3091,14 @@ def request_upstream_with_retries(
     upstream_urls: list[str] | None = None,
     initial_blocked_urls: set[str] | None = None,
     model_candidates: list[str] | None = None,
-) -> tuple[requests.Response | None, list[dict], requests.RequestException | None]:
+) -> tuple[requests.Response | None, list[dict], Exception | None]:
     request_meta = request_kwargs.pop("meta", None)
-    with state_lock:
-        route_selection_state["__current_logical_model__"] = model_candidates[0] if model_candidates else ""
-        route_selection_state["__current_session_affinity_key__"] = str(
-            (request_meta or {}).get("session_affinity_key") or ""
-        )
+    route_selection_thread_context.request_id = str(request_id or "").strip()
+    route_selection_thread_context.logical_model = model_candidates[0] if model_candidates else ""
+    route_selection_thread_context.session_affinity_key = str(
+        (request_meta or {}).get("session_affinity_key") or ""
+    )
+    route_selection_thread_context.last_debug = None
     return orchestrated_request_upstream_with_retries(
         request_kwargs,
         subpath=subpath,
@@ -2864,6 +3145,7 @@ def request_upstream_with_retries(
 def _node_aware_request(method, url, **kwargs):
     import sys as _sys
     import json as _json
+    requested_stream = bool(kwargs.get("stream"))
     if "opencode.ai" in url:
         url = url.replace("https://opencode.ai", "http://127.0.0.1:18766")
         log_kwargs = {k: v for k, v in kwargs.items() if k != 'headers' and k != 'meta'}
@@ -2874,7 +3156,10 @@ def _node_aware_request(method, url, **kwargs):
         print(f"[NODE_REQ] {method} {url} {_json.dumps(log_kwargs, default=str)}", file=_sys.stderr)
     result = UPSTREAM_SESSION.request(method, url, **kwargs)
     if "opencode.ai" in url.replace("127.0.0.1:18766", "opencode.ai") or "127.0.0.1" in url:
-        print(f"[NODE_REQ] resp: {result.status_code} len={len(result.content)}", file=_sys.stderr)
+        if requested_stream:
+            print(f"[NODE_REQ] resp: {result.status_code} stream=true", file=_sys.stderr)
+        else:
+            print(f"[NODE_REQ] resp: {result.status_code} len={len(result.content)}", file=_sys.stderr)
     return result
 
 
@@ -3094,6 +3379,7 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
     meta = {
         "logical_model": logical_model,
         "resolved_model": resolved_model,
+        "route_url": str(execution.get("route_url") or execution.get("upstream_url") or ""),
         "upstream_subpath": str(execution.get("upstream_subpath") or ""),
         "pool_name": pool_name,
         "attempted_pool_names": list(execution.get("attempted_pool_names") or []) or ([pool_name] if pool_name else []),
@@ -3135,6 +3421,19 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
     if int(meta.get("total_tokens") or 0) <= 0:
         meta["total_tokens"] = int(meta.get("prompt_tokens") or 0) + int(meta.get("completion_tokens") or 0)
     return meta
+
+
+def build_request_result_meta(execution: dict | None) -> dict:
+    execution = execution or {}
+    attempts = execution.get("attempts") or []
+    attempt_urls, attempt_route_chain = summarize_attempt_routes(attempts)
+    return {
+        "upstream_url": str(execution.get("upstream_url") or ""),
+        "retry_count": int(execution.get("retry_count") or 0),
+        "route_pool_size": int(execution.get("route_pool_size") or 0),
+        "upstream_attempt_urls": attempt_urls,
+        "upstream_attempt_chain": attempt_route_chain,
+    }
 
 
 def build_request_meta(
@@ -3252,6 +3551,7 @@ def save_request_cache_entry(
                 route_policy=route_policy if isinstance(route_policy, dict) else {},
                 response_body=response_body,
                 upstream_url=upstream_url,
+                route_url=str((execution.get("route_url") if isinstance(execution, dict) else "") or upstream_url),
                 model_name=response_body.get("model") if isinstance(response_body, dict) else "",
                 pool_name=(execution.get("selected_pool_name") if isinstance(execution, dict) else "") or "",
                 key_index=execution.get("selected_key_index") if isinstance(execution, dict) else None,
@@ -3926,13 +4226,15 @@ def bridge_anthropic_sse_response(
     return [format_sse_event("error", payload)]
 
 
-def bridge_openai_sse_response(response: Response) -> list[bytes]:
+def bridge_openai_sse_response(response: Response):
     response_status = int(getattr(response, "status_code", 200) or 200)
     response_body = response.response
     if response_status == 200:
         if isinstance(response_body, (bytes, bytearray)):
-            return [bytes(response_body)]
-        return list(response_body)
+            yield bytes(response_body)
+            return
+        yield from response_body
+        return
 
     if isinstance(response_body, (bytes, bytearray)):
         body_bytes = bytes(response_body)
@@ -3947,10 +4249,8 @@ def bridge_openai_sse_response(response: Response) -> list[bytes]:
         retry_count=0,
         upstream_payload=None,
     )
-    return [
-        format_openai_sse_payload(payload),
-        b"data: [DONE]\n\n",
-    ]
+    yield format_openai_sse_payload(payload)
+    yield b"data: [DONE]\n\n"
 
 
 def build_anthropic_response_control_payload(
@@ -3972,7 +4272,7 @@ def get_same_request_failover_budget(route_hint: str, execution: dict | None = N
             route_pool_size = len(upstream_url_pool)
         else:
             route_pool_size = int(execution.get("route_pool_size") or 0)
-    if route_pool_size <= 0:
+    if route_pool_size <= 0 and not isinstance(execution, dict):
         route_pool_size = len(build_upstream_url_candidates(route_hint))
     return max(0, route_pool_size - 1)
 
@@ -4006,6 +4306,16 @@ def collect_same_request_blocked_urls(
     if current_candidate:
         blocked_urls.add(current_candidate)
     return blocked_urls
+
+
+def last_attempt_route_url(execution: dict | None) -> str:
+    for item in reversed((execution or {}).get("attempts") or []):
+        if not isinstance(item, dict):
+            continue
+        candidate = str(item.get("route_url") or item.get("upstream_url") or "").strip()
+        if candidate:
+            return candidate
+    return str((execution or {}).get("route_url") or (execution or {}).get("upstream_url") or "").strip()
 
 
 def carry_same_request_execution_history(
@@ -4093,16 +4403,31 @@ def retry_terminal_upstream_failure_once(
     fallback_key: str,
     failure_reason: str,
 ) -> dict | None:
+    original_execution = dict(execution or {})
     terminal_failure_fallbacks = int((execution or {}).get(fallback_key) or 0)
-    if not isinstance(request_payload, dict) or not can_attempt_same_request_failover(
+    if not isinstance(request_payload, dict):
+        return None
+
+    retry_execution = dict(execution or {})
+    existing_upstream_pool = retry_execution.get("upstream_url_pool")
+    existing_route_pool_size = int(retry_execution.get("route_pool_size") or 0)
+    if not isinstance(existing_upstream_pool, list) or not existing_upstream_pool or existing_route_pool_size <= 1:
+        reconstructed_upstream_pool = build_candidate_upstream_urls_for_request(route_hint, request_payload)
+        if reconstructed_upstream_pool:
+            retry_execution["upstream_url_pool"] = reconstructed_upstream_pool
+            retry_execution["route_pool_size"] = len(reconstructed_upstream_pool)
+
+    if not can_attempt_same_request_failover(
         route_hint=route_hint,
-        execution=execution,
+        execution=retry_execution,
         fallback_count=terminal_failure_fallbacks,
     ):
         return None
 
-    current_route_url = str(route_url or (execution or {}).get("route_url") or "").strip()
-    blocked_urls = collect_same_request_blocked_urls(execution, current_route_url=current_route_url)
+    current_route_url = str(route_url or retry_execution.get("route_url") or "").strip()
+    if not current_route_url:
+        current_route_url = last_attempt_route_url(retry_execution)
+    blocked_urls = collect_same_request_blocked_urls(retry_execution, current_route_url=current_route_url)
 
     proxy_logger.warning(
         "request_id=%s 上游终态错误，准备同请求切换线路 次数=%s 当前线路=%s 原因=%s",
@@ -4117,12 +4442,12 @@ def retry_terminal_upstream_failure_once(
         request_payload,
         request_id,
         initial_blocked_urls=blocked_urls,
-        request_context=request_context or (execution.get("request_context") if isinstance(execution, dict) else None),
+        request_context=request_context or (retry_execution.get("request_context") if isinstance(retry_execution, dict) else None),
         bypass_inflight_coalescing=True,
     )
     if isinstance(next_execution, dict):
         next_execution[fallback_key] = terminal_failure_fallbacks + 1
-        next_execution = carry_same_request_execution_history(execution, next_execution)
+        next_execution = carry_same_request_execution_history(original_execution or retry_execution, next_execution)
     return next_execution if isinstance(next_execution, dict) else None
 
 
@@ -4130,7 +4455,7 @@ def log_and_record_malformed_success(
     *,
     request_id: str,
     upstream_url: str,
-    route_hint: str,
+    route_url: str,
     requested_stream: bool,
     started_at: float,
     retry_count: int,
@@ -4142,10 +4467,10 @@ def log_and_record_malformed_success(
     duration_ms = int((time.perf_counter() - started_at) * 1000)
     preview = issue.get("preview", "")
     proxy_logger.error(
-        "request_id=%s 上游=%s 路由=%s 状态=200 异常成功体=%s 流式=%s 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
+        "request_id=%s 上游=%s 线路=%s 状态=200 异常成功体=%s 流式=%s 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
         request_id,
         upstream_url,
-        route_hint,
+        route_url or upstream_url,
         issue.get("code") or "unknown",
         str(requested_stream).lower(),
         bytes_sent,
@@ -4461,9 +4786,10 @@ def proxy_response(
             retry_count=retry_count,
         )
         proxy_logger.info(
-            "request_id=%s 上游=%s 上游路径=%s 状态=%s 流式=%s 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
+            "request_id=%s 上游=%s 线路=%s 上游路径=%s 状态=%s 流式=%s 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
             request_id,
             upstream_url,
+            route_url or upstream_url,
             upstream_subpath,
             upstream_response.status_code,
             str(requested_stream).lower(),
@@ -4531,7 +4857,7 @@ def proxy_response(
             log_and_record_malformed_success(
                 request_id=request_id,
                 upstream_url=upstream_url,
-                route_hint=route_hint,
+                route_url=route_url,
                 requested_stream=True,
                 started_at=started_at,
                 retry_count=retry_count,
@@ -4705,7 +5031,7 @@ def proxy_response(
                 log_and_record_malformed_success(
                     request_id=request_id,
                     upstream_url=upstream_url,
-                    route_hint=route_hint,
+                    route_url=route_url,
                     requested_stream=True,
                     started_at=started_at,
                     retry_count=retry_count,
@@ -4739,6 +5065,7 @@ def proxy_response(
                 first_upstream_event_ms = None
                 first_data_event_ms = None
                 last_nonempty_line = ""
+                resume_save_meta = {}
                 try:
                     issue = None
                     for raw_line in itertools.chain(prebuffered_raw_lines, stream_iter):
@@ -4873,7 +5200,7 @@ def proxy_response(
                             ),
                         }
                         mark_route_failure(route_url, issue["code"])
-                        if total_bytes == 0 and isinstance(request_payload, dict) and can_attempt_same_request_failover(
+                        if not emitted_data and isinstance(request_payload, dict) and can_attempt_same_request_failover(
                             route_hint=route_hint,
                             execution=execution,
                             fallback_count=empty_stream_fallbacks,
@@ -4946,16 +5273,111 @@ def proxy_response(
                         stream_client_gone = True
                         stream_error = "client_gone"
                         close_response_quietly(upstream_response)
+                        raise
+
+                    stream_error = str(exc)
+                    response_preview = build_preview_summary(preview_parts)
+                    has_meaningful_output = openai_stream_events_have_meaningful_output(response_events)
+                    resume_partial_text = build_resume_partial_text(resume_text_parts, response_preview)
+                    resume_save_meta = save_interruption_resume_snapshot(
+                        execution=execution,
+                        protocol=protocol or "openai_chat_completions",
+                        request_id=request_id,
+                        upstream_url=upstream_url,
+                        partial_text=resume_partial_text,
+                        response_preview=response_preview,
+                        bytes_sent=total_bytes,
+                    )
+                    close_response_quietly(upstream_response)
+
+                    next_execution = None
+                    next_request_payload = request_payload
+                    runtime_resume_repairs = 0
+                    if has_meaningful_output and isinstance(request_payload, dict):
+                        next_request_payload, runtime_resume_repairs = inject_runtime_resume_hint(
+                            request_payload,
+                            resume_partial_text,
+                        )
+                    can_retry_in_place = isinstance(request_context, dict) or has_request_context()
+                    if can_retry_in_place and isinstance(next_request_payload, dict) and (
+                        not has_meaningful_output
+                        or bool(resume_save_meta.get("resume_saved"))
+                        or runtime_resume_repairs > 0
+                    ):
+                        next_execution = retry_terminal_upstream_failure_once(
+                            route_hint=route_hint,
+                            request_id=request_id,
+                            upstream_url=upstream_url,
+                            route_url=str((execution or {}).get("route_url") or upstream_url),
+                            request_payload=next_request_payload,
+                            execution=execution,
+                            request_context=request_context,
+                            fallback_key="terminal_error_fallbacks",
+                            failure_reason=f"stream_read_exception:{type(exc).__name__}",
+                        )
+                    next_response = next_execution.get("upstream_response") if isinstance(next_execution, dict) else None
+                    if next_response is not None:
+                        delegated_response = True
+                        next_proxy_response = proxy_response(
+                            next_response,
+                            sanitize_dsml=sanitize_dsml,
+                            request_id=request_id,
+                            upstream_url=str(next_execution.get("upstream_url") or upstream_url),
+                            started_at=started_at,
+                            requested_stream=requested_stream,
+                            route_hint=route_hint,
+                            tool_schemas=next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else tool_schemas,
+                            retry_count=int(next_execution.get("retry_count") or retry_count),
+                            protocol=protocol,
+                            request_payload=request_payload,
+                            execution=next_execution,
+                        )
+                        response_body = next_proxy_response.response
+                        if isinstance(response_body, (bytes, bytearray)):
+                            yield bytes(response_body)
+                        else:
+                            yield from response_body
+                        return
+
+                    if has_meaningful_output:
+                        terminal_packet = build_openai_stream_terminal_packet(
+                            aggregated_body if isinstance((aggregated_body := build_chat_completion_from_sse(response_events)), dict) else {},
+                            request_payload,
+                            finish_reason="stop",
+                        )
+                        total_bytes += len(terminal_packet)
+                        yield terminal_packet
+                        if (
+                            isinstance(aggregated_body, dict)
+                            and not openai_usage_has_billable_tokens(aggregated_body.get("usage"))
+                        ):
+                            usage_packet = build_openai_stream_usage_packet(aggregated_body, request_payload)
+                            total_bytes += len(usage_packet)
+                            yield usage_packet
                     else:
-                        stream_error = str(exc)
-                    raise
+                        error_packet = format_openai_sse_payload(
+                            build_openai_error_payload(
+                                status_code=502,
+                                preview=stream_error,
+                                retry_count=retry_count,
+                                upstream_payload=None,
+                            )
+                        )
+                        total_bytes += len(error_packet)
+                        yield error_packet
+
+                    if not saw_done:
+                        done_payload = b"data: [DONE]\n\n"
+                        saw_done = True
+                        total_bytes += len(done_payload)
+                        yield done_payload
+                    return
                 finally:
                     close_response_quietly(upstream_response)
                     if delegated_response:
                         return
                     duration_ms = int((time.perf_counter() - started_at) * 1000)
                     response_preview = build_preview_summary(preview_parts)
-                    resume_save_meta = {}
                     if stream_client_gone:
                         resume_save_meta = save_interruption_resume_snapshot(
                             execution=execution,
@@ -4966,15 +5388,16 @@ def proxy_response(
                             response_preview=response_preview,
                             bytes_sent=total_bytes,
                         )
-                    elif not stream_error:
+                    elif not stream_error and not resume_save_meta:
                         resume_save_meta = clear_interruption_resume_records(execution)
                     tail_summary = " || ".join(stream_tail_lines[-4:])
                     finish_reason_summary = ", ".join(terminal_finish_reasons[-4:])
                     if stream_client_gone:
                         proxy_logger.info(
-                            "request_id=%s 上游=%s 状态=%s 流式=true 客户端已断开=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s 结束原因=%s 末尾片段=%s",
+                            "request_id=%s 上游=%s 线路=%s 状态=%s 流式=true 客户端已断开=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s 结束原因=%s 末尾片段=%s",
                             request_id,
                             upstream_url,
+                            route_url or upstream_url,
                             upstream_response.status_code,
                             total_bytes,
                             duration_ms,
@@ -4987,9 +5410,10 @@ def proxy_response(
                         )
                     elif stream_error:
                         proxy_logger.error(
-                            "request_id=%s 上游=%s 状态=%s 流式=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 错误=%s 预览=%s 结束原因=%s 末尾片段=%s",
+                            "request_id=%s 上游=%s 线路=%s 状态=%s 流式=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 错误=%s 预览=%s 结束原因=%s 末尾片段=%s",
                             request_id,
                             upstream_url,
+                            route_url or upstream_url,
                             upstream_response.status_code,
                             total_bytes,
                             duration_ms,
@@ -5003,9 +5427,10 @@ def proxy_response(
                         )
                     else:
                         proxy_logger.info(
-                            "request_id=%s 上游=%s 状态=%s 流式=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s 结束原因=%s 末尾片段=%s",
+                            "request_id=%s 上游=%s 线路=%s 状态=%s 流式=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s 结束原因=%s 末尾片段=%s",
                             request_id,
                             upstream_url,
+                            route_url or upstream_url,
                             upstream_response.status_code,
                             total_bytes,
                             duration_ms,
@@ -5100,9 +5525,10 @@ def proxy_response(
                     raw_error_lines.append(normalized_line)
         except Exception as exc:  # pragma: no cover
             proxy_logger.error(
-                "request_id=%s 上游=%s 状态=%s 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 错误=%s 预览=%s",
+                "request_id=%s 上游=%s 线路=%s 状态=%s 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 错误=%s 预览=%s",
                 request_id,
                 upstream_url,
+                route_url or upstream_url,
                 upstream_response.status_code,
                 total_bytes,
                 int((time.perf_counter() - started_at) * 1000),
@@ -5130,9 +5556,10 @@ def proxy_response(
             body_text = "\n".join(raw_error_lines)
             response_preview = body_text.replace("\n", "\\n")[:280]
             proxy_logger.info(
-                "request_id=%s 上游=%s 状态=%s 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
+                "request_id=%s 上游=%s 线路=%s 状态=%s 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
                 request_id,
                 upstream_url,
+                route_url or upstream_url,
                 upstream_response.status_code,
                 total_bytes,
                 int((time.perf_counter() - started_at) * 1000),
@@ -5199,7 +5626,7 @@ def proxy_response(
             log_and_record_malformed_success(
                 request_id=request_id,
                 upstream_url=upstream_url,
-                route_hint=route_hint,
+                route_url=route_url,
                 requested_stream=False,
                 started_at=started_at,
                 retry_count=retry_count,
@@ -5222,9 +5649,10 @@ def proxy_response(
         close_response_quietly(upstream_response)
         resume_clear_meta = clear_interruption_resume_records(execution)
         proxy_logger.info(
-            "request_id=%s 上游=%s 状态=%s 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
+            "request_id=%s 上游=%s 线路=%s 状态=%s 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
             request_id,
             upstream_url,
+            route_url or upstream_url,
             upstream_response.status_code,
             len(body_bytes),
             int((time.perf_counter() - started_at) * 1000),
@@ -5305,7 +5733,7 @@ def proxy_response(
         log_and_record_malformed_success(
             request_id=request_id,
             upstream_url=upstream_url,
-            route_hint=route_hint,
+            route_url=route_url,
             requested_stream=False,
             started_at=started_at,
             retry_count=retry_count,
@@ -5324,9 +5752,10 @@ def proxy_response(
     close_response_quietly(upstream_response)
     resume_clear_meta = clear_interruption_resume_records(execution) if upstream_response.status_code < 400 else {}
     proxy_logger.info(
-        "request_id=%s 上游=%s 状态=%s 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
+        "request_id=%s 上游=%s 线路=%s 状态=%s 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
         request_id,
         upstream_url,
+        str((execution or {}).get("route_url") or upstream_url),
         upstream_response.status_code,
         len(body),
         duration_ms,
@@ -5525,28 +5954,18 @@ def debug_pool_test():
                 "models_url": models_url,
                 "keys": [],
             }
-            if not keys:
-                route_entry["keys"].append(
-                    {
-                        "key_preview": "",
-                        "ok": False,
-                        "status_code": None,
-                        "latency_ms": 0,
-                        "message": "未配置 API Key",
-                    }
-                )
-                results.append(route_entry)
-                continue
-
-            for key in keys:
+            probe_keys = list(keys) if keys else [""]
+            for key in probe_keys:
                 started = time.perf_counter()
                 try:
+                    headers = {
+                        "Accept": "application/json",
+                    }
+                    if key:
+                        headers["Authorization"] = f"Bearer {key}"
                     response = session.get(
                         models_url,
-                        headers={
-                            "Authorization": f"Bearer {key}",
-                            "Accept": "application/json",
-                        },
+                        headers=headers,
                         timeout=timeout_seconds,
                     )
                     latency_ms = int((time.perf_counter() - started) * 1000)
@@ -5556,7 +5975,7 @@ def debug_pool_test():
                         summary_ok = True
                     route_entry["keys"].append(
                         {
-                            "key_preview": mask_secret(key),
+                            "key_preview": mask_secret(key) if key else "免 Key",
                             "ok": item_ok,
                             "status_code": response.status_code,
                             "latency_ms": latency_ms,
@@ -5567,7 +5986,7 @@ def debug_pool_test():
                     latency_ms = int((time.perf_counter() - started) * 1000)
                     route_entry["keys"].append(
                         {
-                            "key_preview": mask_secret(key),
+                            "key_preview": mask_secret(key) if key else "免 Key",
                             "ok": False,
                             "status_code": None,
                             "latency_ms": latency_ms,
@@ -6009,9 +6428,10 @@ def gemini_generate_content(subpath: str, request_payload: dict | None):
     duration_ms = int((time.perf_counter() - started_at) * 1000)
     response_preview = build_preview_summary(consumed["preview_parts"])
     proxy_logger.info(
-        "request_id=%s 上游=%s 状态=%s 协议=gemini_generate_content 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
+        "request_id=%s 上游=%s 线路=%s 状态=%s 协议=gemini_generate_content 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
         request_id,
         upstream_url,
+        str((execution or {}).get("route_url") or upstream_url),
         upstream_response.status_code,
         len(body),
         duration_ms,
@@ -6173,9 +6593,10 @@ def anthropic_messages():
         error_message = str(failure["message"])
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         proxy_logger.error(
-            "request_id=%s 上游=%s 状态=%s 协议=anthropic_messages 耗时毫秒=%s 重试次数=%s 错误=%s",
+            "request_id=%s 上游=%s 线路=%s 状态=%s 协议=anthropic_messages 耗时毫秒=%s 重试次数=%s 错误=%s",
             request_id,
             upstream_url,
+            str((execution or {}).get("route_url") or upstream_url),
             int(failure["status_code"]),
             int((time.perf_counter() - started_at) * 1000),
             retry_count,
@@ -6216,9 +6637,10 @@ def anthropic_messages():
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         duration_ms = int((time.perf_counter() - started_at) * 1000)
         proxy_logger.info(
-            "request_id=%s 上游=%s 状态=%s 协议=anthropic_messages 耗时毫秒=%s 重试次数=%s 预览=%s",
+            "request_id=%s 上游=%s 线路=%s 状态=%s 协议=anthropic_messages 耗时毫秒=%s 重试次数=%s 预览=%s",
             request_id,
             upstream_url,
+            str((execution or {}).get("route_url") or upstream_url),
             upstream_response.status_code,
             duration_ms,
             retry_count,
@@ -6331,9 +6753,10 @@ def anthropic_messages():
                     response_preview = build_preview_summary(consumed["preview_parts"])
                     close_response_quietly(upstream_response)
                     proxy_logger.info(
-                        "request_id=%s 上游=%s 状态=%s 协议=anthropic_messages 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
+                        "request_id=%s 上游=%s 线路=%s 状态=%s 协议=anthropic_messages 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
                         request_id,
                         str(next_execution.get("upstream_url") or upstream_url),
+                        str(next_execution.get("route_url") or next_execution.get("upstream_url") or upstream_url),
                         upstream_response.status_code,
                         len(body),
                         int((time.perf_counter() - started_at) * 1000),
@@ -6390,9 +6813,10 @@ def anthropic_messages():
                     response_preview = build_preview_summary(consumed["preview_parts"])
                     close_response_quietly(next_response)
                     proxy_logger.info(
-                        "request_id=%s 上游=%s 状态=%s 协议=anthropic_messages 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
+                        "request_id=%s 上游=%s 线路=%s 状态=%s 协议=anthropic_messages 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
                         request_id,
                         str(next_execution.get("upstream_url") or upstream_url),
+                        str(next_execution.get("route_url") or next_execution.get("upstream_url") or upstream_url),
                         next_response.status_code,
                         len(body),
                         int((time.perf_counter() - started_at) * 1000),
@@ -6434,7 +6858,7 @@ def anthropic_messages():
         log_and_record_malformed_success(
             request_id=request_id,
             upstream_url=upstream_url,
-            route_hint="anthropic_messages",
+            route_url=str((next_execution if 'next_execution' in locals() and isinstance(next_execution, dict) else execution or {}).get("route_url") or upstream_url),
             requested_stream=False,
             started_at=started_at,
             retry_count=retry_count,
@@ -6463,9 +6887,10 @@ def anthropic_messages():
     close_response_quietly(upstream_response)
     clear_interruption_resume_records(execution)
     proxy_logger.info(
-        "request_id=%s 上游=%s 状态=%s 协议=anthropic_messages 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
+        "request_id=%s 上游=%s 线路=%s 状态=%s 协议=anthropic_messages 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
         request_id,
         upstream_url,
+        str((execution or {}).get("route_url") or upstream_url),
         upstream_response.status_code,
         len(body),
         int((time.perf_counter() - started_at) * 1000),
@@ -6786,9 +7211,10 @@ def image_generation_proxy(subpath: str, request_payload: dict | None):
     duration_ms = int((time.perf_counter() - started_at) * 1000)
     image_count = len(response_payload.get("data") or response_payload.get("predictions") or [])
     proxy_logger.info(
-        "request_id=%s 上游=%s 状态=%s 协议=%s 上游协议=%s 字节=%s 耗时毫秒=%s 重试次数=%s 图片数=%s",
+        "request_id=%s 上游=%s 线路=%s 状态=%s 协议=%s 上游协议=%s 字节=%s 耗时毫秒=%s 重试次数=%s 图片数=%s",
         request_id,
         selected_upstream_url,
+        selected_route_url or selected_upstream_url,
         upstream_response.status_code,
         downstream_protocol,
         plan["provider"],
@@ -6857,7 +7283,7 @@ def openai_stream_response_with_connect_heartbeat(
                     route_hint=route_hint,
                     request_id=request_id,
                     upstream_url="",
-                    route_url="",
+                    route_url=last_attempt_route_url(execution) if isinstance(execution, dict) else "",
                     request_payload=request_payload,
                     execution={
                         "upstream_url_pool": execution.get("upstream_url_pool") if isinstance(execution, dict) else [],
@@ -6865,6 +7291,8 @@ def openai_stream_response_with_connect_heartbeat(
                         "request_context": execution.get("request_context") if isinstance(execution, dict) else None,
                         "request_exception": execution_error,
                         "attempts": execution.get("attempts") if isinstance(execution, dict) else [],
+                        "blocked_route_urls": collect_same_request_blocked_urls(execution) if isinstance(execution, dict) else [],
+                        "route_url": last_attempt_route_url(execution) if isinstance(execution, dict) else "",
                     } if isinstance(execution, dict) else {"request_exception": execution_error},
                     request_context=request_context or (execution.get("request_context") if isinstance(execution, dict) else None),
                     fallback_key="terminal_error_fallbacks",
@@ -7049,6 +7477,7 @@ def openai_stream_response_with_connect_heartbeat(
                     error="client_gone",
                     response_preview=waiting_preview,
                     client_gone=True,
+                    extra_meta=build_request_result_meta(execution),
                 )
                 recorded_waiting_finish = True
             raise
@@ -7071,6 +7500,7 @@ def openai_stream_response_with_connect_heartbeat(
                     stream=True,
                     error=str(exc),
                     response_preview=waiting_preview,
+                    extra_meta=build_request_result_meta(execution),
                 )
                 recorded_waiting_finish = True
             raise
@@ -7094,6 +7524,7 @@ def openai_stream_response_with_connect_heartbeat(
                     error=waiting_error,
                     response_preview=waiting_preview,
                     client_gone=waiting_error == "client_gone",
+                    extra_meta=build_request_result_meta(execution),
                 )
 
     return Response(
@@ -7254,9 +7685,10 @@ def handle_gemini_stream_response(
             elif not stream_error:
                 resume_meta = clear_interruption_resume_records(resume_execution)
             proxy_logger.info(
-                "request_id=%s 上游=%s 状态=%s 协议=gemini_generate_content 流式=true 客户端已断开=%s 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s 错误=%s",
+                "request_id=%s 上游=%s 线路=%s 状态=%s 协议=gemini_generate_content 流式=true 客户端已断开=%s 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s 错误=%s",
                 request_id,
                 upstream_url,
+                str((resume_execution or {}).get("route_url") or upstream_url),
                 upstream_response.status_code,
                 str(stream_client_gone).lower(),
                 total_bytes,
@@ -7278,7 +7710,7 @@ def handle_gemini_stream_response(
                 response_preview=response_preview if upstream_response.status_code >= 400 else None,
                 repaired_tool_args=repaired_tool_args,
                 client_gone=stream_client_gone,
-                extra_meta=(observability_meta or {}) | resume_meta,
+                extra_meta=build_request_result_meta(resume_execution) | (observability_meta or {}) | resume_meta,
             )
 
     return Response(
@@ -7346,7 +7778,7 @@ def handle_anthropic_stream_response(
             log_and_record_malformed_success(
                 request_id=request_id,
                 upstream_url=upstream_url,
-                route_hint="anthropic_messages",
+                route_url=str((observability_meta or {}).get("route_url") or upstream_url),
                 requested_stream=True,
                 started_at=started_at,
                 retry_count=retry_count,
@@ -7373,9 +7805,10 @@ def handle_anthropic_stream_response(
         close_response_quietly(upstream_response)
         resume_clear_meta = clear_interruption_resume_records((observability_meta or {}).get("_execution"))
         proxy_logger.info(
-            "request_id=%s 上游=%s 状态=%s 协议=anthropic_messages 流式=true 合成来源=%s 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
+            "request_id=%s 上游=%s 线路=%s 状态=%s 协议=anthropic_messages 流式=true 合成来源=%s 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
             request_id,
             upstream_url,
+            str((observability_meta or {}).get("route_url") or upstream_url),
             upstream_response.status_code,
             content_type or "unknown",
             total_bytes,
@@ -7523,7 +7956,7 @@ def handle_anthropic_stream_response(
                 log_and_record_malformed_success(
                     request_id=request_id,
                     upstream_url=upstream_url,
-                    route_hint="anthropic_messages",
+                    route_url=route_url,
                     requested_stream=True,
                     started_at=started_at,
                     retry_count=retry_count,
@@ -7578,7 +8011,10 @@ def handle_anthropic_stream_response(
                     input_tokens = coerce_non_negative_int(usage.get("prompt_tokens") or usage.get("input_tokens")) or input_tokens
                     output_tokens = coerce_non_negative_int(usage.get("completion_tokens") or usage.get("output_tokens")) or output_tokens
 
-                if not message_started and openai_stream_events_have_meaningful_output(response_events):
+                if not message_started and openai_stream_events_have_meaningful_output(
+                    response_events,
+                    include_reasoning=thinking_enabled,
+                ):
                     start_payload = {
                         "type": "message_start",
                         "message": {
@@ -7782,7 +8218,10 @@ def handle_anthropic_stream_response(
                     close_response_quietly(upstream_response)
                     break
 
-            if not openai_stream_events_have_meaningful_output(response_events):
+            if not openai_stream_events_have_meaningful_output(
+                response_events,
+                include_reasoning=thinking_enabled,
+            ):
                 issue = {
                     "code": "empty_sse_success",
                     "message": (
@@ -7855,7 +8294,7 @@ def handle_anthropic_stream_response(
                 log_and_record_malformed_success(
                     request_id=request_id,
                     upstream_url=upstream_url,
-                    route_hint="anthropic_messages",
+                    route_url=route_url,
                     requested_stream=True,
                     started_at=started_at,
                     retry_count=retry_count,
@@ -7995,9 +8434,10 @@ def handle_anthropic_stream_response(
                 resume_meta = clear_interruption_resume_records(resume_execution)
             if stream_client_gone:
                 proxy_logger.info(
-                    "request_id=%s 上游=%s 状态=%s 协议=anthropic_messages 流式=true 客户端已断开=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
+                    "request_id=%s 上游=%s 线路=%s 状态=%s 协议=anthropic_messages 流式=true 客户端已断开=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
                     request_id,
                     upstream_url,
+                    str((resume_execution or {}).get("route_url") or upstream_url),
                     upstream_response.status_code,
                     total_bytes,
                     duration_ms,
@@ -8008,9 +8448,10 @@ def handle_anthropic_stream_response(
                 )
             elif stream_error:
                 proxy_logger.error(
-                    "request_id=%s 上游=%s 状态=%s 协议=anthropic_messages 流式=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 错误=%s 预览=%s",
+                    "request_id=%s 上游=%s 线路=%s 状态=%s 协议=anthropic_messages 流式=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 错误=%s 预览=%s",
                     request_id,
                     upstream_url,
+                    str((resume_execution or {}).get("route_url") or upstream_url),
                     upstream_response.status_code,
                     total_bytes,
                     duration_ms,
@@ -8022,9 +8463,10 @@ def handle_anthropic_stream_response(
                 )
             else:
                 proxy_logger.info(
-                    "request_id=%s 上游=%s 状态=%s 协议=anthropic_messages 流式=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
+                    "request_id=%s 上游=%s 线路=%s 状态=%s 协议=anthropic_messages 流式=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
                     request_id,
                     upstream_url,
+                    str((resume_execution or {}).get("route_url") or upstream_url),
                     upstream_response.status_code,
                     total_bytes,
                     duration_ms,
@@ -8641,9 +9083,10 @@ def proxy_entrypoint(subpath: str):
         )
         error_message = str(failure["message"])
         proxy_logger.error(
-            "request_id=%s 上游=%s 错误=%s 耗时毫秒=%s 重试次数=%s",
+            "request_id=%s 上游=%s 线路=%s 错误=%s 耗时毫秒=%s 重试次数=%s",
             request_id,
             upstream_url,
+            str((execution or {}).get("route_url") or upstream_url),
             error_message,
             int((time.perf_counter() - started_at) * 1000),
             retry_count,

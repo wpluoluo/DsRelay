@@ -34,6 +34,31 @@ MODEL_UNAVAILABLE_UPSTREAM_ERROR_MARKERS = (
 )
 
 
+def should_apply_session_route_affinity(session_affinity_key: str | None, *, randomize_endpoints: bool) -> bool:
+    key = str(session_affinity_key or "").strip()
+    if not key:
+        return False
+    if key.startswith("session:v1:explicit:"):
+        return True
+    return not randomize_endpoints
+
+
+def is_explicit_session_route_affinity(session_affinity_key: str | None) -> bool:
+    key = str(session_affinity_key or "").strip()
+    return key.startswith("session:v1:explicit:")
+
+
+def classify_session_route_affinity(session_affinity_key: str | None) -> str:
+    key = str(session_affinity_key or "").strip()
+    if not key:
+        return "none"
+    if key.startswith("session:v1:explicit:"):
+        return "explicit"
+    if key.startswith("session:v1:fingerprint:"):
+        return "fingerprint"
+    return "other"
+
+
 def build_upstream_url_candidates(upstream_url_pool: list[str], upstream_url: str, subpath: str) -> list[str]:
     normalized_subpath = str(subpath or "").strip("/")
     deduped = []
@@ -148,6 +173,102 @@ def mark_route_failure(
             )
 
 
+def _build_ranked_route_groups(
+    active_urls: list[str],
+    *,
+    route_health: dict,
+    route_score_provider: Callable[[str], float] | None = None,
+) -> list[tuple[tuple[float, int, float], list[str]]]:
+    ranked_urls = []
+    for url in active_urls:
+        entry = route_health.setdefault(
+            url,
+            {
+                "consecutive_failures": 0,
+                "cooldown_until": 0.0,
+                "last_reason": "",
+                "last_failure_at": 0.0,
+            },
+        )
+        rank_key = (
+            -float(route_score_provider(url) if callable(route_score_provider) else 0.0),
+            int(entry.get("consecutive_failures", 0) or 0),
+            -float(entry.get("last_failure_at", 0.0) or 0.0),
+        )
+        ranked_urls.append((rank_key, url))
+
+    ranked_urls.sort(key=lambda item: item[0])
+    grouped_urls: list[tuple[tuple[float, int, float], list[str]]] = []
+    for rank_key, url in ranked_urls:
+        if grouped_urls and grouped_urls[-1][0] == rank_key:
+            grouped_urls[-1][1].append(url)
+        else:
+            grouped_urls.append((rank_key, [url]))
+    return grouped_urls
+
+
+def _extract_preferred_route(
+    ranked_groups: list[tuple[tuple[float, int, float], list[str]]],
+    preferred_url: str,
+) -> tuple[list[str], list[tuple[tuple[float, int, float], list[str]]]]:
+    if not preferred_url:
+        return [], [(rank_key, list(urls)) for rank_key, urls in ranked_groups]
+
+    head_urls: list[str] = []
+    remaining_groups: list[tuple[tuple[float, int, float], list[str]]] = []
+    for rank_key, urls in ranked_groups:
+        if preferred_url not in urls:
+            remaining_groups.append((rank_key, list(urls)))
+            continue
+        head_urls = [preferred_url]
+        tail_urls = [url for url in urls if url != preferred_url]
+        if tail_urls:
+            remaining_groups.append((rank_key, tail_urls))
+    return head_urls, remaining_groups
+
+
+def _rotate_route_group(
+    route_urls: list[str],
+    route_selection_state: dict,
+    *,
+    now: float,
+    randomize_endpoints: bool,
+) -> list[str]:
+    ordered = list(route_urls or [])
+    if len(ordered) <= 1:
+        return ordered
+
+    group_key = "route_group:" + "|".join(ordered)
+    cursor_entry = route_selection_state.get(group_key, {})
+    cursor_value = int(cursor_entry.get("cursor", 0) or 0) % len(ordered)
+    last_used_at = float(cursor_entry.get("last_used_at", 0.0) or 0.0)
+
+    if now - last_used_at > 300:
+        cursor_value = 0
+
+    if randomize_endpoints:
+        jitter_seed = int(now // 15)
+        jitter = (hash(f"{group_key}:{jitter_seed}") % len(ordered)) if len(ordered) > 1 else 0
+        cursor_value = (cursor_value + jitter) % len(ordered)
+
+    rotated = ordered[cursor_value:] + ordered[:cursor_value]
+    route_selection_state[group_key] = {
+        "cursor": (cursor_value + 1) % len(ordered),
+        "last_used_at": now,
+    }
+
+    if randomize_endpoints and len(rotated) > 1:
+        if len(rotated) == 2:
+            if random.random() < 0.5:
+                return [rotated[1], rotated[0]]
+            return rotated
+        head = rotated[:1]
+        tail = rotated[1:]
+        random.shuffle(tail)
+        return head + tail
+    return rotated
+
+
 def build_attempt_url_cycle(
     candidate_urls: list[str],
     blocked_urls: set[str],
@@ -171,71 +292,79 @@ def build_attempt_url_cycle(
 
     now = time.time()
     with state_lock:
-        ranked_urls = []
-        for url in active_urls:
-            entry = route_health.setdefault(
-                url,
-                {
-                    "consecutive_failures": 0,
-                    "cooldown_until": 0.0,
-                    "last_reason": "",
-                    "last_failure_at": 0.0,
-                },
-            )
-            ranked_urls.append(
-                (
-                    -float(route_score_provider(url) if callable(route_score_provider) else 0.0),
-                    int(entry.get("consecutive_failures", 0) or 0),
-                    -float(entry.get("last_failure_at", 0.0) or 0.0),
-                    url,
-                )
-            )
+        ranked_groups = _build_ranked_route_groups(
+            active_urls,
+            route_health=route_health,
+            route_score_provider=route_score_provider,
+        )
 
-        ranked_urls.sort()
-        ordered = [item[-1] for item in ranked_urls]
-
-        affinity_key = str(session_affinity_key or "").strip()
+        affinity_key = ""
+        if should_apply_session_route_affinity(
+            session_affinity_key,
+            randomize_endpoints=randomize_endpoints,
+        ):
+            affinity_key = str(session_affinity_key or "").strip()
+        preferred_url = ""
         if affinity_key:
             affinity_entry = route_selection_state.get(f"affinity:{affinity_key}", {})
             preferred_url = str(affinity_entry.get("route_url") or "")
-            if preferred_url in ordered:
-                ordered = [preferred_url] + [url for url in ordered if url != preferred_url]
 
-        group_key = "|".join(ordered)
-        cursor_entry = route_selection_state.get(group_key, {})
-        cursor_value = int(cursor_entry.get("cursor", 0) or 0) % len(ordered)
-        last_used_at = float(cursor_entry.get("last_used_at", 0.0) or 0.0)
+        head_urls, remaining_groups = _extract_preferred_route(ranked_groups, preferred_url)
+        rotated = list(head_urls)
+        for _, group_urls in remaining_groups:
+            rotated.extend(
+                _rotate_route_group(
+                    group_urls,
+                    route_selection_state,
+                    now=now,
+                    randomize_endpoints=randomize_endpoints,
+                )
+            )
 
-        # If route health changed materially, reset to the healthiest route first.
-        if now - last_used_at > 300:
-            cursor_value = 0
-
-        if randomize_endpoints:
-            jitter_seed = int(now // 15)
-            jitter = (hash(f"{group_key}:{jitter_seed}") % len(ordered)) if len(ordered) > 1 else 0
-            cursor_value = (cursor_value + jitter) % len(ordered)
-
-        rotated = ordered[cursor_value:] + ordered[:cursor_value]
-        route_selection_state[group_key] = {
-            "cursor": (cursor_value + 1) % len(ordered),
-            "last_used_at": now,
-        }
         if affinity_key and rotated:
             route_selection_state[f"affinity:{affinity_key}"] = {
                 "route_url": rotated[0],
                 "last_used_at": now,
             }
 
-    if randomize_endpoints and len(rotated) > 1:
-        if len(rotated) == 2:
-            if random.random() < 0.5:
-                return [rotated[1], rotated[0]]
-            return rotated
-        head = rotated[:1]
-        tail = rotated[1:]
-        random.shuffle(tail)
-        return head + tail
     return rotated
+
+
+def build_route_selection_debug(
+    candidate_urls: list[str],
+    blocked_urls: set[str],
+    *,
+    route_health: dict,
+    state_lock,
+    randomize_endpoints: bool,
+    session_affinity_key: str | None = None,
+) -> dict:
+    affinity_type = classify_session_route_affinity(session_affinity_key)
+    affinity_applied = should_apply_session_route_affinity(
+        session_affinity_key,
+        randomize_endpoints=randomize_endpoints,
+    )
+    cooldown_urls = []
+    for url in candidate_urls:
+        if is_route_in_cooldown(route_health, state_lock, url):
+            cooldown_urls.append(url)
+    reason = "health_priority"
+    if affinity_type == "explicit" and affinity_applied:
+        reason = "explicit_affinity"
+    elif affinity_type == "fingerprint" and randomize_endpoints:
+        reason = "randomized_ignore_fingerprint_affinity"
+    elif randomize_endpoints:
+        reason = "randomized_rotation"
+    return {
+        "session_affinity_type": affinity_type,
+        "session_affinity_applied": affinity_applied,
+        "session_affinity_key": str(session_affinity_key or ""),
+        "randomize_endpoints": bool(randomize_endpoints),
+        "rotation_reason": reason,
+        "blocked_urls": list(blocked_urls or []),
+        "cooldown_urls": cooldown_urls,
+        "candidate_urls": list(candidate_urls or []),
+    }
 
 
 def should_enforce_route_switch_window(candidate_urls: list[str], retry_allowed: bool) -> bool:
@@ -374,6 +503,7 @@ def build_model_candidate_order_for_route(
     *,
     route_url: str,
     model_candidates: list[str],
+    logical_model: str | None = None,
     request_kwargs: dict,
     request_id: str,
     get_cached_route_candidates: Callable[[str, str], list[str]],
@@ -391,7 +521,7 @@ def build_model_candidate_order_for_route(
             "discovered_count": 0,
         }
 
-    logical_model = model_candidates[0]
+    logical_model = str(logical_model or "").strip() or model_candidates[0]
     candidates = dedupe_model_candidates(model_candidates)
     alias_locked = _request_model_differs_from_candidate_set(request_kwargs, candidates)
     allowed_candidate_keys = {

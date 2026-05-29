@@ -77,6 +77,7 @@ class RequestCacheTests(unittest.TestCase):
                 "created_at": 1.0,
                 "source": "sqlite",
                 "upstream_url": "https://good.example/v1/chat/completions",
+                "route_url": "https://good.example/v1/chat/completions#__route=good",
                 "pool_name": "good",
                 "key_index": 1,
                 "model_name": "demo-model",
@@ -93,9 +94,9 @@ class RequestCacheTests(unittest.TestCase):
         )
 
         self.assertEqual(execution["upstream_url"], "https://good.example/v1/chat/completions")
-        self.assertEqual(execution["route_url"], "https://good.example/v1/chat/completions")
+        self.assertEqual(execution["route_url"], "https://good.example/v1/chat/completions#__route=good")
         self.assertEqual(execution["upstream_subpath"], "chat/completions")
-        self.assertEqual(execution["upstream_url_pool"], ["https://good.example/v1/chat/completions"])
+        self.assertEqual(execution["upstream_url_pool"], ["https://good.example/v1/chat/completions#__route=good"])
         self.assertEqual(execution["route_pool_size"], 1)
         self.assertEqual(execution["attempt_route_count"], 1)
 

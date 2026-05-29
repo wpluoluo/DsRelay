@@ -14,10 +14,12 @@ from local_proxy.upstream.models import (
 DEFAULT_MODEL_CAPABILITIES_TEXT = """
 # model=context_tokens,max_output_tokens
 # Prefer official provider docs or official Models APIs where available.
-deepseek-v4-flash=1048576,393216
-deepseek-v4-pro=1048576,393216
-deepseek-ai/deepseek-v4-flash=1048576,393216
-deepseek-ai/deepseek-v4-pro=1048576,393216
+opencode/deepseek-v4-flash-free=1048576,262144
+deepseek-v4-flash-free=1048576,262144
+deepseek-v4-flash=1048576,262144
+deepseek-v4-pro=1048576,262144
+deepseek-ai/deepseek-v4-flash=1048576,262144
+deepseek-ai/deepseek-v4-pro=1048576,262144
 gpt-5.5=1050000,128000
 gpt-5.4=1050000,128000
 gpt-5.4-mini=400000,128000
@@ -50,6 +52,25 @@ claude-haiku-4-5=200000,64000
 """.strip()
 
 
+DEFAULT_MODEL_CAPABILITY_HEADER_LINES = [
+    "# model=context_tokens,max_output_tokens",
+    "# Prefer official provider docs or official Models APIs where available.",
+]
+
+
+OFFICIAL_MODEL_CAPABILITY_OVERRIDES = {
+    normalize_key: {"context_tokens": 1048576, "max_output_tokens": 262144}
+    for normalize_key in (
+        "opencode/deepseek-v4-flash-free",
+        "deepseek-v4-flash-free",
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
+        "deepseek-ai/deepseek-v4-flash",
+        "deepseek-ai/deepseek-v4-pro",
+    )
+}
+
+
 OUTPUT_TOKEN_LIMIT_PATTERNS = (
     re.compile(
         r"supports\s+at\s+most\s+([0-9][0-9,._\s]*)\s+(?:completion|output)\s+tokens?",
@@ -63,10 +84,36 @@ OUTPUT_TOKEN_LIMIT_PATTERNS = (
 
 
 def normalize_model_capabilities_text(raw_capabilities: str | None) -> str:
-    raw_text = str(raw_capabilities or "").strip()
-    if not raw_text:
-        return DEFAULT_MODEL_CAPABILITIES_TEXT
-    return f"{DEFAULT_MODEL_CAPABILITIES_TEXT}\n{raw_text}".strip()
+    default_capabilities = parse_model_capabilities(DEFAULT_MODEL_CAPABILITIES_TEXT)
+    raw_capabilities_map = parse_model_capabilities(str(raw_capabilities or "").strip())
+    merged_capabilities = dict(default_capabilities)
+    for key, entry in raw_capabilities_map.items():
+        merged_capabilities[key] = dict(entry)
+    merged_capabilities = apply_official_model_capability_overrides(merged_capabilities)
+    lines = list(DEFAULT_MODEL_CAPABILITY_HEADER_LINES)
+    for entry in merged_capabilities.values():
+        model_name = str(entry.get("model") or "").strip()
+        if not model_name:
+            continue
+        context_tokens = _parse_int(entry.get("context_tokens")) or 0
+        max_output_tokens = _parse_int(entry.get("max_output_tokens")) or 0
+        lines.append(f"{model_name}={context_tokens},{max_output_tokens}")
+    return "\n".join(lines).strip()
+
+
+def apply_official_model_capability_overrides(capabilities: dict[str, dict] | None) -> dict[str, dict]:
+    overridden = {}
+    for key, entry in (capabilities or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        normalized_key = normalize_model_alias_key(key or entry.get("model"))
+        patched_entry = dict(entry)
+        override = OFFICIAL_MODEL_CAPABILITY_OVERRIDES.get(normalized_key)
+        if override:
+            patched_entry["context_tokens"] = override["context_tokens"]
+            patched_entry["max_output_tokens"] = override["max_output_tokens"]
+        overridden[normalized_key] = patched_entry
+    return overridden
 
 
 def _parse_int(value: Any) -> int | None:
@@ -181,7 +228,7 @@ def parse_model_capabilities(raw_capabilities: str | dict | None) -> dict[str, d
             "context_tokens": capability.get("context_tokens"),
             "max_output_tokens": capability.get("max_output_tokens"),
         }
-    return capabilities
+    return apply_official_model_capability_overrides(capabilities)
 
 
 def find_model_capability(model_name: str | None, capabilities: dict[str, dict]) -> dict | None:
