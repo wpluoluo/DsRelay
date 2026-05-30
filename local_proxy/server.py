@@ -1185,11 +1185,14 @@ def get_route_score(logical_model: str | None, route_url: str) -> float:
 
 
 ROUTE_PRIORITY_SCORE_MULTIPLIER = 1_000_000.0
+DEFAULT_ROUTE_PRIORITY = 100.0
+UNMATCHED_ROUTE_PRIORITY = DEFAULT_ROUTE_PRIORITY + 1_000.0
 
 
 def get_route_selection_score(logical_model: str | None, route_url: str) -> float:
-    priority = float(get_pool_priority_for_url(PROXY_POOLS, route_url, normalize_pool_url) or 0)
-    priority_bonus = priority * ROUTE_PRIORITY_SCORE_MULTIPLIER
+    priority = get_pool_priority_for_url(PROXY_POOLS, route_url, normalize_pool_url)
+    priority_value = float(priority if priority is not None and priority > 0 else UNMATCHED_ROUTE_PRIORITY)
+    priority_bonus = -priority_value * ROUTE_PRIORITY_SCORE_MULTIPLIER
     return priority_bonus + get_route_score(logical_model, route_url)
 
 
@@ -3498,6 +3501,7 @@ def build_pending_stream_request_meta(
         attempt_route_chain=" -> ".join(initial_urls),
         protocol=protocol,
         request_repairs=request_repairs,
+        extra_fields={"status_text": "等待首包"},
     )
 
 
@@ -7271,7 +7275,7 @@ def openai_stream_response_with_connect_heartbeat(
                 if ready:
                     break
                 proxy_logger.info(
-                    "request_id=%s 协议=openai_chat_completions 等待上游首包中 心跳已发送=true 已发送字节=%s",
+                    "request_id=%s 协议=openai_chat_completions 状态=等待首包 等待上游首包中 心跳已发送=true 已发送字节=%s",
                     request_id,
                     waiting_bytes + len(keepalive_payload),
                 )

@@ -71,6 +71,13 @@ def _set_authorization_header(request_kwargs: dict, api_key: str) -> None:
     request_kwargs["headers"] = headers
 
 
+def _clear_authorization_header(request_kwargs: dict) -> None:
+    headers = dict(request_kwargs.get("headers") or {})
+    headers.pop("Authorization", None)
+    headers.pop("authorization", None)
+    request_kwargs["headers"] = headers
+
+
 def _base_request_url(route_url: str) -> str:
     marker = "#__route="
     text = str(route_url or "").strip()
@@ -252,11 +259,11 @@ def request_upstream_with_retries(
                 cache_stat_bump("model_candidate_race_attempts")
                 race_key_choice = choose_api_key_for_url(attempt_url, exclude=route_key_failures.get(attempt_url, set()))
                 race_key = str(race_key_choice.get("key") or "")
+                race_request_kwargs = dict(request_kwargs)
                 if race_key:
-                    race_request_kwargs = dict(request_kwargs)
                     _set_authorization_header(race_request_kwargs, race_key)
                 else:
-                    race_request_kwargs = request_kwargs
+                    _clear_authorization_header(race_request_kwargs)
                 race_outcome = race_model_candidate_requests(
                     request_kwargs=race_request_kwargs,
                     route_url=request_url,
@@ -339,6 +346,8 @@ def request_upstream_with_retries(
             continue
         if attempt_key:
             _set_authorization_header(current_request_kwargs, attempt_key)
+        else:
+            _clear_authorization_header(current_request_kwargs)
         learned_request_repairs = apply_learned_completion_limit_to_request_kwargs(
             current_request_kwargs,
             logical_model=logical_model,

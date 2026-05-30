@@ -172,7 +172,7 @@ class PoolConfigTests(unittest.TestCase):
         self.assertEqual(state.get_api_keys_for_url("https://opencode.ai/zen/v1"), [])
         self.assertIsNone(state.choose_key("https://opencode.ai/zen/v1/chat/completions"))
 
-    def test_pool_state_keeps_same_url_pools_as_distinct_routes(self):
+    def test_pool_state_rebuild_orders_lower_priority_number_first(self):
         pools = normalize_proxy_pools(
             [
                 {
@@ -185,14 +185,14 @@ class PoolConfigTests(unittest.TestCase):
                 {
                     "name": "nv2",
                     "enabled": True,
-                    "priority": 99,
+                    "priority": 101,
                     "urls": ["https://integrate.api.nvidia.com/v1"],
                     "keys": [{"key": "nv-key-2"}],
                 },
                 {
                     "name": "nv3",
                     "enabled": True,
-                    "priority": 98,
+                    "priority": 102,
                     "urls": ["https://integrate.api.nvidia.com/v1"],
                     "keys": [{"key": "nv-key-3"}],
                 },
@@ -314,24 +314,24 @@ class PoolConfigTests(unittest.TestCase):
         self.assertEqual(pool["supported_models_text"], "")
         self.assertEqual(pool["model_aliases_text"], "")
 
-    def test_route_selection_score_prefers_pool_priority_over_learned_route_score(self):
-        high_priority_url = ConnectionPoolState.route_id_for("high-priority", "https://integrate.api.nvidia.com/v1", 1)
-        low_priority_url = ConnectionPoolState.route_id_for("low-priority", "https://integrate.api.nvidia.com/v1", 1)
+    def test_route_selection_score_prefers_lower_priority_number_over_learned_route_score(self):
+        priority_100_url = ConnectionPoolState.route_id_for("priority-100", "https://opencode.ai/zen/v1", 1)
+        priority_103_url = ConnectionPoolState.route_id_for("priority-103", "https://integrate.api.nvidia.com/v1", 1)
         pools = normalize_proxy_pools(
             [
                 {
-                    "name": "high-priority",
+                    "name": "priority-100",
+                    "enabled": True,
+                    "priority": 100,
+                    "urls": ["https://opencode.ai/zen/v1"],
+                    "keys": [],
+                },
+                {
+                    "name": "priority-103",
                     "enabled": True,
                     "priority": 103,
                     "urls": ["https://integrate.api.nvidia.com/v1"],
-                    "keys": [{"key": "high-key"}],
-                },
-                {
-                    "name": "low-priority",
-                    "enabled": True,
-                    "priority": 100,
-                    "urls": ["https://integrate.api.nvidia.com/v1"],
-                    "keys": [{"key": "low-key"}],
+                    "keys": [{"key": "nv-key"}],
                 },
             ]
         )
@@ -339,7 +339,7 @@ class PoolConfigTests(unittest.TestCase):
         cache_payload = {
             "routes": {
                 normalize_model_alias_key("demo-model"): {
-                    high_priority_url: {
+                    priority_100_url: {
                         "demo-model": {
                             "model": "demo-model",
                             "score": 0.0,
@@ -350,7 +350,7 @@ class PoolConfigTests(unittest.TestCase):
                             "last_success_at": 0.0,
                         }
                     },
-                    low_priority_url: {
+                    priority_103_url: {
                         "demo-model": {
                             "model": "demo-model",
                             "score": 500.0,
@@ -367,8 +367,8 @@ class PoolConfigTests(unittest.TestCase):
 
         with patch.object(server_module, "PROXY_POOLS", pools), patch.dict(server_module.model_route_cache, cache_payload, clear=True):
             self.assertGreater(
-                server_module.get_route_selection_score("demo-model", high_priority_url),
-                server_module.get_route_selection_score("demo-model", low_priority_url),
+                server_module.get_route_selection_score("demo-model", priority_100_url),
+                server_module.get_route_selection_score("demo-model", priority_103_url),
             )
 
     def test_get_pool_priority_for_route_url_with_subpath_keeps_route_identity(self):

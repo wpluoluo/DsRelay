@@ -136,9 +136,15 @@ class RequestRecorder:
 
     def snapshot(self) -> dict:
         with self.lock:
+            active_requests = []
+            for item in self.active_requests.values():
+                active_item = dict(item)
+                active_item["active"] = True
+                active_item.setdefault("status_text", "处理中")
+                active_requests.append(active_item)
             return {
                 "stats": dict(self.request_stats),
-                "active_requests": list(self.active_requests.values()),
+                "active_requests": active_requests,
                 "recent_requests": list(self.recent_requests),
             }
 

@@ -181,7 +181,7 @@ class ConnectionPoolState:
 
         ordered_pools = sorted(
             enumerate(normalized),
-            key=lambda item: (-int(item[1].get("priority", 100) or 100), item[0]),
+            key=lambda item: (int(item[1].get("priority", 100) or 100), item[0]),
         )
 
         for _, pool in ordered_pools:
