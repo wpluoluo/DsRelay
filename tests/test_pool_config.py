@@ -98,6 +98,10 @@ class PoolConfigTests(unittest.TestCase):
                         "route_cooldown_seconds": 45,
                         "route_cooldown_multiplier": 1.5,
                         "route_cooldown_max_seconds": 300,
+                        "rate_limit_retry_attempts": 3,
+                        "rate_limit_backoff_initial_ms": 1000,
+                        "rate_limit_backoff_multiplier": 2,
+                        "rate_limit_backoff_max_ms": 4000,
                     },
                 }
             ]
@@ -122,6 +126,10 @@ class PoolConfigTests(unittest.TestCase):
         self.assertEqual(pools[0]["route_policy"]["route_cooldown_seconds"], 45)
         self.assertEqual(pools[0]["route_policy"]["route_cooldown_multiplier"], 1.5)
         self.assertEqual(pools[0]["route_policy"]["route_cooldown_max_seconds"], 300)
+        self.assertEqual(pools[0]["route_policy"]["rate_limit_retry_attempts"], 3)
+        self.assertEqual(pools[0]["route_policy"]["rate_limit_backoff_initial_ms"], 1000)
+        self.assertEqual(pools[0]["route_policy"]["rate_limit_backoff_multiplier"], 2)
+        self.assertEqual(pools[0]["route_policy"]["rate_limit_backoff_max_ms"], 4000)
         self.assertNotIn("compression_mode", pools[0]["route_policy"])
         self.assertNotIn("max_history_messages", pools[0]["route_policy"])
         self.assertNotIn("max_tool_chars", pools[0]["route_policy"])

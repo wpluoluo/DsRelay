@@ -196,6 +196,10 @@ def _route_policy_snapshot(route_url: object, *, build_route_policy, route_switc
         "route_cooldown_max_seconds": configured_cooldown_max,
         "effective_route_cooldown_seconds": effective_cooldown,
         "effective_route_cooldown_max_seconds": effective_cooldown_max,
+        "rate_limit_retry_attempts": int(policy.get("rate_limit_retry_attempts") or 0),
+        "rate_limit_backoff_initial_ms": int(policy.get("rate_limit_backoff_initial_ms") or 0),
+        "rate_limit_backoff_multiplier": float(policy.get("rate_limit_backoff_multiplier") or 0.0),
+        "rate_limit_backoff_max_ms": int(policy.get("rate_limit_backoff_max_ms") or 0),
     }
 
 

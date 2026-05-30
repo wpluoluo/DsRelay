@@ -62,6 +62,10 @@ class DashboardStateTests(unittest.TestCase):
                     "route_cooldown_seconds": 5,
                     "route_cooldown_multiplier": 2,
                     "route_cooldown_max_seconds": 10,
+                    "rate_limit_retry_attempts": 3,
+                    "rate_limit_backoff_initial_ms": 1000,
+                    "rate_limit_backoff_multiplier": 2,
+                    "rate_limit_backoff_max_ms": 4000,
                 },
                 "http_pool_connections": 64,
                 "http_pool_maxsize": 128,
@@ -82,6 +86,10 @@ class DashboardStateTests(unittest.TestCase):
         self.assertEqual(route_policy["route_cooldown_seconds"], 5)
         self.assertEqual(route_policy["effective_route_cooldown_seconds"], 10)
         self.assertEqual(route_policy["route_cooldown_max_seconds"], 10)
+        self.assertEqual(route_policy["rate_limit_retry_attempts"], 3)
+        self.assertEqual(route_policy["rate_limit_backoff_initial_ms"], 1000)
+        self.assertEqual(route_policy["rate_limit_backoff_multiplier"], 2)
+        self.assertEqual(route_policy["rate_limit_backoff_max_ms"], 4000)
 
     def test_recent_requests_are_tagged_against_current_routes(self):
         state = build_dashboard_state(

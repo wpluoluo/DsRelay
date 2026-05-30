@@ -2471,6 +2471,10 @@
           route_cooldown_seconds: Number(routePolicy.route_cooldown_seconds || 90),
           route_cooldown_multiplier: Number(routePolicy.route_cooldown_multiplier || 2),
           route_cooldown_max_seconds: Number(routePolicy.route_cooldown_max_seconds || 900),
+          rate_limit_retry_attempts: Number(routePolicy.rate_limit_retry_attempts || 0),
+          rate_limit_backoff_initial_ms: Number(routePolicy.rate_limit_backoff_initial_ms || 1000),
+          rate_limit_backoff_multiplier: Number(routePolicy.rate_limit_backoff_multiplier || 2),
+          rate_limit_backoff_max_ms: Number(routePolicy.rate_limit_backoff_max_ms || 4000),
         },
       };
     }
@@ -2605,7 +2609,8 @@
           "思考 " + pool.route_policy.reasoning_effort +
           " · " + getTextProtocolSummary(pool.route_policy) +
           " · 本地缓存 " + pool.route_policy.prompt_cache_mode +
-          " · 冷却 " + pool.route_policy.route_cooldown_seconds + "s x" + pool.route_policy.route_cooldown_multiplier
+          " · 冷却 " + pool.route_policy.route_cooldown_seconds + "s x" + pool.route_policy.route_cooldown_multiplier +
+          " · 429退避 " + pool.route_policy.rate_limit_retry_attempts + "次 " + pool.route_policy.rate_limit_backoff_initial_ms + "ms x" + pool.route_policy.rate_limit_backoff_multiplier
         ) + '</div>';
         html += '</div>';
         html += '<div class="pool-inline-block"><label>支持模型</label>';
@@ -2685,6 +2690,10 @@
       html += '<div class="field"><label>基础冷却秒数</label><input type="number" value="' + escapeAttr(pool.route_policy.route_cooldown_seconds) + '" min="1" max="86400" step="1" data-field="route_cooldown_seconds"></div>';
       html += '<div class="field"><label>冷却指数</label><input type="number" value="' + escapeAttr(pool.route_policy.route_cooldown_multiplier) + '" min="1" max="8" step="0.1" data-field="route_cooldown_multiplier"></div>';
       html += '<div class="field"><label>最大冷却秒数</label><input type="number" value="' + escapeAttr(pool.route_policy.route_cooldown_max_seconds) + '" min="1" max="604800" step="1" data-field="route_cooldown_max_seconds"></div>';
+      html += '<div class="field"><label>429重试次数</label><input type="number" value="' + escapeAttr(pool.route_policy.rate_limit_retry_attempts) + '" min="0" max="20" step="1" data-field="rate_limit_retry_attempts"><div class="pool-inline-note">收到 429 后先在本线路等待重试；填 0 表示直接按原策略切线路。</div></div>';
+      html += '<div class="field"><label>429初始退避毫秒</label><input type="number" value="' + escapeAttr(pool.route_policy.rate_limit_backoff_initial_ms) + '" min="0" max="3600000" step="100" data-field="rate_limit_backoff_initial_ms"></div>';
+      html += '<div class="field"><label>429退避倍率</label><input type="number" value="' + escapeAttr(pool.route_policy.rate_limit_backoff_multiplier) + '" min="1" max="16" step="0.1" data-field="rate_limit_backoff_multiplier"></div>';
+      html += '<div class="field"><label>429最大退避毫秒</label><input type="number" value="' + escapeAttr(pool.route_policy.rate_limit_backoff_max_ms) + '" min="0" max="3600000" step="100" data-field="rate_limit_backoff_max_ms"></div>';
       html += '</div></div>';
       poolEditorBody.innerHTML = html;
     }
@@ -2710,6 +2719,10 @@
       var routeCooldownSecondsEl = root.querySelector('[data-field="route_cooldown_seconds"]');
       var routeCooldownMultiplierEl = root.querySelector('[data-field="route_cooldown_multiplier"]');
       var routeCooldownMaxSecondsEl = root.querySelector('[data-field="route_cooldown_max_seconds"]');
+      var rateLimitRetryAttemptsEl = root.querySelector('[data-field="rate_limit_retry_attempts"]');
+      var rateLimitBackoffInitialMsEl = root.querySelector('[data-field="rate_limit_backoff_initial_ms"]');
+      var rateLimitBackoffMultiplierEl = root.querySelector('[data-field="rate_limit_backoff_multiplier"]');
+      var rateLimitBackoffMaxMsEl = root.querySelector('[data-field="rate_limit_backoff_max_ms"]');
       var urlInputs = root.querySelectorAll('[data-field="url"]');
       var keyInputs = root.querySelectorAll('[data-field="key"]');
       var urls = [];
@@ -2747,6 +2760,10 @@
           route_cooldown_seconds: Number(routeCooldownSecondsEl ? routeCooldownSecondsEl.value : 90) || 90,
           route_cooldown_multiplier: Number(routeCooldownMultiplierEl ? routeCooldownMultiplierEl.value : 2) || 2,
           route_cooldown_max_seconds: Number(routeCooldownMaxSecondsEl ? routeCooldownMaxSecondsEl.value : 900) || 900,
+          rate_limit_retry_attempts: Number(rateLimitRetryAttemptsEl ? rateLimitRetryAttemptsEl.value : 0) || 0,
+          rate_limit_backoff_initial_ms: Number(rateLimitBackoffInitialMsEl ? rateLimitBackoffInitialMsEl.value : 1000) || 0,
+          rate_limit_backoff_multiplier: Number(rateLimitBackoffMultiplierEl ? rateLimitBackoffMultiplierEl.value : 2) || 2,
+          rate_limit_backoff_max_ms: Number(rateLimitBackoffMaxMsEl ? rateLimitBackoffMaxMsEl.value : 4000) || 0,
         }
       };
     }

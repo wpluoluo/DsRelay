@@ -2880,6 +2880,32 @@ def compute_retry_delay_ms(attempt_number: int, response: requests.Response | No
     return min(delay, UPSTREAM_RETRY_MAX_BACKOFF_MS)
 
 
+def get_rate_limit_retry_attempts(route_url: str) -> int:
+    route_policy = build_route_policy(route_url)
+    return max(0, int(route_policy.get("rate_limit_retry_attempts") or 0))
+
+
+def compute_rate_limit_retry_delay_ms(
+    route_url: str,
+    retry_index: int,
+    response: requests.Response | None = None,
+) -> int:
+    route_policy = build_route_policy(route_url)
+    if response is not None:
+        retry_after = response.headers.get("Retry-After")
+        if retry_after and retry_after.isdigit():
+            retry_after_ms = int(retry_after) * 1000
+            policy_max = int(route_policy.get("rate_limit_backoff_max_ms") or retry_after_ms)
+            return min(retry_after_ms, max(0, policy_max))
+    initial_ms = max(0, int(route_policy.get("rate_limit_backoff_initial_ms") or 0))
+    if retry_index <= 0 or initial_ms <= 0:
+        return 0
+    multiplier = max(1.0, float(route_policy.get("rate_limit_backoff_multiplier") or 1.0))
+    max_ms = max(initial_ms, int(route_policy.get("rate_limit_backoff_max_ms") or initial_ms))
+    delay = int(initial_ms * (multiplier ** (retry_index - 1)))
+    return min(delay, max_ms)
+
+
 def build_upstream_url_candidates(subpath: str) -> list[str]:
     return router_build_upstream_url_candidates(UPSTREAM_URL_POOL, UPSTREAM_URL, subpath)
 
@@ -3142,6 +3168,8 @@ def request_upstream_with_retries(
         model_candidate_race_timeout_seconds=MODEL_CANDIDATE_RACE_TIMEOUT_SECONDS,
         enable_model_candidate_race=ENABLE_MODEL_CANDIDATE_RACE,
         request_sender=_node_aware_request,
+        get_rate_limit_retry_attempts=get_rate_limit_retry_attempts,
+        compute_rate_limit_retry_delay_ms=compute_rate_limit_retry_delay_ms,
     )
 
 

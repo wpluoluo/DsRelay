@@ -21,6 +21,10 @@ DEFAULT_ROUTE_POLICY = {
     "route_cooldown_seconds": 90,
     "route_cooldown_multiplier": 2,
     "route_cooldown_max_seconds": 900,
+    "rate_limit_retry_attempts": 0,
+    "rate_limit_backoff_initial_ms": 1000,
+    "rate_limit_backoff_multiplier": 2,
+    "rate_limit_backoff_max_ms": 4000,
 }
 
 
@@ -135,6 +139,32 @@ def normalize_route_policy(raw_policy: object) -> dict:
         )
         if policy["route_cooldown_max_seconds"] < policy["route_cooldown_seconds"]:
             policy["route_cooldown_max_seconds"] = int(policy["route_cooldown_seconds"])
+        policy["rate_limit_retry_attempts"] = normalize_positive_int(
+            raw_policy.get("rate_limit_retry_attempts", policy["rate_limit_retry_attempts"]),
+            int(policy["rate_limit_retry_attempts"]),
+            minimum=0,
+            maximum=20,
+        )
+        policy["rate_limit_backoff_initial_ms"] = normalize_positive_int(
+            raw_policy.get("rate_limit_backoff_initial_ms", policy["rate_limit_backoff_initial_ms"]),
+            int(policy["rate_limit_backoff_initial_ms"]),
+            minimum=0,
+            maximum=3600000,
+        )
+        policy["rate_limit_backoff_multiplier"] = normalize_positive_float(
+            raw_policy.get("rate_limit_backoff_multiplier", policy["rate_limit_backoff_multiplier"]),
+            float(policy["rate_limit_backoff_multiplier"]),
+            minimum=1.0,
+            maximum=16.0,
+        )
+        policy["rate_limit_backoff_max_ms"] = normalize_positive_int(
+            raw_policy.get("rate_limit_backoff_max_ms", policy["rate_limit_backoff_max_ms"]),
+            int(policy["rate_limit_backoff_max_ms"]),
+            minimum=0,
+            maximum=3600000,
+        )
+        if policy["rate_limit_backoff_max_ms"] < policy["rate_limit_backoff_initial_ms"]:
+            policy["rate_limit_backoff_max_ms"] = int(policy["rate_limit_backoff_initial_ms"])
     return policy
 
 

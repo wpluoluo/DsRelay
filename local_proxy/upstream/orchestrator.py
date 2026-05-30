@@ -127,6 +127,8 @@ def request_upstream_with_retries(
     enable_model_candidate_race: bool,
     request_sender: Any,
     initial_blocked_urls: set[str] | None = None,
+    get_rate_limit_retry_attempts: Callable[[str], int] | None = None,
+    compute_rate_limit_retry_delay_ms: Callable[[str, int, requests.Response | None], int] | None = None,
 ) -> tuple[requests.Response | None, list[dict], Exception | None]:
     request_kwargs = dict(request_kwargs or {})
     request_kwargs.pop("meta", None)
@@ -165,6 +167,7 @@ def request_upstream_with_retries(
     )
     immediate_followup_available = False
     immediate_followup_consumed = False
+    route_rate_limit_retries: dict[str, int] = {}
 
     for attempt_number in range(1, max_attempts + 1):
         if attempt_number > 1 and enforce_route_window and remaining_retry_window_ms(deadline_monotonic) <= 0:
@@ -573,6 +576,48 @@ def request_upstream_with_retries(
             if learned_context_limit and learned_context_limit > 0:
                 attempts[-1]["learned_context_tokens"] = learned_context_limit
                 attempts[-1]["learned_input_tokens"] = learned_input_tokens
+
+        if response.status_code == 429 and retry_allowed and len(attempts) < max_attempts:
+            max_rate_limit_retries = 0
+            if callable(get_rate_limit_retry_attempts):
+                try:
+                    max_rate_limit_retries = int(get_rate_limit_retry_attempts(attempt_url) or 0)
+                except Exception:
+                    max_rate_limit_retries = 0
+            attempted_rate_limit_retries = int(route_rate_limit_retries.get(attempt_url, 0) or 0)
+            if attempted_rate_limit_retries < max_rate_limit_retries:
+                retry_index = attempted_rate_limit_retries + 1
+                delay_ms = 0
+                if callable(compute_rate_limit_retry_delay_ms):
+                    try:
+                        delay_ms = int(compute_rate_limit_retry_delay_ms(attempt_url, retry_index, response) or 0)
+                    except Exception:
+                        delay_ms = 0
+                if enforce_route_window:
+                    delay_ms = min(delay_ms, remaining_retry_window_ms(deadline_monotonic))
+                attempts[-1]["action"] = "retry_rate_limit"
+                attempts[-1]["rate_limit_retry"] = retry_index
+                attempts[-1]["rate_limit_retry_max"] = max_rate_limit_retries
+                attempts[-1]["rate_limit_retry_delay_ms"] = delay_ms
+                logger.warning(
+                    "request_id=%s 429退避重试 次数=%s 线路=%s 状态=%s 延迟毫秒=%s 退避序号=%s/%s",
+                    request_id,
+                    current_attempt_number,
+                    attempt_url,
+                    response.status_code,
+                    delay_ms,
+                    retry_index,
+                    max_rate_limit_retries,
+                )
+                response.close()
+                if delay_ms <= 0:
+                    return response, attempts, None
+                route_rate_limit_retries[attempt_url] = retry_index
+                if not immediate_followup_consumed:
+                    immediate_followup_available = True
+                time.sleep(delay_ms / 1000)
+                route_cycle.insert(0, attempt_url)
+                continue
 
         current_failed_keys = route_key_failures.setdefault(attempt_url, set())
         if (
