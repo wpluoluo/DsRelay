@@ -112,6 +112,22 @@ class ProxyStorage:
                 )
                 cur.execute(
                     """
+                    CREATE TABLE IF NOT EXISTS tool_result_cache (
+                        cache_key VARCHAR(512) PRIMARY KEY,
+                        protocol VARCHAR(64) NOT NULL,
+                        tool_name VARCHAR(128) NOT NULL,
+                        arguments_json MEDIUMTEXT NOT NULL,
+                        result_json MEDIUMTEXT NOT NULL,
+                        meta_json MEDIUMTEXT NOT NULL,
+                        expires_at DOUBLE NOT NULL,
+                        updated_at DOUBLE NOT NULL,
+                        INDEX idx_tool_result_cache_expires_at (expires_at),
+                        INDEX idx_tool_result_cache_tool_name (tool_name)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    """
+                )
+                cur.execute(
+                    """
                     CREATE TABLE IF NOT EXISTS interrupted_responses (
                         resume_key VARCHAR(256) PRIMARY KEY,
                         protocol VARCHAR(32) NOT NULL,
@@ -490,6 +506,96 @@ class ProxyStorage:
         try:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM request_cache")
+            conn.commit()
+        finally:
+            conn.close()
+
+    def load_tool_result_cache_many(self, cache_keys: list[str]) -> dict:
+        keys = [str(item or "") for item in (cache_keys or []) if str(item or "")]
+        if not keys:
+            return {}
+        now = time.time()
+        placeholders = ",".join(["%s"] * len(keys))
+        conn = self._connect()
+        rows = []
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM tool_result_cache WHERE expires_at <= %s", (now,))
+                cur.execute(
+                    f"""
+                    SELECT cache_key, result_json, meta_json
+                    FROM tool_result_cache
+                    WHERE expires_at > %s AND cache_key IN ({placeholders})
+                    """,
+                    tuple([now] + keys),
+                )
+                rows = cur.fetchall()
+            conn.commit()
+        finally:
+            conn.close()
+        results = {}
+        for row in rows:
+            try:
+                result_payload = json.loads(row[1])
+                meta_payload = json.loads(row[2])
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(result_payload, dict) or not isinstance(meta_payload, dict):
+                continue
+            payload = dict(meta_payload)
+            payload["result_message"] = result_payload
+            results[str(row[0])] = payload
+        return results
+
+    def save_tool_result_cache(self, payloads: list[dict]) -> int:
+        valid_payloads = []
+        for payload in payloads or []:
+            if not isinstance(payload, dict):
+                continue
+            cache_key = str(payload.get("cache_key") or "")
+            result_message = payload.get("result_message")
+            if not cache_key or not isinstance(result_message, dict):
+                continue
+            valid_payloads.append(payload)
+        if not valid_payloads:
+            return 0
+        now = time.time()
+        conn = self._connect()
+        saved = 0
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM tool_result_cache WHERE expires_at <= %s", (now,))
+                for payload in valid_payloads:
+                    meta_payload = dict(payload)
+                    result_message = meta_payload.pop("result_message", None)
+                    cur.execute(
+                        """
+                        REPLACE INTO tool_result_cache
+                        (cache_key, protocol, tool_name, arguments_json, result_json, meta_json, expires_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            str(payload.get("cache_key") or ""),
+                            str(payload.get("protocol") or ""),
+                            str(payload.get("tool_name") or ""),
+                            json.dumps(payload.get("arguments", {}), ensure_ascii=False, separators=(",", ":")),
+                            json.dumps(result_message, ensure_ascii=False, separators=(",", ":")),
+                            json.dumps(meta_payload, ensure_ascii=False, separators=(",", ":")),
+                            float(payload.get("expires_at", now) or now),
+                            now,
+                        ),
+                    )
+                    saved += 1
+            conn.commit()
+        finally:
+            conn.close()
+        return saved
+
+    def clear_tool_result_cache(self) -> None:
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM tool_result_cache")
             conn.commit()
         finally:
             conn.close()

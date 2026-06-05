@@ -761,6 +761,20 @@ def canonicalize_name(name: str | None) -> str:
     return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
+def normalize_schema_field_names(value) -> list[str]:
+    if isinstance(value, dict):
+        iterable = value.keys()
+    elif isinstance(value, (list, tuple, set)):
+        iterable = value
+    else:
+        return []
+    names = []
+    for item in iterable:
+        if isinstance(item, str) and item.strip():
+            names.append(item)
+    return list(dict.fromkeys(names))
+
+
 def is_bash_like_tool_name(tool_name: str | None) -> bool:
     bash_like_canonicals = {
         canonicalize_name(item)
@@ -894,7 +908,7 @@ def looks_like_textual_tool_payload(tool_name: str | None, payload_text: str, to
     resolved_tool_name = resolve_tool_name(tool_name, tool_schemas) or tool_name or ""
     tool_canonical = canonicalize_name(resolved_tool_name)
     schema = tool_schemas.get(resolved_tool_name, {})
-    required = list(schema.get("required") or [])
+    required = normalize_schema_field_names(schema.get("required"))
 
     if is_bash_like_tool_name(resolved_tool_name):
         return any(token in stripped for token in (" ", "/", "\\", ":", "-", "|", "&", ";", "=", ">", "<", ".")) or len(stripped) <= 64
@@ -1084,7 +1098,7 @@ def extract_plain_text_tool_calls_from_text(text: str, tool_schemas: dict) -> tu
             continue
 
         schema = tool_schemas.get(resolve_tool_name(tool_name, tool_schemas) or tool_name or "", {})
-        if is_effectively_empty_tool_payload(payload_text or "") and list(schema.get("required") or []):
+        if is_effectively_empty_tool_payload(payload_text or "") and normalize_schema_field_names(schema.get("required")):
             repaired += 1
             index = consume_until + 1
             continue
@@ -1235,8 +1249,8 @@ def extract_tool_schemas(request_payload: dict | None) -> dict:
             continue
 
         schemas[tool_name] = {
-            "required": list(parameters.get("required") or []),
-            "properties": list((parameters.get("properties") or {}).keys()),
+            "required": normalize_schema_field_names(parameters.get("required")),
+            "properties": normalize_schema_field_names(parameters.get("properties")),
             "additional_properties": parameters.get("additionalProperties"),
             "property_types": {
                 key: (value or {}).get("type")
@@ -1249,8 +1263,13 @@ def extract_tool_schemas(request_payload: dict | None) -> dict:
         matched_name = resolve_tool_name(tool_name, schemas) if schemas else None
         if matched_name and matched_name in schemas:
             merged = dict(schemas[matched_name])
-            merged["required_any"] = list(schema.get("required_any") or [])
-            merged["properties"] = list(dict.fromkeys(list(merged.get("properties") or []) + list(schema.get("properties") or [])))
+            merged["required_any"] = [
+                normalize_schema_field_names(group) or ([group] if isinstance(group, str) and group.strip() else [])
+                for group in (schema.get("required_any") or [])
+            ]
+            merged["properties"] = normalize_schema_field_names(
+                normalize_schema_field_names(merged.get("properties")) + normalize_schema_field_names(schema.get("properties"))
+            )
             merged["property_types"] = {
                 **dict(schema.get("property_types") or {}),
                 **dict(merged.get("property_types") or {}),
@@ -1354,7 +1373,7 @@ def inject_proxy_system_prompt(messages) -> tuple[list, int]:
 
 def apply_common_field_aliases(normalized: dict, properties: list, required: list) -> bool:
     modified = False
-    schema_fields = set(properties) | set(required)
+    schema_fields = set(normalize_schema_field_names(properties)) | set(normalize_schema_field_names(required))
 
     for field_name in list(schema_fields):
         if field_name in normalized:
@@ -1389,7 +1408,7 @@ def apply_common_field_aliases(normalized: dict, properties: list, required: lis
 
 
 def drop_alias_keys_outside_schema(normalized: dict, properties: list, required: list) -> bool:
-    schema_fields = set(properties) | set(required)
+    schema_fields = set(normalize_schema_field_names(properties)) | set(normalize_schema_field_names(required))
     if not schema_fields:
         return False
 
@@ -1424,7 +1443,7 @@ def drop_alias_keys_outside_schema(normalized: dict, properties: list, required:
 
 def drop_unexpected_keys_by_schema(normalized: dict, tool_name: str | None, tool_schemas: dict) -> bool:
     schema = tool_schemas.get(tool_name or "", {})
-    schema_fields = set(schema.get("properties") or []) | set(schema.get("required") or [])
+    schema_fields = set(normalize_schema_field_names(schema.get("properties"))) | set(normalize_schema_field_names(schema.get("required")))
     if not schema_fields:
         return False
 
@@ -1456,7 +1475,7 @@ def unwrap_nested_arguments_container(payload, tool_name: str | None, tool_schem
         if key not in container_keys
     }
     schema = tool_schemas.get(tool_name or "", {})
-    schema_fields = set(schema.get("properties") or []) | set(schema.get("required") or [])
+    schema_fields = set(normalize_schema_field_names(schema.get("properties"))) | set(normalize_schema_field_names(schema.get("required")))
 
     for container_key in container_keys:
         if container_key not in payload:
@@ -1728,7 +1747,7 @@ def field_is_run_in_background(field_name: str | None) -> bool:
 
 
 def schema_supports_run_in_background(schema: dict) -> str | None:
-    schema_fields = list(schema.get("required") or []) + list(schema.get("properties") or [])
+    schema_fields = normalize_schema_field_names(schema.get("required")) + normalize_schema_field_names(schema.get("properties"))
     for field_name in schema_fields:
         if field_is_run_in_background(field_name):
             return field_name
@@ -1839,7 +1858,7 @@ def coerce_payload_values_by_schema(normalized: dict, tool_name: str | None, too
 
 def fill_missing_required_fields(tool_name: str | None, normalized: dict, tool_schemas: dict) -> bool:
     schema = tool_schemas.get(tool_name or "", {})
-    required = list(schema.get("required") or [])
+    required = normalize_schema_field_names(schema.get("required"))
     property_types = dict(schema.get("property_types") or {})
     modified = ensure_run_in_background_argument(tool_name, normalized, tool_schemas)
 
@@ -1929,7 +1948,7 @@ def is_search_like_tool(tool_name: str | None, tool_schemas: dict) -> bool:
     schema = tool_schemas.get(resolved_name, {})
     schema_fields = {
         canonicalize_name(field_name)
-        for field_name in list(schema.get("properties") or []) + list(schema.get("required") or [])
+        for field_name in normalize_schema_field_names(schema.get("properties")) + normalize_schema_field_names(schema.get("required"))
     }
     tool_canonical = canonicalize_name(resolved_name)
     return bool(schema_fields & SEARCH_INPUT_FIELD_CANONICALS) or any(
@@ -1944,8 +1963,11 @@ def tool_requires_arguments_before_stream_header(tool_name: str | None, tool_sch
         return True
 
     schema = tool_schemas.get(resolved_name, {})
-    required = list(schema.get("required") or [])
-    required_any = list(schema.get("required_any") or [])
+    required = normalize_schema_field_names(schema.get("required"))
+    required_any = [
+        normalize_schema_field_names(group) or ([group] if isinstance(group, str) and group.strip() else [])
+        for group in (schema.get("required_any") or [])
+    ]
 
     def field_requires_input(field_name: str | None) -> bool:
         if not field_name:
@@ -1985,7 +2007,8 @@ def infer_tool_name_from_payload(tool_name: str | None, payload, tool_schemas: d
             return None
         bash_candidates = []
         for schema_name, schema in tool_schemas.items():
-            schema_fields = list(dict.fromkeys(list(schema.get("required") or []) + list(schema.get("properties") or [])))
+            schema_fields = normalize_schema_field_names(schema.get("required")) + normalize_schema_field_names(schema.get("properties"))
+            schema_fields = list(dict.fromkeys(schema_fields))
             if not schema_fields:
                 continue
             accepted = set()
@@ -2008,8 +2031,8 @@ def infer_tool_name_from_payload(tool_name: str | None, payload, tool_schemas: d
 
     ranked_candidates = []
     for schema_name, schema in tool_schemas.items():
-        required = list(schema.get("required") or [])
-        schema_fields = list(dict.fromkeys(required + list(schema.get("properties") or [])))
+        required = normalize_schema_field_names(schema.get("required"))
+        schema_fields = list(dict.fromkeys(required + normalize_schema_field_names(schema.get("properties"))))
         if not schema_fields:
             continue
 
@@ -2066,8 +2089,11 @@ def required_field_has_meaningful_value(field_type: str | None, value) -> bool:
 def tool_call_lacks_required_input_signal(tool_name: str | None, payload, tool_schemas: dict) -> bool:
     resolved_name = resolve_tool_name(tool_name, tool_schemas) or tool_name or ""
     schema = tool_schemas.get(resolved_name, {})
-    required = list(schema.get("required") or [])
-    required_any = list(schema.get("required_any") or [])
+    required = normalize_schema_field_names(schema.get("required"))
+    required_any = [
+        normalize_schema_field_names(group) or ([group] if isinstance(group, str) and group.strip() else [])
+        for group in (schema.get("required_any") or [])
+    ]
     property_types = dict(schema.get("property_types") or {})
     payload_object = parse_tool_arguments_object(payload)
 
@@ -2261,7 +2287,7 @@ def is_edit_like_tool(tool_name: str | None, tool_schemas: dict) -> bool:
     schema = tool_schemas.get(resolved_name, {})
     schema_fields = {
         canonicalize_name(field_name)
-        for field_name in list(schema.get("properties") or []) + list(schema.get("required") or [])
+        for field_name in normalize_schema_field_names(schema.get("properties")) + normalize_schema_field_names(schema.get("required"))
     }
     has_path_field = bool(schema_fields & EDIT_PATH_FIELD_CANONICALS)
     has_old_field = bool(schema_fields & EDIT_OLD_FIELD_CANONICALS)
@@ -2315,8 +2341,8 @@ def normalize_tool_arguments_payload(tool_name: str | None, payload, tool_schema
     modified = False
     resolved_name = resolve_tool_name(tool_name, tool_schemas) or tool_name
     schema = tool_schemas.get(resolved_name or "", {})
-    required = list(schema.get("required") or [])
-    properties = list(schema.get("properties") or [])
+    required = normalize_schema_field_names(schema.get("required"))
+    properties = normalize_schema_field_names(schema.get("properties"))
     bash_like = is_bash_like_tool_name(resolved_name)
     search_like = is_search_like_tool(resolved_name, tool_schemas)
 

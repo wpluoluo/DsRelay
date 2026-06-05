@@ -1,4 +1,5 @@
 import unittest
+import unittest.mock
 
 from local_proxy.runtime.request_cache import (
     build_cache_key,
@@ -867,6 +868,157 @@ class RequestCacheTests(unittest.TestCase):
             int(after.get("prompt_cache_writes") or 0),
             int(before.get("prompt_cache_writes") or 0) + 1,
         )
+
+    def test_observe_tool_result_cache_saves_read_only_tool_result(self):
+        class FakeStorage:
+            def __init__(self):
+                self.saved = []
+                self.cleared = False
+
+            def save_tool_result_cache(self, payloads):
+                self.saved = list(payloads)
+                return len(self.saved)
+
+            def clear_tool_result_cache(self):
+                self.cleared = True
+
+        fake_storage = FakeStorage()
+        original_storage = server.storage
+        try:
+            server.storage = fake_storage
+            meta = server.observe_tool_result_cache_from_request(
+                request_payload={
+                    "messages": [
+                        {"role": "user", "content": "read file"},
+                        {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {"name": "Read", "arguments": "{\"path\":\"README.md\"}"},
+                                }
+                            ],
+                        },
+                        {"role": "tool", "tool_call_id": "call_1", "content": "hello"},
+                    ]
+                },
+                protocol="openai_chat_completions",
+            )
+        finally:
+            server.storage = original_storage
+
+        self.assertFalse(fake_storage.cleared)
+        self.assertEqual(meta["tool_result_cache_writes"], 1)
+        self.assertEqual(fake_storage.saved[0]["tool_name"], "Read")
+        self.assertEqual(fake_storage.saved[0]["arguments"], {"path": "README.md"})
+        self.assertEqual(fake_storage.saved[0]["result_message"]["content"], "hello")
+
+    def test_observe_tool_result_cache_invalidates_on_mutating_tool_result(self):
+        class FakeStorage:
+            def __init__(self):
+                self.saved = []
+                self.cleared = False
+
+            def save_tool_result_cache(self, payloads):
+                self.saved = list(payloads)
+                return len(self.saved)
+
+            def clear_tool_result_cache(self):
+                self.cleared = True
+
+        fake_storage = FakeStorage()
+        original_storage = server.storage
+        try:
+            server.storage = fake_storage
+            meta = server.observe_tool_result_cache_from_request(
+                request_payload={
+                    "messages": [
+                        {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {"name": "Edit", "arguments": "{\"path\":\"README.md\"}"},
+                                }
+                            ],
+                        },
+                        {"role": "tool", "tool_call_id": "call_1", "content": "done"},
+                    ]
+                },
+                protocol="openai_chat_completions",
+            )
+        finally:
+            server.storage = original_storage
+
+        self.assertTrue(fake_storage.cleared)
+        self.assertEqual(meta["tool_result_cache_invalidations"], 1)
+        self.assertEqual(fake_storage.saved, [])
+
+    def test_continue_with_cached_tool_results_appends_tool_messages_and_retries(self):
+        class FakeStorage:
+            def load_tool_result_cache_many(self, cache_keys):
+                self.cache_keys = list(cache_keys)
+                return {
+                    cache_keys[0]: {
+                        "result_message": {
+                            "role": "tool",
+                            "tool_call_id": "old_call",
+                            "content": "cached file",
+                        }
+                    }
+                }
+
+        response_body = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call_new",
+                                "type": "function",
+                                "function": {"name": "Read", "arguments": "{\"path\":\"README.md\"}"},
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+        original_storage = server.storage
+        try:
+            server.storage = FakeStorage()
+            with unittest.mock.patch.object(
+                server,
+                "execute_upstream_request",
+                return_value={"upstream_response": object(), "attempts": [], "retry_count": 0},
+            ) as execute_mock:
+                next_execution = server.continue_with_cached_tool_results_once(
+                    route_hint="chat/completions",
+                    request_id="req-tool-cache",
+                    upstream_url="https://example.test/v1/chat/completions",
+                    request_payload={
+                        "model": "demo",
+                        "messages": [{"role": "user", "content": "read README"}],
+                        "stream": True,
+                    },
+                    execution={"tool_schemas": {}},
+                    response_body=response_body,
+                    protocol="openai_chat_completions",
+                )
+        finally:
+            server.storage = original_storage
+
+        self.assertIsNotNone(next_execution)
+        continued_payload = execute_mock.call_args.args[1]
+        self.assertFalse(continued_payload["stream"])
+        self.assertEqual(continued_payload["messages"][-1]["role"], "tool")
+        self.assertEqual(continued_payload["messages"][-1]["tool_call_id"], "call_new")
+        self.assertEqual(continued_payload["messages"][-1]["content"], "cached file")
+        self.assertEqual(next_execution["tool_result_cache_status"], "hit")
 
 
 if __name__ == "__main__":

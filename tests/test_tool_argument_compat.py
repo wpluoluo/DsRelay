@@ -687,6 +687,52 @@ class ToolArgumentCompatTests(unittest.TestCase):
         self.assertEqual(terminal_event["choices"][0]["finish_reason"], "stop")
         self.assertNotIn("tool_calls", json.dumps(terminal_event))
 
+    def test_malformed_schema_field_names_do_not_break_stream_tool_normalization(self):
+        malformed_schemas = {
+            "Grep": {
+                "required": [["pattern"], {"name": "path"}, "pattern"],
+                "properties": ["pattern", ["path"], {"name": "output_mode"}],
+                "additional_properties": False,
+                "property_types": {"pattern": "string", "path": "string"},
+            }
+        }
+        chunk = {
+            "id": "chatcmpl-malformed-schema",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "demo",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_grep",
+                                "type": "function",
+                                "function": {
+                                    "name": "Grep",
+                                    "arguments": "{\"pattern\":\"foo\",\"path\":\"README.md\"}",
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        }
+
+        normalized_line, _, repairs, event = normalize_sse_line(
+            "data: " + json.dumps(chunk),
+            {},
+            malformed_schemas,
+        )
+
+        self.assertIsNotNone(normalized_line)
+        self.assertGreaterEqual(repairs, 0)
+        tool_call = event["choices"][0]["delta"]["tool_calls"][0]
+        self.assertEqual(tool_call["function"]["name"], "Grep")
+
 
 if __name__ == "__main__":
     unittest.main()

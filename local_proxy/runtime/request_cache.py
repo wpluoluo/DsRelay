@@ -6,6 +6,7 @@ import time
 from copy import deepcopy
 
 from local_proxy.compat.tools import (
+    normalize_tool_call_list,
     normalize_openai_tool_choice,
     normalize_openai_tool_definition,
     openai_tool_sort_key,
@@ -13,6 +14,7 @@ from local_proxy.compat.tools import (
 
 
 DEFAULT_REQUEST_CACHE_TTL_SECONDS = 900
+DEFAULT_TOOL_RESULT_CACHE_TTL_SECONDS = 900
 
 READ_ONLY_TOOL_NAME_KEYWORDS = (
     "read",
@@ -68,6 +70,49 @@ def canonicalize_tool_name(tool_name: str | None) -> str:
     return "".join(ch.lower() for ch in str(tool_name or "") if ch.isalnum())
 
 
+def parse_tool_arguments(arguments):
+    if isinstance(arguments, str):
+        stripped = arguments.strip()
+        if stripped.startswith("{") or stripped.startswith("["):
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError:
+                return arguments
+    return arguments
+
+
+def build_tool_result_cache_key(*, protocol: str, tool_name: str, arguments) -> str:
+    base = "|".join(
+        [
+            "tool_result",
+            str(protocol or "").strip().lower(),
+            canonicalize_tool_name(tool_name),
+            canonical_json(parse_tool_arguments(arguments)),
+        ]
+    )
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()
+
+
+def get_tool_call_name_and_arguments(tool_call: dict | None) -> tuple[str, object]:
+    if not isinstance(tool_call, dict):
+        return "", {}
+    function_data = tool_call.get("function") if isinstance(tool_call.get("function"), dict) else {}
+    tool_name = str(
+        function_data.get("name")
+        or tool_call.get("name")
+        or tool_call.get("tool_name")
+        or ""
+    ).strip()
+    arguments = function_data.get("arguments")
+    if arguments is None:
+        arguments = tool_call.get("arguments")
+    if arguments is None:
+        arguments = tool_call.get("input")
+    if arguments is None:
+        arguments = {}
+    return tool_name, parse_tool_arguments(arguments)
+
+
 def get_tool_name(tool: dict | None) -> str:
     if not isinstance(tool, dict):
         return ""
@@ -117,6 +162,141 @@ def response_tool_call_names(response_body: dict | None) -> list[str]:
             if name:
                 names.append(name)
     return names
+
+
+def response_tool_call_entries(response_body: dict | None, tool_schemas: dict | None = None) -> list[dict]:
+    if not isinstance(response_body, dict):
+        return []
+    entries: list[dict] = []
+    for choice in response_body.get("choices") or []:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message") or {}
+        if not isinstance(message, dict):
+            continue
+        tool_calls = message.get("tool_calls") or []
+        normalized_calls, _ = normalize_tool_call_list(tool_calls, tool_schemas or {})
+        if not isinstance(normalized_calls, list):
+            continue
+        for tool_call in normalized_calls:
+            if not isinstance(tool_call, dict):
+                continue
+            tool_name, arguments = get_tool_call_name_and_arguments(tool_call)
+            if not tool_name:
+                continue
+            entries.append(
+                {
+                    "id": str(tool_call.get("id") or ""),
+                    "tool_name": tool_name,
+                    "arguments": arguments,
+                    "tool_call": deepcopy(tool_call),
+                }
+            )
+    return entries
+
+
+def extract_tool_result_cache_updates(
+    *,
+    request_payload: dict | None,
+    protocol: str,
+    tool_schemas: dict | None = None,
+    ttl_seconds: int = DEFAULT_TOOL_RESULT_CACHE_TTL_SECONDS,
+) -> dict:
+    if not isinstance(request_payload, dict):
+        return {"writes": [], "invalidate": False, "mutating_tools": []}
+    messages = request_payload.get("messages")
+    if not isinstance(messages, list):
+        return {"writes": [], "invalidate": False, "mutating_tools": []}
+
+    known_calls: dict[str, dict] = {}
+    writes: list[dict] = []
+    mutating_tools: list[str] = []
+    now = time.time()
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        if message.get("role") == "assistant" and isinstance(message.get("tool_calls"), list):
+            normalized_calls, _ = normalize_tool_call_list(message.get("tool_calls") or [], tool_schemas or {})
+            if isinstance(normalized_calls, list):
+                for tool_call in normalized_calls:
+                    if not isinstance(tool_call, dict):
+                        continue
+                    tool_call_id = str(tool_call.get("id") or "").strip()
+                    if not tool_call_id:
+                        continue
+                    tool_name, arguments = get_tool_call_name_and_arguments(tool_call)
+                    if tool_name:
+                        known_calls[tool_call_id] = {
+                            "tool_name": tool_name,
+                            "arguments": arguments,
+                        }
+            continue
+        if message.get("role") != "tool":
+            continue
+        tool_call_id = str(message.get("tool_call_id") or "").strip()
+        call = known_calls.get(tool_call_id)
+        if not isinstance(call, dict):
+            continue
+        tool_name = str(call.get("tool_name") or "")
+        if not is_read_only_tool_name(tool_name):
+            mutating_tools.append(tool_name)
+            continue
+        result_message = {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": deepcopy(message.get("content", "")),
+        }
+        if message.get("name"):
+            result_message["name"] = str(message.get("name") or "")
+        arguments = deepcopy(call.get("arguments", {}))
+        writes.append(
+            {
+                "cache_key": build_tool_result_cache_key(
+                    protocol=protocol,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                ),
+                "protocol": str(protocol or ""),
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "result_message": result_message,
+                "created_at": now,
+                "expires_at": now + max(60, int(ttl_seconds or DEFAULT_TOOL_RESULT_CACHE_TTL_SECONDS)),
+            }
+        )
+    return {
+        "writes": writes,
+        "invalidate": bool(mutating_tools),
+        "mutating_tools": mutating_tools,
+    }
+
+
+def build_cached_tool_result_messages(
+    *,
+    response_body: dict | None,
+    cached_results: dict[str, dict],
+    protocol: str,
+    tool_schemas: dict | None = None,
+) -> list[dict]:
+    messages: list[dict] = []
+    for entry in response_tool_call_entries(response_body, tool_schemas=tool_schemas):
+        tool_call_id = str(entry.get("id") or "").strip()
+        tool_name = str(entry.get("tool_name") or "")
+        if not tool_call_id or not is_read_only_tool_name(tool_name):
+            return []
+        cache_key = build_tool_result_cache_key(
+            protocol=protocol,
+            tool_name=tool_name,
+            arguments=entry.get("arguments", {}),
+        )
+        cached = cached_results.get(cache_key) if isinstance(cached_results, dict) else None
+        if not isinstance(cached, dict) or not isinstance(cached.get("result_message"), dict):
+            return []
+        result_message = deepcopy(cached["result_message"])
+        result_message["tool_call_id"] = tool_call_id
+        result_message["role"] = "tool"
+        messages.append(result_message)
+    return messages
 
 
 def response_tool_calls_are_read_only(response_body: dict | None) -> bool:

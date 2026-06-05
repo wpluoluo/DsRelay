@@ -131,6 +131,7 @@ from local_proxy.runtime.policies import (
 )
 from local_proxy.runtime.request_cache import (
     DEFAULT_REQUEST_CACHE_TTL_SECONDS,
+    DEFAULT_TOOL_RESULT_CACHE_TTL_SECONDS,
     build_cache_key,
     build_coalescing_key,
     build_cache_record,
@@ -142,6 +143,7 @@ from local_proxy.runtime.request_cache import (
     response_tool_calls_are_read_only,
     response_tool_call_names,
 )
+from local_proxy.runtime import tool_result_cache as tool_result_cache_runtime
 from local_proxy.storage import ProxyStorage
 from local_proxy.upstream.capabilities import (
     DEFAULT_MODEL_CAPABILITIES_TEXT,
@@ -756,6 +758,10 @@ STORAGE_DB_LABEL = (
     else "none"
 )
 REQUEST_CACHE_TTL_SECONDS = max(60, int(os.getenv("REQUEST_CACHE_TTL_SECONDS", str(DEFAULT_REQUEST_CACHE_TTL_SECONDS))))
+TOOL_RESULT_CACHE_TTL_SECONDS = max(
+    60,
+    int(os.getenv("TOOL_RESULT_CACHE_TTL_SECONDS", str(DEFAULT_TOOL_RESULT_CACHE_TTL_SECONDS))),
+)
 ENABLE_INTERRUPTION_RESUME = os.getenv("ENABLE_INTERRUPTION_RESUME", "1") == "1"
 INTERRUPTION_RESUME_TTL_SECONDS = max(60, int(os.getenv("INTERRUPTION_RESUME_TTL_SECONDS", "3600")))
 INTERRUPTION_RESUME_MAX_CHARS = max(500, int(os.getenv("INTERRUPTION_RESUME_MAX_CHARS", "12000")))
@@ -872,6 +878,10 @@ cache_stats = CounterStore(
         "prompt_cache_hits": 0,
         "prompt_cache_misses": 0,
         "prompt_cache_writes": 0,
+        "tool_result_cache_hits": 0,
+        "tool_result_cache_misses": 0,
+        "tool_result_cache_writes": 0,
+        "tool_result_cache_invalidations": 0,
         "interruption_resume_injected": 0,
         "interruption_resume_saved": 0,
         "interruption_resume_cleared": 0,
@@ -2580,6 +2590,12 @@ def execute_upstream_request(
         )
         request_repairs += resume_repairs
     capability_overflow = check_payload_against_model_capability(upstream_payload)
+    tool_schemas = extract_tool_schemas(upstream_payload if isinstance(upstream_payload, dict) else request_payload)
+    tool_result_cache_meta = observe_tool_result_cache_from_request(
+        request_payload=upstream_payload if isinstance(upstream_payload, dict) else request_payload,
+        protocol=request_protocol,
+        tool_schemas=tool_schemas,
+    )
     if isinstance(capability_overflow, dict):
         logical_model_name = ""
         if isinstance(upstream_payload, dict):
@@ -2602,6 +2618,7 @@ def execute_upstream_request(
             "route_policy": route_policy,
             "route_policy_metrics": route_policy_metrics,
             "interruption_resume": resume_metrics,
+            "tool_result_cache": tool_result_cache_meta,
             "request_context": request_context,
             "cache_payload": cache_payload,
             "coalescing_key": coalescing_key,
@@ -2615,7 +2632,6 @@ def execute_upstream_request(
             ),
             "forced_error_status": 400,
         }
-    tool_schemas = extract_tool_schemas(upstream_payload if isinstance(upstream_payload, dict) else request_payload)
 
     inflight_entry = None
     is_inflight_owner = True
@@ -2748,6 +2764,7 @@ def execute_upstream_request(
             "route_policy": route_policy,
             "route_policy_metrics": route_policy_metrics,
             "interruption_resume": resume_metrics,
+            "tool_result_cache": tool_result_cache_meta,
             "request_context": request_context,
             "cache_hit": False,
             "cache_key": cache_key,
@@ -3511,6 +3528,7 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
     route_policy = execution.get("route_policy") if isinstance(execution.get("route_policy"), dict) else {}
     route_policy_metrics = execution.get("route_policy_metrics") if isinstance(execution.get("route_policy_metrics"), dict) else {}
     resume_metrics = execution.get("interruption_resume") if isinstance(execution.get("interruption_resume"), dict) else {}
+    tool_result_cache_metrics = execution.get("tool_result_cache") if isinstance(execution.get("tool_result_cache"), dict) else {}
     prompt_cache_hints_mode = str(route_policy_metrics.get("prompt_cache_hints_mode") or "")
     prompt_cache_provider = str(route_policy_metrics.get("prompt_cache_provider") or "")
     cache_status = "miss"
@@ -3586,6 +3604,11 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
         "local_response_cache_hit": cache_hit,
         "local_response_cache_status": cache_status,
         "local_response_cache_note": cache_note,
+        "tool_result_cache_status": str(execution.get("tool_result_cache_status") or ""),
+        "tool_result_cache_note": str(execution.get("tool_result_cache_note") or ""),
+        "tool_result_cache_hits": int(execution.get("tool_result_cache_hits") or 0),
+        "tool_result_cache_writes": int(tool_result_cache_metrics.get("tool_result_cache_writes") or 0),
+        "tool_result_cache_invalidations": int(tool_result_cache_metrics.get("tool_result_cache_invalidations") or 0),
         "resume_enabled": bool(resume_metrics.get("resume_enabled", ENABLE_INTERRUPTION_RESUME)),
         "resume_key_source": str(resume_metrics.get("resume_key_source") or ""),
         "resume_injected": bool(resume_metrics.get("resume_injected")),
@@ -3764,6 +3787,66 @@ def save_request_cache_entry(
         bump_cache_stat("prompt_cache_writes")
     except Exception as exc:  # pragma: no cover
         proxy_logger.warning("save_request_cache_failed key=%s error=%s", str(execution.get("cache_key") or "")[:12], str(exc))
+
+
+def observe_tool_result_cache_from_request(
+    *,
+    request_payload: dict | None,
+    protocol: str,
+    tool_schemas: dict | None = None,
+) -> dict:
+    return tool_result_cache_runtime.observe_tool_result_cache_from_request(
+        storage=storage,
+        request_payload=request_payload,
+        protocol=protocol,
+        tool_schemas=tool_schemas or {},
+        ttl_seconds=TOOL_RESULT_CACHE_TTL_SECONDS,
+        bump_cache_stat=bump_cache_stat,
+        logger=proxy_logger,
+    )
+
+
+def load_cached_tool_results_for_response(
+    *,
+    response_body: dict | None,
+    protocol: str,
+    tool_schemas: dict | None = None,
+) -> dict:
+    return tool_result_cache_runtime.load_cached_tool_results_for_response(
+        storage=storage,
+        response_body=response_body,
+        protocol=protocol,
+        tool_schemas=tool_schemas or {},
+        logger=proxy_logger,
+    )
+
+
+def continue_with_cached_tool_results_once(
+    *,
+    route_hint: str,
+    request_id: str,
+    upstream_url: str,
+    request_payload: dict | None,
+    execution: dict | None,
+    response_body: dict | None,
+    protocol: str | None,
+    request_context: dict | None = None,
+) -> dict | None:
+    return tool_result_cache_runtime.continue_with_cached_tool_results_once(
+        storage=storage,
+        route_hint=route_hint,
+        request_id=request_id,
+        upstream_url=upstream_url,
+        request_payload=request_payload,
+        execution=execution,
+        response_body=response_body,
+        protocol=protocol,
+        request_context=request_context,
+        execute_upstream_request=execute_upstream_request,
+        carry_same_request_execution_history=carry_same_request_execution_history,
+        bump_cache_stat=bump_cache_stat,
+        logger=proxy_logger,
+    )
 
 
 def record_request_started(request_id: str, request_meta: dict) -> None:
@@ -5880,6 +5963,39 @@ def proxy_response(
             )
             response_headers["Content-Type"] = "application/json; charset=utf-8"
             return Response(body, status=502, headers=response_headers)
+        cached_tool_execution = continue_with_cached_tool_results_once(
+            route_hint=route_hint,
+            request_id=request_id,
+            upstream_url=upstream_url,
+            request_payload=request_payload,
+            execution=execution,
+            response_body=aggregated_body,
+            protocol=protocol or "openai_chat_completions",
+            request_context=request_context,
+        )
+        cached_tool_response = (
+            cached_tool_execution.get("upstream_response") if isinstance(cached_tool_execution, dict) else None
+        )
+        if cached_tool_response is not None:
+            close_response_quietly(upstream_response)
+            return proxy_response(
+                cached_tool_response,
+                sanitize_dsml=sanitize_dsml,
+                request_id=request_id,
+                upstream_url=str(cached_tool_execution.get("upstream_url") or upstream_url),
+                started_at=started_at,
+                requested_stream=False,
+                route_hint=route_hint,
+                tool_schemas=(
+                    cached_tool_execution.get("tool_schemas")
+                    if isinstance(cached_tool_execution.get("tool_schemas"), dict)
+                    else tool_schemas
+                ),
+                retry_count=int(cached_tool_execution.get("retry_count") or retry_count),
+                protocol=protocol,
+                request_payload=request_payload,
+                execution=cached_tool_execution,
+            )
         ensure_openai_response_usage(aggregated_body, request_payload)
         attach_execution_response_body(execution, aggregated_body)
         downstream_body = (
@@ -5987,6 +6103,44 @@ def proxy_response(
         )
         response_headers["Content-Type"] = "application/json; charset=utf-8"
         return Response(malformed_body, status=502, headers=response_headers)
+
+    if isinstance(json_body, dict) and upstream_response.status_code < 400 and (route_hint == "chat/completions" or responses_compat):
+        replay_body = json_body
+        if responses_compat and isinstance(execution, dict) and isinstance(execution.get("response_body"), dict):
+            replay_body = execution["response_body"]
+        cached_tool_execution = continue_with_cached_tool_results_once(
+            route_hint=route_hint,
+            request_id=request_id,
+            upstream_url=upstream_url,
+            request_payload=request_payload,
+            execution=execution,
+            response_body=replay_body,
+            protocol=protocol or "openai_chat_completions",
+            request_context=request_context,
+        )
+        cached_tool_response = (
+            cached_tool_execution.get("upstream_response") if isinstance(cached_tool_execution, dict) else None
+        )
+        if cached_tool_response is not None:
+            close_response_quietly(upstream_response)
+            return proxy_response(
+                cached_tool_response,
+                sanitize_dsml=sanitize_dsml,
+                request_id=request_id,
+                upstream_url=str(cached_tool_execution.get("upstream_url") or upstream_url),
+                started_at=started_at,
+                requested_stream=False,
+                route_hint=route_hint,
+                tool_schemas=(
+                    cached_tool_execution.get("tool_schemas")
+                    if isinstance(cached_tool_execution.get("tool_schemas"), dict)
+                    else tool_schemas
+                ),
+                retry_count=int(cached_tool_execution.get("retry_count") or retry_count),
+                protocol=protocol,
+                request_payload=request_payload,
+                execution=cached_tool_execution,
+            )
 
     duration_ms = int((time.perf_counter() - started_at) * 1000)
     response_preview = None
