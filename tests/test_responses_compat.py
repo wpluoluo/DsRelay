@@ -382,6 +382,60 @@ class ResponsesCompatTests(unittest.TestCase):
             ],
         )
 
+    def test_execute_upstream_request_rejects_model_not_supported_by_explicit_pools(self):
+        original_pools = server.PROXY_POOLS
+        original_upstream_pool = server.UPSTREAM_URL_POOL
+        called = {"value": False}
+        try:
+            server.PROXY_POOLS = [
+                {
+                    "name": "nv",
+                    "enabled": True,
+                    "priority": 100,
+                    "urls": ["https://integrate.api.nvidia.com/v1"],
+                    "keys": [{"key": "nv-key"}],
+                    "supported_models_text": "deepseek-ai/deepseek-v4-flash\ndeepseek-ai/deepseek-v4-pro",
+                    "model_aliases_text": "deepseek-v4-flash=deepseek-ai/deepseek-v4-flash",
+                    "route_policy": {"text_upstream_protocol": "auto"},
+                },
+                {
+                    "name": "opencode-ai",
+                    "enabled": True,
+                    "priority": 90,
+                    "urls": ["https://opencode.ai/zen/v1"],
+                    "keys": [],
+                    "supported_models_text": "deepseek-v4-flash-free",
+                    "model_aliases_text": "opencode/deepseek-v4-flash-free=deepseek-v4-flash-free",
+                    "route_policy": {"text_upstream_protocol": "auto"},
+                },
+            ]
+            server.UPSTREAM_URL_POOL = [
+                server.ConnectionPoolState.route_id_for("nv", "https://integrate.api.nvidia.com/v1", 1),
+                server.ConnectionPoolState.route_id_for("opencode-ai", "https://opencode.ai/zen/v1", 1),
+            ]
+
+            def fake_request_upstream_with_retries(request_kwargs, **kwargs):
+                called["value"] = True
+                return None, [], None
+
+            payload = {
+                "model": "gpt-5.4",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": False,
+            }
+            with server.app.test_request_context("/v1/chat/completions", method="POST", json=payload):
+                with patch.object(server, "request_upstream_with_retries", side_effect=fake_request_upstream_with_retries):
+                    result = server.execute_upstream_request("chat/completions", payload, "req-unsupported-model")
+        finally:
+            server.PROXY_POOLS = original_pools
+            server.UPSTREAM_URL_POOL = original_upstream_pool
+
+        self.assertFalse(called["value"])
+        self.assertEqual(result["route_pool_size"], 0)
+        self.assertEqual(result["forced_error_status"], 400)
+        self.assertEqual(result["forced_error_payload"]["error"]["code"], "model_not_supported_by_routes")
+        self.assertIn("gpt-5.4", result["forced_error_payload"]["error"]["message"])
+
     def test_execute_upstream_request_keeps_alias_only_route_when_it_matches_requested_model(self):
         original_pools = server.PROXY_POOLS
         original_upstream_pool = server.UPSTREAM_URL_POOL

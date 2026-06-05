@@ -259,6 +259,17 @@ def build_no_upstream_configured_error_payload() -> dict:
     }
 
 
+def build_no_supported_model_route_error_payload(model_name: str) -> dict:
+    return {
+        "error": {
+            "message": f"模型 {model_name or '-'} 未被任何已启用线路支持，请检查线路支持模型或模型映射配置。",
+            "type": "invalid_request_error",
+            "param": "model",
+            "code": "model_not_supported_by_routes",
+        }
+    }
+
+
 def build_upstream_timeout(*, requested_stream: bool) -> int | tuple[int, int]:
     if not requested_stream:
         return REQUEST_TIMEOUT
@@ -953,6 +964,14 @@ def route_explicitly_supports_payload_model(route_url: str, payload: dict | None
     return bool(candidate_keys & supported_keys)
 
 
+def route_has_explicit_model_config(route_url: str) -> bool:
+    manual_supported_models = get_pool_supported_models_for_url(PROXY_POOLS, route_url, normalize_pool_url)
+    if manual_supported_models:
+        return True
+    route_aliases = get_pool_model_aliases_for_url(PROXY_POOLS, route_url, normalize_pool_url)
+    return bool(route_aliases)
+
+
 def filter_route_urls_for_payload_model(route_urls: list[str], payload: dict | None) -> list[str]:
     filtered_urls = [str(url or "").strip() for url in (route_urls or []) if str(url or "").strip()]
     if not filtered_urls or not isinstance(payload, dict):
@@ -966,7 +985,13 @@ def filter_route_urls_for_payload_model(route_urls: list[str], payload: dict | N
         for route_url in filtered_urls
         if route_explicitly_supports_payload_model(route_url, payload)
     ]
-    return explicitly_supported_urls or filtered_urls
+    if explicitly_supported_urls:
+        return explicitly_supported_urls
+
+    if any(route_has_explicit_model_config(route_url) for route_url in filtered_urls):
+        return []
+
+    return filtered_urls
 
 
 def build_candidate_route_targets_for_request(subpath: str, request_payload: dict | None) -> list[tuple[str, str]]:
@@ -2411,8 +2436,11 @@ def execute_upstream_request(
     bypass_inflight_coalescing: bool = False,
 ) -> dict:
     requested_stream = bool(isinstance(request_payload, dict) and request_payload.get("stream"))
+    raw_route_urls = list(UPSTREAM_URL_POOL)
     route_targets = build_candidate_route_targets_for_request(subpath, request_payload)
     if not route_targets:
+        requested_model = str((request_payload or {}).get("model") or "").strip() if isinstance(request_payload, dict) else ""
+        no_model_route = bool(raw_route_urls and requested_model)
         return {
             "upstream_url": "",
             "upstream_url_pool": [],
@@ -2427,7 +2455,11 @@ def execute_upstream_request(
             "request_repairs": 0,
             "model_candidates": [],
             "initial_key_choice": {},
-            "forced_error_payload": build_no_upstream_configured_error_payload(),
+            "forced_error_payload": (
+                build_no_supported_model_route_error_payload(requested_model)
+                if no_model_route
+                else build_no_upstream_configured_error_payload()
+            ),
             "forced_error_status": 400,
         }
     route_url = route_targets[0][0]
