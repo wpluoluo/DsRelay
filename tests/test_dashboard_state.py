@@ -260,6 +260,71 @@ class DashboardStateTests(unittest.TestCase):
         self.assertTrue(item["matches_current_route"])
         self.assertEqual(item["current_route_url"], "https://integrate.api.nvidia.com/v1#__route=bfaf0e1e3061")
 
+    def test_route_local_cache_rate_uses_cacheable_requests_as_denominator(self):
+        route_url = "https://integrate.api.nvidia.com/v1#__route=a"
+        state = build_dashboard_state(
+            {
+                "build_runtime_snapshot": lambda: {
+                    "model_routing": {"cache_stats": {}, "db_label": "mysql://demo"},
+                    "config_source": "storage",
+                    "route_policies": {
+                        route_url: {
+                            "route_cooldown_seconds": 5,
+                            "effective_route_cooldown_seconds": 10,
+                            "route_cooldown_max_seconds": 10,
+                        },
+                    },
+                },
+                "request_recorder_snapshot": lambda: {
+                    "stats": {},
+                    "active_requests": [],
+                    "recent_requests": [
+                        {
+                            "request_id": "req-hit",
+                            "route_url": route_url,
+                            "pool_name": "nv",
+                            "status_code": 200,
+                            "local_response_cache_hit": True,
+                            "local_response_cache_status": "hit",
+                        },
+                        {
+                            "request_id": "req-miss",
+                            "route_url": route_url,
+                            "pool_name": "nv",
+                            "status_code": 200,
+                            "local_response_cache_status": "miss",
+                        },
+                        {
+                            "request_id": "req-bypass",
+                            "route_url": route_url,
+                            "pool_name": "nv",
+                            "status_code": 200,
+                            "local_response_cache_status": "bypass_tools",
+                        },
+                    ],
+                },
+                "route_health": {},
+                "upstream_url": route_url,
+                "upstream_urls": [route_url],
+                "proxy_pools": [{"name": "nv", "enabled": True}],
+                "log_path": "proxy.log",
+                "build_runtime_config_payload": lambda: {"config_source": "storage", "db_label": "mysql://demo"},
+                "connection_pool_snapshot": lambda: {"urls": {route_url: {"pool_name": "nv"}}},
+                "active_session_affinity_keys": lambda: 0,
+                "active_route_affinity_counts": lambda: {},
+                "read_recent_log_lines": lambda: [],
+                "config_source": "storage",
+            }
+        )
+
+        route = {item["route_url"]: item for item in state["route_observability"]}[route_url]
+        self.assertEqual(route["request_count"], 3)
+        self.assertEqual(route["local_cache_hit_count"], 1)
+        self.assertEqual(route["local_cache_miss_count"], 1)
+        self.assertEqual(route["local_cache_bypass_count"], 1)
+        self.assertEqual(route["local_cache_eligible_count"], 2)
+        self.assertAlmostEqual(route["local_cache_hit_rate"], 0.5)
+
     def test_cached_execution_observability_exposes_upstream_subpath(self):
         execution = build_cached_execution(
             cached_payload={

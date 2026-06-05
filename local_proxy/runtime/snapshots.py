@@ -203,6 +203,19 @@ def _route_policy_snapshot(route_url: object, *, build_route_policy, route_switc
     }
 
 
+def _local_cache_bucket(status: object, *, hit: bool = False) -> str:
+    if hit:
+        return "hit"
+    status_text = str(status or "").strip().lower()
+    if status_text == "hit":
+        return "hit"
+    if status_text.startswith("miss"):
+        return "miss"
+    if status_text.startswith("bypass"):
+        return "bypass"
+    return ""
+
+
 def read_recent_log_lines(*, log_path, app_started_at_epoch: float, limit: int) -> list[str]:
     if not log_path.exists():
         return []
@@ -376,6 +389,9 @@ def build_dashboard_state(context: dict) -> dict:
     upstream_prompt_cache_requests = 0
     upstream_prompt_cache_hits = 0
     prompt_hint_requests = 0
+    local_response_cache_recent_hits = 0
+    local_response_cache_recent_misses = 0
+    local_response_cache_recent_bypasses = 0
 
     cache_read_samples = [
         int(item.get("cache_read_input_tokens") or 0)
@@ -397,6 +413,16 @@ def build_dashboard_state(context: dict) -> dict:
             upstream_prompt_cache_hits += 1
         if bool(item.get("prompt_cache_hint_applied")) or bool(item.get("prompt_cache_hint_passthrough")):
             prompt_hint_requests += 1
+        cache_bucket = _local_cache_bucket(
+            item.get("local_response_cache_status"),
+            hit=bool(item.get("local_response_cache_hit")),
+        )
+        if cache_bucket == "hit":
+            local_response_cache_recent_hits += 1
+        elif cache_bucket == "miss":
+            local_response_cache_recent_misses += 1
+        elif cache_bucket == "bypass":
+            local_response_cache_recent_bypasses += 1
         affinity_key = str(item.get("session_affinity_key") or "").strip()
         route_url = str(item.get("current_route_url") or item.get("upstream_url") or "").strip()
         if not affinity_key or not route_url:
@@ -410,6 +436,11 @@ def build_dashboard_state(context: dict) -> dict:
     sticky_rate = (sticky_sessions / sticky_total) if sticky_total > 0 else 0.0
     active_affinity_keys = context.get("active_session_affinity_keys")
     active_affinity_keys = int(active_affinity_keys()) if callable(active_affinity_keys) else 0
+    local_response_cache_recent_eligible = local_response_cache_recent_hits + local_response_cache_recent_misses
+    local_response_cache_recent_hit_rate = (
+        local_response_cache_recent_hits / local_response_cache_recent_eligible
+        if local_response_cache_recent_eligible > 0 else 0.0
+    )
 
     route_observability = {}
     for route_url in set(list(context["upstream_urls"]) + list(route_health_snapshot.keys())):
@@ -421,6 +452,9 @@ def build_dashboard_state(context: dict) -> dict:
             "error_count": 0,
             "status_429_count": 0,
             "local_cache_hit_count": 0,
+            "local_cache_miss_count": 0,
+            "local_cache_bypass_count": 0,
+            "local_cache_eligible_count": 0,
             "upstream_prompt_cache_hit_count": 0,
             "upstream_prompt_cache_request_count": 0,
             "cache_read_input_tokens": 0,
@@ -449,6 +483,9 @@ def build_dashboard_state(context: dict) -> dict:
                 "error_count": 0,
                 "status_429_count": 0,
                 "local_cache_hit_count": 0,
+                "local_cache_miss_count": 0,
+                "local_cache_bypass_count": 0,
+                "local_cache_eligible_count": 0,
                 "upstream_prompt_cache_hit_count": 0,
                 "upstream_prompt_cache_request_count": 0,
                 "cache_read_input_tokens": 0,
@@ -481,6 +518,9 @@ def build_dashboard_state(context: dict) -> dict:
                 "error_count": 0,
                 "status_429_count": 0,
                 "local_cache_hit_count": 0,
+                "local_cache_miss_count": 0,
+                "local_cache_bypass_count": 0,
+                "local_cache_eligible_count": 0,
                 "upstream_prompt_cache_hit_count": 0,
                 "upstream_prompt_cache_request_count": 0,
                 "cache_read_input_tokens": 0,
@@ -508,6 +548,17 @@ def build_dashboard_state(context: dict) -> dict:
             entry["success_count"] += 1
         if bool(item.get("local_response_cache_hit")):
             entry["local_cache_hit_count"] += 1
+        cache_bucket = _local_cache_bucket(
+            item.get("local_response_cache_status"),
+            hit=bool(item.get("local_response_cache_hit")),
+        )
+        if cache_bucket == "hit":
+            entry["local_cache_eligible_count"] += 1
+        elif cache_bucket == "miss":
+            entry["local_cache_miss_count"] += 1
+            entry["local_cache_eligible_count"] += 1
+        elif cache_bucket == "bypass":
+            entry["local_cache_bypass_count"] += 1
         if bool(item.get("upstream_prompt_cache_eligible")):
             entry["upstream_prompt_cache_request_count"] += 1
         if bool(item.get("upstream_prompt_cache_hit")):
@@ -538,6 +589,9 @@ def build_dashboard_state(context: dict) -> dict:
                 "error_count": 0,
                 "status_429_count": 0,
                 "local_cache_hit_count": 0,
+                "local_cache_miss_count": 0,
+                "local_cache_bypass_count": 0,
+                "local_cache_eligible_count": 0,
                 "upstream_prompt_cache_hit_count": 0,
                 "upstream_prompt_cache_request_count": 0,
                 "cache_read_input_tokens": 0,
@@ -578,6 +632,9 @@ def build_dashboard_state(context: dict) -> dict:
                 "error_count": 0,
                 "status_429_count": 0,
                 "local_cache_hit_count": 0,
+                "local_cache_miss_count": 0,
+                "local_cache_bypass_count": 0,
+                "local_cache_eligible_count": 0,
                 "upstream_prompt_cache_hit_count": 0,
                 "upstream_prompt_cache_request_count": 0,
                 "cache_read_input_tokens": 0,
@@ -602,6 +659,10 @@ def build_dashboard_state(context: dict) -> dict:
     route_observability_rows = []
     for entry in route_observability.values():
         request_count = int(entry.get("request_count") or 0)
+        local_cache_hit_count = int(entry.get("local_cache_hit_count") or 0)
+        local_cache_miss_count = int(entry.get("local_cache_miss_count") or 0)
+        local_cache_bypass_count = int(entry.get("local_cache_bypass_count") or 0)
+        local_cache_eligible_count = int(entry.get("local_cache_eligible_count") or 0)
         cache_read_samples = int(entry.get("cache_read_samples") or 0)
         session_count = int(entry.get("session_count") or 0)
         sticky_session_count = int(entry.get("sticky_session_count") or 0)
@@ -617,10 +678,13 @@ def build_dashboard_state(context: dict) -> dict:
                 "success_count": int(entry.get("success_count") or 0),
                 "error_count": int(entry.get("error_count") or 0),
                 "status_429_count": int(entry.get("status_429_count") or 0),
-                "local_cache_hit_count": int(entry.get("local_cache_hit_count") or 0),
+                "local_cache_hit_count": local_cache_hit_count,
+                "local_cache_miss_count": local_cache_miss_count,
+                "local_cache_bypass_count": local_cache_bypass_count,
+                "local_cache_eligible_count": local_cache_eligible_count,
                 "local_cache_hit_rate": (
-                    int(entry.get("local_cache_hit_count") or 0) / request_count
-                    if request_count > 0 else 0.0
+                    local_cache_hit_count / local_cache_eligible_count
+                    if local_cache_eligible_count > 0 else 0.0
                 ),
                 "upstream_prompt_cache_hit_count": int(entry.get("upstream_prompt_cache_hit_count") or 0),
                 "upstream_prompt_cache_request_count": int(entry.get("upstream_prompt_cache_request_count") or 0),
@@ -677,6 +741,11 @@ def build_dashboard_state(context: dict) -> dict:
             "local_response_cache_hits": local_response_cache_hits,
             "local_response_cache_misses": local_response_cache_misses,
             "local_response_cache_hit_rate": local_response_cache_hit_rate,
+            "local_response_cache_recent_hits": local_response_cache_recent_hits,
+            "local_response_cache_recent_misses": local_response_cache_recent_misses,
+            "local_response_cache_recent_bypasses": local_response_cache_recent_bypasses,
+            "local_response_cache_recent_eligible": local_response_cache_recent_eligible,
+            "local_response_cache_recent_hit_rate": local_response_cache_recent_hit_rate,
             "upstream_prompt_cache_requests": upstream_prompt_cache_requests,
             "upstream_prompt_cache_hits": upstream_prompt_cache_hits,
             "upstream_prompt_cache_hit_rate": (
