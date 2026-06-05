@@ -5,6 +5,12 @@ import json
 import time
 from copy import deepcopy
 
+from local_proxy.compat.tools import (
+    normalize_openai_tool_choice,
+    normalize_openai_tool_definition,
+    openai_tool_sort_key,
+)
+
 
 DEFAULT_REQUEST_CACHE_TTL_SECONDS = 900
 
@@ -126,6 +132,22 @@ def normalize_cache_payload(payload: dict | None) -> dict:
     normalized.pop("stream_options", None)
     normalized.pop("prompt_cache_key", None)
     normalized.pop("prompt_cache_retention", None)
+    normalized.pop("metadata", None)
+    normalized.pop("user", None)
+    normalized.pop("request_id", None)
+    normalized.pop("trace_id", None)
+    normalized.pop("session_id", None)
+    normalized.pop("conversation_id", None)
+    tools = normalized.get("tools")
+    if isinstance(tools, list):
+        stable_tools = []
+        for tool in tools:
+            stable_tool, _ = normalize_openai_tool_definition(tool)
+            stable_tools.append(stable_tool)
+        normalized["tools"] = sorted(stable_tools, key=openai_tool_sort_key)
+    if "tool_choice" in normalized:
+        normalized_tool_choice, _ = normalize_openai_tool_choice(normalized.get("tool_choice"))
+        normalized["tool_choice"] = normalized_tool_choice
     return normalized
 
 

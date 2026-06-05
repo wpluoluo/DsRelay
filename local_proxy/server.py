@@ -2523,7 +2523,56 @@ def execute_upstream_request(
         path=upstream_subpath,
         payload=upstream_payload if isinstance(upstream_payload, dict) else None,
     )
+    cache_payload = deepcopy(upstream_payload) if isinstance(upstream_payload, dict) else None
+    cache_key = build_cache_key(
+        protocol=request_protocol,
+        path=upstream_subpath,
+        payload=cache_payload,
+        route_policy=route_policy,
+    )
     resume_metrics = {}
+    if storage is not None and is_cache_lookup_eligible_request(
+        request_payload=cache_payload,
+        route_policy=route_policy,
+        stream=requested_stream,
+    ):
+        try:
+            cached_payload = storage.load_request_cache(cache_key)
+        except Exception as exc:  # pragma: no cover
+            proxy_logger.warning("load_request_cache_failed key=%s error=%s", cache_key[:12], str(exc))
+            cached_payload = {}
+        if isinstance(cached_payload, dict) and cached_payload.get("response_body"):
+            if not is_cache_storable_response(
+                request_payload=cache_payload,
+                route_policy=route_policy,
+                response_body=cached_payload.get("response_body"),
+                protocol=request_protocol,
+            ):
+                proxy_logger.warning(
+                    "request_cache_stale_unusable key=%s protocol=%s path=%s",
+                    cache_key[:12],
+                    request_protocol,
+                    upstream_subpath,
+                )
+                cached_payload = {}
+            else:
+                bump_cache_stat("prompt_cache_hits")
+                cached_execution = build_cached_execution(
+                    cached_payload=cached_payload,
+                    request_payload=cache_payload,
+                    request_repairs=request_repairs,
+                    model_candidates=model_candidates,
+                    route_policy=route_policy,
+                    cache_key=cache_key,
+                    route_policy_metrics=route_policy_metrics,
+                )
+                cached_execution["interruption_resume"] = resume_metrics
+                cached_execution["request_context"] = request_context
+                cached_execution["coalescing_key"] = coalescing_key
+                cached_execution["session_affinity_key"] = session_affinity_key
+                cached_execution["cache_payload"] = cache_payload
+                return cached_execution
+
     if upstream_subpath == "chat/completions" and isinstance(upstream_payload, dict):
         upstream_payload, resume_repairs, resume_metrics = apply_interruption_resume_to_payload(
             request_protocol,
@@ -2554,6 +2603,7 @@ def execute_upstream_request(
             "route_policy_metrics": route_policy_metrics,
             "interruption_resume": resume_metrics,
             "request_context": request_context,
+            "cache_payload": cache_payload,
             "coalescing_key": coalescing_key,
             "session_affinity_key": session_affinity_key,
             "forced_error_payload": build_context_window_exceeded_error_payload(
@@ -2566,53 +2616,6 @@ def execute_upstream_request(
             "forced_error_status": 400,
         }
     tool_schemas = extract_tool_schemas(upstream_payload if isinstance(upstream_payload, dict) else request_payload)
-
-    cache_key = build_cache_key(
-        protocol=request_protocol,
-        path=upstream_subpath,
-        payload=upstream_payload if isinstance(upstream_payload, dict) else None,
-        route_policy=route_policy,
-    )
-    if storage is not None and is_cache_lookup_eligible_request(
-        request_payload=upstream_payload,
-        route_policy=route_policy,
-        stream=requested_stream,
-    ):
-        try:
-            cached_payload = storage.load_request_cache(cache_key)
-        except Exception as exc:  # pragma: no cover
-            proxy_logger.warning("load_request_cache_failed key=%s error=%s", cache_key[:12], str(exc))
-            cached_payload = {}
-        if isinstance(cached_payload, dict) and cached_payload.get("response_body"):
-            if not is_cache_storable_response(
-                request_payload=upstream_payload,
-                route_policy=route_policy,
-                response_body=cached_payload.get("response_body"),
-                protocol=request_protocol,
-            ):
-                proxy_logger.warning(
-                    "request_cache_stale_unusable key=%s protocol=%s path=%s",
-                    cache_key[:12],
-                    request_protocol,
-                    upstream_subpath,
-                )
-                cached_payload = {}
-            else:
-                bump_cache_stat("prompt_cache_hits")
-                cached_execution = build_cached_execution(
-                    cached_payload=cached_payload,
-                    request_payload=upstream_payload,
-                    request_repairs=request_repairs,
-                    model_candidates=model_candidates,
-                    route_policy=route_policy,
-                    cache_key=cache_key,
-                    route_policy_metrics=route_policy_metrics,
-                )
-                cached_execution["interruption_resume"] = resume_metrics
-                cached_execution["request_context"] = request_context
-                cached_execution["coalescing_key"] = coalescing_key
-                cached_execution["session_affinity_key"] = session_affinity_key
-                return cached_execution
 
     inflight_entry = None
     is_inflight_owner = True
@@ -3702,9 +3705,18 @@ def save_request_cache_entry(
     if storage is None or not isinstance(response_body, dict):
         return
     cache_payload = (
-        execution.get("upstream_payload")
-        if isinstance(execution, dict) and isinstance(execution.get("upstream_payload"), dict)
-        else request_payload
+        execution.get("cache_payload")
+        if isinstance(execution, dict) and isinstance(execution.get("cache_payload"), dict)
+        else None
+    )
+    cache_payload = (
+        cache_payload
+        if isinstance(cache_payload, dict)
+        else (
+            execution.get("upstream_payload")
+            if isinstance(execution, dict) and isinstance(execution.get("upstream_payload"), dict)
+            else request_payload
+        )
     )
     cache_path = normalize_downstream_subpath(path)
     if str(protocol or "").strip().lower() == "openai_chat_completions":

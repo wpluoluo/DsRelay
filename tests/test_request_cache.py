@@ -66,6 +66,37 @@ class RequestCacheTests(unittest.TestCase):
 
         self.assertEqual(plain_key, hinted_key)
 
+    def test_cache_key_ignores_non_semantic_request_metadata(self):
+        base_payload = {
+            "model": "demo-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "temperature": 0.2,
+        }
+        route_policy = {"prompt_cache_mode": "exact"}
+
+        plain_key = build_cache_key(
+            protocol="openai_chat_completions",
+            path="chat/completions",
+            payload=base_payload,
+            route_policy=route_policy,
+        )
+        metadata_key = build_cache_key(
+            protocol="openai_chat_completions",
+            path="chat/completions",
+            payload={
+                **base_payload,
+                "metadata": {"request_id": "abc"},
+                "user": "user-a",
+                "request_id": "req-1",
+                "trace_id": "trace-1",
+                "session_id": "session-1",
+                "conversation_id": "conversation-1",
+            },
+            route_policy=route_policy,
+        )
+
+        self.assertEqual(plain_key, metadata_key)
+
     def test_cache_key_is_stable_after_openai_tool_normalization(self):
         from local_proxy.compat.tools import normalize_openai_request_payload
 
@@ -115,6 +146,58 @@ class RequestCacheTests(unittest.TestCase):
                 protocol="openai_chat_completions",
                 path="chat/completions",
                 payload=normalized_b,
+                route_policy={"prompt_cache_mode": "exact"},
+            ),
+        )
+
+    def test_cache_key_stabilizes_tools_without_full_request_normalization(self):
+        payload_a = {
+            "model": "demo-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [
+                {
+                    "name": "Search",
+                    "description": "search files",
+                    "input_schema": {
+                        "required": ["query", "path"],
+                        "properties": {
+                            "query": {"type": "string"},
+                            "path": {"type": "string"},
+                        },
+                        "type": "object",
+                    },
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "Read",
+                        "parameters": {
+                            "properties": {"file_path": {"type": "string"}},
+                            "required": ["file_path"],
+                            "type": "object",
+                        },
+                    },
+                },
+            ],
+            "tool_choice": {"type": "tool", "name": "Read"},
+        }
+        payload_b = {
+            **payload_a,
+            "tools": list(reversed(payload_a["tools"])),
+            "tool_choice": {"name": "Read"},
+        }
+
+        self.assertEqual(
+            build_cache_key(
+                protocol="openai_chat_completions",
+                path="chat/completions",
+                payload=payload_a,
+                route_policy={"prompt_cache_mode": "exact"},
+            ),
+            build_cache_key(
+                protocol="openai_chat_completions",
+                path="chat/completions",
+                payload=payload_b,
                 route_policy={"prompt_cache_mode": "exact"},
             ),
         )
@@ -384,6 +467,56 @@ class RequestCacheTests(unittest.TestCase):
         self.assertEqual(fake_storage.saved["cache_key"], cache_key)
         self.assertEqual(fake_storage.saved["request_payload"]["model"], "upstream-model")
         self.assertEqual(fake_storage.saved["request_fingerprint"], cache_key)
+
+    def test_save_request_cache_prefers_base_cache_payload_over_resume_payload(self):
+        class FakeStorage:
+            def __init__(self):
+                self.saved = None
+
+            def save_request_cache(self, payload):
+                self.saved = payload
+
+        fake_storage = FakeStorage()
+        original_storage = server.storage
+        base_payload = {
+            "model": "demo-model",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+        resume_payload = {
+            **base_payload,
+            "messages": [
+                {"role": "system", "content": "上一段续接文本"},
+                {"role": "user", "content": "hello"},
+            ],
+        }
+        cache_key = build_cache_key(
+            protocol="openai_chat_completions",
+            path="chat/completions",
+            payload=base_payload,
+            route_policy={"prompt_cache_mode": "exact"},
+        )
+        try:
+            server.storage = fake_storage
+            save_request_cache_entry(
+                execution={
+                    "cache_key": cache_key,
+                    "cache_payload": base_payload,
+                    "upstream_payload": resume_payload,
+                    "route_policy": {"prompt_cache_mode": "exact"},
+                },
+                protocol="openai_chat_completions",
+                path="chat/completions",
+                request_payload=resume_payload,
+                response_body={"choices": [{"message": {"content": "ok"}}]},
+                upstream_url="https://good.example/v1/chat/completions",
+            )
+        finally:
+            server.storage = original_storage
+
+        self.assertIsNotNone(fake_storage.saved)
+        self.assertEqual(fake_storage.saved["cache_key"], cache_key)
+        self.assertEqual(fake_storage.saved["request_payload"], base_payload)
+        self.assertNotIn("上一段续接文本", str(fake_storage.saved["request_payload"]))
 
     def test_coalescing_key_matches_exact_payload_except_transport_flags(self):
         base_payload = {
