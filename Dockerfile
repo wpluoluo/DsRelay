@@ -17,7 +17,12 @@ RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua
 
 COPY . .
 
-RUN mkdir -p var/logs var/cache var/run
+RUN python - <<'PY'
+from pathlib import Path
+path = Path("/app/start.sh")
+path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n"))
+PY
+RUN chmod +x /app/start.sh && mkdir -p var/logs var/cache var/run
 
 ENV PORT=18765
 ENV PYTHONUNBUFFERED=1
