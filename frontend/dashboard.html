@@ -1934,6 +1934,36 @@
       proxyKeyStatusEl.className = "status-msg" + (type ? " " + type : "");
     }
 
+    async function copyTextToClipboard(value) {
+      var text = String(value || "");
+      if (!text) return false;
+      if (navigator.clipboard && window.isSecureContext) {
+        try {
+          await navigator.clipboard.writeText(text);
+          return true;
+        } catch (err) {
+        }
+      }
+      var textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      textarea.style.top = "0";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      textarea.setSelectionRange(0, textarea.value.length);
+      var ok = false;
+      try {
+        ok = document.execCommand("copy");
+      } catch (err) {
+        ok = false;
+      }
+      document.body.removeChild(textarea);
+      return ok;
+    }
+
     function renderProxyKeys(payload) {
       payload = payload || {};
       proxyKeyData = {
@@ -3129,10 +3159,9 @@
     safeOn(copyGeneratedProxyKeyBtn, "click", async function() {
       var value = generatedProxyKeyValue ? generatedProxyKeyValue.textContent : "";
       if (!value) return;
-      try {
-        await navigator.clipboard.writeText(value);
+      if (await copyTextToClipboard(value)) {
         setProxyKeyStatus("已复制新 Key。", "ok");
-      } catch (err) {
+      } else {
         setProxyKeyStatus("复制失败，请手动选中新 Key。", "err");
       }
     });
@@ -3150,10 +3179,12 @@
           setProxyKeyStatus("这条历史 Key 没有保存原始值，无法复制完整 Key；请重新生成后使用。", "warn");
           return;
         }
-        navigator.clipboard.writeText(keyValue).then(function() {
+        copyTextToClipboard(keyValue).then(function(ok) {
+          if (!ok) {
+            setProxyKeyStatus("复制失败，请手动选中 Key。", "err");
+            return;
+          }
           setProxyKeyStatus("已复制入口 Key。", "ok");
-        }).catch(function() {
-          setProxyKeyStatus("复制失败，请手动选中 Key。", "err");
         });
       } else if (action === "rename") {
         var nextName = prompt("入口 Key 名称", item.name || "NEWAPI");
