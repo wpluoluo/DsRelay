@@ -633,9 +633,11 @@
     .token-flow.in { color: #0f9f6e; }
     .token-flow.out { color: #7c3aed; }
     .cache-hover { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 999px; color: #2563eb; background: #eff6ff; border: 1px solid #bfdbfe; cursor: default; }
+    .cache-hover::before { content: ""; position: absolute; left: 100%; top: -18px; width: 252px; height: 168px; opacity: 0; pointer-events: none; z-index: 7; }
     .cache-hover::after { content: ""; position: absolute; right: -8px; top: 50%; transform: translateY(-50%); border-width: 7px 8px 7px 0; border-style: solid; border-color: transparent #111827 transparent transparent; opacity: 0; pointer-events: none; transition: opacity var(--transition); z-index: 8; }
-    .cache-hover-panel { position: absolute; right: -236px; top: 50%; transform: translateY(-50%); width: 224px; border-radius: 9px; background: #111827; color: #d1d5db; box-shadow: 0 10px 26px rgba(15,23,42,.22); padding: 12px 14px; opacity: 0; pointer-events: none; transition: opacity var(--transition); z-index: 9; }
-    .cache-hover:hover::after, .cache-hover:hover .cache-hover-panel { opacity: 1; }
+    .cache-hover-panel { position: absolute; right: -250px; top: 50%; transform: translateY(-50%); width: 238px; border-radius: 9px; background: #111827; color: #d1d5db; box-shadow: 0 10px 26px rgba(15,23,42,.22); padding: 12px 14px; opacity: 0; pointer-events: auto; transition: opacity var(--transition); z-index: 9; }
+    .cache-hover:hover::before, .cache-hover:focus-within::before { pointer-events: auto; }
+    .cache-hover:hover::after, .cache-hover:hover .cache-hover-panel, .cache-hover:focus-within::after, .cache-hover:focus-within .cache-hover-panel { opacity: 1; }
     .cache-tip-title { color: #e5e7eb; font-size: 12px; font-weight: 800; margin-bottom: 8px; }
     .cache-tip-row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; line-height: 1.55; }
     .cache-tip-label { color: #9ca3af; }
@@ -1574,6 +1576,18 @@
       return String(value ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
+    function formatCount(value) {
+      return Number(value || 0).toLocaleString();
+    }
+
+    function formatTokenCount(value) {
+      return formatCount(value) + " Token";
+    }
+
+    function formatByteCount(value) {
+      return formatCount(value);
+    }
+
     function icon(name) {
       var i = {
         bar: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="11" width="3.5" height="7" rx="0.6" fill="currentColor" opacity="0.45"/><rect x="8" y="5" width="3.5" height="13" rx="0.6" fill="currentColor"/><rect x="14" y="8" width="3.5" height="10" rx="0.6" fill="currentColor" opacity="0.7"/></svg>',
@@ -2246,14 +2260,14 @@
             '<svg width="12" height="12" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.6"/><path d="M10 6.5v4.2M10 13.6v.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
             '<div class="cache-hover-panel">' +
               '<div class="cache-tip-title">Token 明细</div>' +
-              '<div class="cache-tip-row"><span class="cache-tip-label">输入 Token</span><span class="cache-tip-value">' + escapeHtml(promptTokens.toLocaleString()) + '</span></div>' +
-              '<div class="cache-tip-row"><span class="cache-tip-label">输出 Token</span><span class="cache-tip-value">' + escapeHtml(completionTokens.toLocaleString()) + '</span></div>' +
-              '<div class="cache-tip-row"><span class="cache-tip-label">缓存读取 Token</span><span class="cache-tip-value">' + escapeHtml(cacheReadTokens.toLocaleString()) + '</span></div>' +
-              '<div class="cache-tip-row"><span class="cache-tip-label">缓存写入 Token</span><span class="cache-tip-value">' + escapeHtml(cacheCreationTokens.toLocaleString()) + '</span></div>' +
+              '<div class="cache-tip-row"><span class="cache-tip-label">输入 Token</span><span class="cache-tip-value">' + escapeHtml(formatTokenCount(promptTokens)) + '</span></div>' +
+              '<div class="cache-tip-row"><span class="cache-tip-label">输出 Token</span><span class="cache-tip-value">' + escapeHtml(formatTokenCount(completionTokens)) + '</span></div>' +
+              '<div class="cache-tip-row"><span class="cache-tip-label">缓存读取 Token</span><span class="cache-tip-value">' + escapeHtml(formatTokenCount(cacheReadTokens)) + '</span></div>' +
+              '<div class="cache-tip-row"><span class="cache-tip-label">缓存写入 Token</span><span class="cache-tip-value">' + escapeHtml(formatTokenCount(cacheCreationTokens)) + '</span></div>' +
               '<div class="cache-tip-row"><span class="cache-tip-label">官方缓存</span><span class="cache-tip-value">' + escapeHtml(upstreamCacheText) + '</span></div>' +
               '<div class="cache-tip-row"><span class="cache-tip-label">本地缓存</span><span class="cache-tip-value">' + escapeHtml(localCacheText) + '</span></div>' +
-              '<div class="cache-tip-row"><span class="cache-tip-label">本地缓存读</span><span class="cache-tip-value">' + escapeHtml(cacheReadBytes.toLocaleString()) + ' B</span></div>' +
-              '<div class="cache-tip-row cache-tip-total"><span class="cache-tip-label">总 Token</span><span class="cache-tip-value">' + escapeHtml(tokenTotal.toLocaleString()) + '</span></div>' +
+              '<div class="cache-tip-row"><span class="cache-tip-label">本地缓存读</span><span class="cache-tip-value">' + escapeHtml(formatByteCount(cacheReadBytes)) + '</span></div>' +
+              '<div class="cache-tip-row cache-tip-total"><span class="cache-tip-label">总 Token</span><span class="cache-tip-value">' + escapeHtml(formatTokenCount(tokenTotal)) + '</span></div>' +
             '</div>' +
           '</div>';
         return '<tr>' +
@@ -2261,7 +2275,7 @@
           '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(entry.remote || "-") + '</div><div class="request-cell-sub">重试 ' + escapeHtml(entry.retry_count || 0) + ' · 候选 ' + escapeHtml(routePoolSize || 1) + (routeAttemptCount ? (' · 已试 ' + escapeHtml(routeAttemptCount)) : '') + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-line-main">' + escapeHtml(poolName) + ' · ' + escapeHtml(routeIndex) + ' · ' + escapeHtml(keyIndex) + '</div><div class="request-line-path request-ellipsis">' + escapeHtml(actualRouteUrl || "-") + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-cell-title request-ellipsis">' + escapeHtml(logicalModel) + '</div><div class="request-cell-sub request-ellipsis">' + escapeHtml(resolvedModel) + '</div><div class="request-cell-sub">' + escapeHtml(poolName) + '</div></div></td>' +
-          '<td><div class="request-metric-list"><div class="request-chip-row"><span class="request-chip ok">' + escapeHtml(entry.duration_ms || "-") + ' ms</span><span class="request-chip">' + escapeHtml(inputBytes.toLocaleString()) + ' IN</span><span class="request-chip">' + escapeHtml(outputBytes.toLocaleString()) + ' OUT</span></div><div class="request-token-line"><span class="token-flow in">↓ ' + escapeHtml(promptTokens.toLocaleString()) + '</span><span class="token-flow out">↑ ' + escapeHtml(completionTokens.toLocaleString()) + '</span>' + cacheTooltip + '</div></div></td>' +
+          '<td><div class="request-metric-list"><div class="request-chip-row"><span class="request-chip ok">' + escapeHtml(entry.duration_ms || "-") + ' ms</span><span class="request-chip">输入 ' + escapeHtml(formatByteCount(inputBytes)) + '</span><span class="request-chip">输出 ' + escapeHtml(formatByteCount(outputBytes)) + '</span></div><div class="request-token-line"><span class="token-flow in">↓ ' + escapeHtml(formatTokenCount(promptTokens)) + '</span><span class="token-flow out">↑ ' + escapeHtml(formatTokenCount(completionTokens)) + '</span>' + cacheTooltip + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-cell-sub">请求 ' + escapeHtml(entry.request_repairs || 0) + ' · DSML ' + escapeHtml(entry.sanitized_markers || 0) + ' · 工具 ' + escapeHtml(entry.repaired_tool_args || 0) + '</div></div></td>' +
           '<td><div class="request-chip-row"><span class="request-chip ' + statusTone + '">状态 ' + escapeHtml(statusLabel) + '</span>' + (entry.error ? '<span class="request-chip err">异常</span>' : '') + '</div>' + (entry.error ? '<div class="request-cell-sub request-ellipsis" style="color:var(--error);">' + escapeHtml(entry.error) + '</div>' : '') + '</td>' +
         '</tr>';

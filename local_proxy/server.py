@@ -4367,10 +4367,18 @@ def carry_same_request_execution_history(
     elif previous_retry_count:
         next_execution["retry_count"] = previous_retry_count + int(next_execution.get("retry_count") or 0)
 
-    if not next_execution.get("upstream_url_pool") and (previous_execution or {}).get("upstream_url_pool"):
-        next_execution["upstream_url_pool"] = list((previous_execution or {}).get("upstream_url_pool") or [])
-    if not next_execution.get("route_pool_size") and (previous_execution or {}).get("route_pool_size"):
-        next_execution["route_pool_size"] = int((previous_execution or {}).get("route_pool_size") or 0)
+    previous_pool = list((previous_execution or {}).get("upstream_url_pool") or [])
+    next_pool = list(next_execution.get("upstream_url_pool") or [])
+    if previous_pool and len(previous_pool) >= len(next_pool):
+        next_execution["upstream_url_pool"] = previous_pool
+    elif next_pool:
+        next_execution["upstream_url_pool"] = next_pool
+    previous_route_pool_size = int((previous_execution or {}).get("route_pool_size") or 0)
+    next_route_pool_size = int(next_execution.get("route_pool_size") or 0)
+    if previous_route_pool_size > next_route_pool_size:
+        next_execution["route_pool_size"] = previous_route_pool_size
+    elif next_route_pool_size:
+        next_execution["route_pool_size"] = next_route_pool_size
 
     combined_blocked_urls = collect_same_request_blocked_urls(previous_execution)
     combined_blocked_urls.update(collect_same_request_blocked_urls(next_execution))
@@ -4408,7 +4416,6 @@ def retry_malformed_success_once(
         current_route_url or upstream_url,
         str(issue.get("code") or "malformed_success"),
     )
-    mark_route_failure(current_route_url or upstream_url, str(issue.get("code") or "malformed_success"))
     next_execution = execute_upstream_request(
         route_hint,
         request_payload,
@@ -4572,47 +4579,50 @@ def consume_openai_sse_events(upstream_response: requests.Response, tool_schemas
     skip_next_blank = False
     finished_choice_indexes: set[int] = set()
 
-    for raw_line in iter_response_lines(upstream_response):
-        text = raw_line.decode("utf-8", errors="ignore")
-        if text == "" and skip_next_blank:
-            skip_next_blank = False
-            continue
-
-        total_bytes += len(raw_line) + 1
-        normalized_line, removed, repaired_count, event = normalize_sse_line(text, choice_states, tool_schemas)
-        sanitized_markers += removed
-        repaired_tool_args += repaired_count
-
-        if normalized_line is None:
-            skip_next_blank = True
-            continue
-        if normalized_line:
-            skip_next_blank = False
-
-        if event:
-            if "error" in event and "choices" not in event:
-                raw_error_lines.append(json.dumps(event, ensure_ascii=False))
+    try:
+        for raw_line in iter_response_lines(upstream_response):
+            text = raw_line.decode("utf-8", errors="ignore")
+            if text == "" and skip_next_blank:
+                skip_next_blank = False
                 continue
-            response_events.append(event)
-            choices = event.get("choices") or []
-            for choice in choices:
-                delta = choice.get("delta") or {}
-                if isinstance(delta.get("content"), str) and len(" ".join(preview_parts)) < 240:
-                    append_preview_text(preview_parts, delta.get("content"))
-                for tool_call in delta.get("tool_calls") or []:
-                    function_data = tool_call.get("function") or {}
-                    append_preview_tool(
-                        preview_parts,
-                        function_data.get("name"),
-                        function_data.get("arguments"),
-                        tool_schemas,
-                    )
 
-            if update_openai_stream_terminal_state(event, finished_choice_indexes):
-                break
+            total_bytes += len(raw_line) + 1
+            normalized_line, removed, repaired_count, event = normalize_sse_line(text, choice_states, tool_schemas)
+            sanitized_markers += removed
+            repaired_tool_args += repaired_count
 
-        if normalized_line and not normalized_line.startswith("data:"):
-            raw_error_lines.append(normalized_line)
+            if normalized_line is None:
+                skip_next_blank = True
+                continue
+            if normalized_line:
+                skip_next_blank = False
+
+            if event:
+                if "error" in event and "choices" not in event:
+                    raw_error_lines.append(json.dumps(event, ensure_ascii=False))
+                    continue
+                response_events.append(event)
+                choices = event.get("choices") or []
+                for choice in choices:
+                    delta = choice.get("delta") or {}
+                    if isinstance(delta.get("content"), str) and len(" ".join(preview_parts)) < 240:
+                        append_preview_text(preview_parts, delta.get("content"))
+                    for tool_call in delta.get("tool_calls") or []:
+                        function_data = tool_call.get("function") or {}
+                        append_preview_tool(
+                            preview_parts,
+                            function_data.get("name"),
+                            function_data.get("arguments"),
+                            tool_schemas,
+                        )
+
+                if update_openai_stream_terminal_state(event, finished_choice_indexes):
+                    break
+
+            if normalized_line and not normalized_line.startswith("data:"):
+                raw_error_lines.append(normalized_line)
+    except (requests.RequestException, TimeoutError, OSError) as exc:
+        raw_error_lines.append(f"stream_read_exception:{type(exc).__name__}:{exc}")
 
     return {
         "response_events": response_events,
@@ -5016,7 +5026,6 @@ def proxy_response(
                 }
 
             if preflight_empty_issue:
-                mark_route_failure(route_url, preflight_empty_issue["code"])
                 if isinstance(request_payload, dict) and can_attempt_same_request_failover(
                     route_hint=route_hint,
                     execution=execution,
@@ -5231,7 +5240,6 @@ def proxy_response(
                                 separators=(",", ":"),
                             ),
                         }
-                        mark_route_failure(route_url, issue["code"])
                         if not emitted_data and isinstance(request_payload, dict) and can_attempt_same_request_failover(
                             route_hint=route_hint,
                             execution=execution,
@@ -5249,7 +5257,7 @@ def proxy_response(
                                 route_hint,
                                 request_payload,
                                 request_id,
-                        initial_blocked_urls=collect_same_request_blocked_urls(execution, current_route_url=route_url),
+                                initial_blocked_urls=collect_same_request_blocked_urls(execution, current_route_url=route_url),
                                 request_context=request_context,
                             )
                             if isinstance(next_execution, dict):
@@ -6587,6 +6595,7 @@ def anthropic_messages():
     upstream_response = execution["upstream_response"]
     retry_count = execution["retry_count"]
     attempts = execution["attempts"]
+    request_context = execution.get("request_context") if isinstance(execution, dict) else None
     request_exception = execution["request_exception"]
     attempt_urls, attempt_route_chain = summarize_attempt_routes(attempts)
     request_meta = build_request_meta(
@@ -6712,28 +6721,31 @@ def anthropic_messages():
             observability_meta=build_request_observability_meta(execution, openai_payload) | {"_upstream_openai_payload": openai_payload, "_downstream_anthropic_payload": anthropic_response_payload, "_execution": execution},
         )
 
-    content_type = upstream_response.headers.get("Content-Type", "")
-    if "text/event-stream" in content_type.lower():
-        consumed = consume_openai_sse_events(upstream_response, tool_schemas)
-        openai_body = build_chat_completion_from_sse(consumed["response_events"])
-        consumed["repaired_tool_args"] += normalize_chat_completion_dsml_tool_calls(openai_body, tool_schemas)
-        consumed["repaired_tool_args"] += normalize_chat_completion_text_tool_calls(openai_body, tool_schemas)
-        consumed["repaired_tool_args"] += normalize_chat_completion_tool_calls(openai_body, tool_schemas)
-        normalize_chat_completion_finish_reasons(openai_body)
-        clear_interruption_resume_records(execution)
-    else:
-        consumed = read_upstream_openai_response_body(upstream_response, tool_schemas)
-        openai_body = consumed["openai_body"]
+    while True:
+        content_type = upstream_response.headers.get("Content-Type", "")
+        if "text/event-stream" in content_type.lower():
+            consumed = consume_openai_sse_events(upstream_response, tool_schemas)
+            openai_body = build_chat_completion_from_sse(consumed["response_events"])
+            consumed["repaired_tool_args"] += normalize_chat_completion_dsml_tool_calls(openai_body, tool_schemas)
+            consumed["repaired_tool_args"] += normalize_chat_completion_text_tool_calls(openai_body, tool_schemas)
+            consumed["repaired_tool_args"] += normalize_chat_completion_tool_calls(openai_body, tool_schemas)
+            normalize_chat_completion_finish_reasons(openai_body)
+        else:
+            consumed = read_upstream_openai_response_body(upstream_response, tool_schemas)
+            openai_body = consumed["openai_body"]
 
-    issue = inspect_success_payload(
-        route_hint="chat/completions",
-        content_type=content_type,
-        body=upstream_response.content if "text/event-stream" not in content_type.lower() else None,
-        response_body=openai_body,
-        response_events=consumed.get("response_events"),
-        raw_error_lines=consumed.get("raw_error_lines"),
-    )
-    if issue:
+        issue = inspect_success_payload(
+            route_hint="chat/completions",
+            content_type=content_type,
+            body=upstream_response.content if "text/event-stream" not in content_type.lower() else None,
+            response_body=openai_body,
+            response_events=consumed.get("response_events"),
+            raw_error_lines=consumed.get("raw_error_lines"),
+        )
+        if not issue:
+            clear_interruption_resume_records(execution)
+            break
+
         next_execution = retry_malformed_success_once(
             route_hint="chat/completions",
             request_id=request_id,
@@ -6741,172 +6753,51 @@ def anthropic_messages():
             request_payload=openai_payload,
             execution=execution,
             issue=issue,
+            request_context=request_context,
         )
         next_response = next_execution.get("upstream_response") if isinstance(next_execution, dict) else None
-        if next_response is not None:
-            next_retry_count = int(next_execution.get("retry_count") or retry_count)
-            if requested_stream:
-                return handle_anthropic_stream_response(
-                    upstream_response=next_response,
-                    request_id=request_id,
-                    upstream_url=str(next_execution.get("upstream_url") or upstream_url),
-                    started_at=started_at,
-                    request_payload=request_payload,
-                    tool_schemas=next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else tool_schemas,
-                    retry_count=next_retry_count,
-                    observability_meta=build_request_observability_meta(next_execution, openai_payload) | {"_downstream_anthropic_payload": anthropic_response_payload, "_execution": next_execution},
-                )
-            retry_count = next_retry_count
-            if "text/event-stream" in str(next_response.headers.get("Content-Type", "")).lower():
-                upstream_response = next_response
-                tool_schemas = next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else tool_schemas
-                content_type = upstream_response.headers.get("Content-Type", "")
-                consumed = consume_openai_sse_events(upstream_response, tool_schemas)
-                openai_body = build_chat_completion_from_sse(consumed["response_events"])
-                consumed["repaired_tool_args"] += normalize_chat_completion_dsml_tool_calls(openai_body, tool_schemas)
-                consumed["repaired_tool_args"] += normalize_chat_completion_text_tool_calls(openai_body, tool_schemas)
-                consumed["repaired_tool_args"] += normalize_chat_completion_tool_calls(openai_body, tool_schemas)
-                normalize_chat_completion_finish_reasons(openai_body)
-                issue = inspect_success_payload(
-                    route_hint="chat/completions",
-                    content_type=content_type,
-                    body=None,
-                    response_body=openai_body,
-                    response_events=consumed.get("response_events"),
-                    raw_error_lines=consumed.get("raw_error_lines"),
-                )
-                if not issue:
-                    anthropic_body = convert_openai_response_to_anthropic(
-                        openai_body,
-                        tool_schemas,
-                        anthropic_response_payload,
-                    )
-                    body = json.dumps(anthropic_body, ensure_ascii=False).encode("utf-8")
-                    response_preview = build_preview_summary(consumed["preview_parts"])
-                    close_response_quietly(upstream_response)
-                    proxy_logger.info(
-                        "request_id=%s 上游=%s 线路=%s 状态=%s 协议=anthropic_messages 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
-                        request_id,
-                        str(next_execution.get("upstream_url") or upstream_url),
-                        str(next_execution.get("route_url") or next_execution.get("upstream_url") or upstream_url),
-                        upstream_response.status_code,
-                        len(body),
-                        int((time.perf_counter() - started_at) * 1000),
-                        consumed["sanitized_markers"],
-                        consumed["repaired_tool_args"],
-                        retry_count,
-                        response_preview or "",
-                    )
-                    save_request_cache_entry(
-                        execution=next_execution,
-                        protocol="anthropic_messages",
-                        path="chat/completions",
-                        request_payload=openai_payload,
-                        response_body=anthropic_body,
-                        upstream_url=str(next_execution.get("upstream_url") or upstream_url),
-                    )
-                    finalize_request_record(
-                        request_id,
-                        started_at=started_at,
-                        status_code=upstream_response.status_code,
-                        bytes_sent=len(body),
-                        stream=False,
-                        sanitized_markers=consumed["sanitized_markers"],
-                        response_preview=None,
-                        repaired_tool_args=consumed["repaired_tool_args"],
-                        extra_meta=build_request_observability_meta(next_execution, openai_payload),
-                    )
-                    return Response(
-                        body,
-                        status=200,
-                        headers={
-                            "Content-Type": "application/json; charset=utf-8",
-                            "X-Proxy-Retries": str(retry_count),
-                        },
-                    )
-            else:
-                consumed = read_upstream_openai_response_body(next_response, tool_schemas)
-                openai_body = consumed["openai_body"]
-                issue = inspect_success_payload(
-                    route_hint="chat/completions",
-                    content_type=str(next_response.headers.get("Content-Type", "")),
-                    body=next_response.content,
-                    response_body=openai_body,
-                    raw_error_lines=consumed.get("raw_error_lines"),
-                )
-                if not issue:
-                    anthropic_body = convert_openai_response_to_anthropic(
-                        openai_body,
-                        tool_schemas,
-                        anthropic_response_payload,
-                    )
-                    attach_execution_response_body(next_execution, anthropic_body)
-                    body = json.dumps(anthropic_body, ensure_ascii=False).encode("utf-8")
-                    response_preview = build_preview_summary(consumed["preview_parts"])
-                    close_response_quietly(next_response)
-                    proxy_logger.info(
-                        "request_id=%s 上游=%s 线路=%s 状态=%s 协议=anthropic_messages 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
-                        request_id,
-                        str(next_execution.get("upstream_url") or upstream_url),
-                        str(next_execution.get("route_url") or next_execution.get("upstream_url") or upstream_url),
-                        next_response.status_code,
-                        len(body),
-                        int((time.perf_counter() - started_at) * 1000),
-                        consumed["sanitized_markers"],
-                        consumed["repaired_tool_args"],
-                        retry_count,
-                        response_preview or "",
-                    )
-                    save_request_cache_entry(
-                        execution=next_execution,
-                        protocol="anthropic_messages",
-                        path="chat/completions",
-                        request_payload=openai_payload,
-                        response_body=anthropic_body,
-                        upstream_url=str(next_execution.get("upstream_url") or upstream_url),
-                    )
-                    finalize_request_record(
-                        request_id,
-                        started_at=started_at,
-                        status_code=next_response.status_code,
-                        bytes_sent=len(body),
-                        stream=False,
-                        sanitized_markers=consumed["sanitized_markers"],
-                        response_preview=None,
-                        repaired_tool_args=consumed["repaired_tool_args"],
-                        extra_meta=build_request_observability_meta(next_execution, openai_payload),
-                    )
-                    return Response(
-                        body,
-                        status=200,
-                        headers={
-                            "Content-Type": "application/json; charset=utf-8",
-                            "X-Proxy-Retries": str(retry_count),
-                        },
-                    )
-        payload = build_anthropic_malformed_success_payload(issue=issue, retry_count=retry_count)
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        if next_response is None:
+            payload = build_anthropic_malformed_success_payload(issue=issue, retry_count=retry_count)
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            close_response_quietly(upstream_response)
+            log_and_record_malformed_success(
+                request_id=request_id,
+                upstream_url=upstream_url,
+                route_url=str((next_execution if isinstance(next_execution, dict) else execution or {}).get("route_url") or upstream_url),
+                requested_stream=False,
+                started_at=started_at,
+                retry_count=retry_count,
+                issue=issue,
+                bytes_sent=len(body),
+                sanitized_markers=consumed["sanitized_markers"],
+                repaired_tool_args=consumed["repaired_tool_args"],
+            )
+            return Response(
+                body,
+                status=502,
+                headers={
+                    "Content-Type": "application/json; charset=utf-8",
+                    "X-Proxy-Retries": str(retry_count),
+                },
+            )
+
         close_response_quietly(upstream_response)
-        log_and_record_malformed_success(
-            request_id=request_id,
-            upstream_url=upstream_url,
-            route_url=str((next_execution if 'next_execution' in locals() and isinstance(next_execution, dict) else execution or {}).get("route_url") or upstream_url),
-            requested_stream=False,
-            started_at=started_at,
-            retry_count=retry_count,
-            issue=issue,
-            bytes_sent=len(body),
-            sanitized_markers=consumed["sanitized_markers"],
-            repaired_tool_args=consumed["repaired_tool_args"],
-        )
-        return Response(
-            body,
-            status=502,
-            headers={
-                "Content-Type": "application/json; charset=utf-8",
-                "X-Proxy-Retries": str(retry_count),
-            },
-        )
+        retry_count = int(next_execution.get("retry_count") or retry_count)
+        if requested_stream:
+            return handle_anthropic_stream_response(
+                upstream_response=next_response,
+                request_id=request_id,
+                upstream_url=str(next_execution.get("upstream_url") or upstream_url),
+                started_at=started_at,
+                request_payload=request_payload,
+                tool_schemas=next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else tool_schemas,
+                retry_count=retry_count,
+                observability_meta=build_request_observability_meta(next_execution, openai_payload) | {"_downstream_anthropic_payload": anthropic_response_payload, "_execution": next_execution},
+            )
+        execution = next_execution
+        upstream_response = next_response
+        upstream_url = str(next_execution.get("upstream_url") or upstream_url)
+        tool_schemas = next_execution.get("tool_schemas") if isinstance(next_execution.get("tool_schemas"), dict) else tool_schemas
 
     anthropic_body = convert_openai_response_to_anthropic(
         openai_body,
@@ -7937,7 +7828,6 @@ def handle_anthropic_stream_response(
                 }
 
             if preflight_empty_issue:
-                mark_route_failure(route_url, preflight_empty_issue["code"])
                 if isinstance(request_payload, dict) and can_attempt_same_request_failover(
                     route_hint="chat/completions",
                     execution=execution,
@@ -8275,7 +8165,6 @@ def handle_anthropic_stream_response(
                         separators=(",", ":"),
                     ),
                 }
-                mark_route_failure(route_url, issue["code"])
                 if isinstance(request_payload, dict) and can_attempt_same_request_failover(
                     route_hint="chat/completions",
                     execution=execution,

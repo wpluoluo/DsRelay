@@ -50,15 +50,28 @@ class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
         os.environ["UPSTREAM_URL_POOL"] = "https://bad.example/v1,https://good.example/v1"
         os.environ["UPSTREAM_API_KEY"] = "upstream-secret"
         os.environ["UPSTREAM_RANDOMIZE_ENDPOINTS"] = "0"
+        os.environ["STORAGE_DB_HOST"] = ""
+        os.environ["STORAGE_DB_PORT"] = "3306"
+        os.environ["STORAGE_DB_USER"] = ""
+        os.environ["STORAGE_DB_PASSWORD"] = ""
+        os.environ["STORAGE_DB_NAME"] = ""
 
         import local_proxy.server as server
 
         server = importlib.reload(server)
+        server.ENABLE_MODEL_CANDIDATE_RACE = False
+        server.STREAM_FIRST_EVENT_TIMEOUT_SECONDS = 1
+        server.WAITING_STREAM_HEARTBEAT_SECONDS = 1
         self.addCleanup(lambda: os.environ.pop("PROXY_API_KEYS", None))
         self.addCleanup(lambda: os.environ.pop("UPSTREAM_URL", None))
         self.addCleanup(lambda: os.environ.pop("UPSTREAM_URL_POOL", None))
         self.addCleanup(lambda: os.environ.pop("UPSTREAM_API_KEY", None))
         self.addCleanup(lambda: os.environ.pop("UPSTREAM_RANDOMIZE_ENDPOINTS", None))
+        self.addCleanup(lambda: os.environ.pop("STORAGE_DB_HOST", None))
+        self.addCleanup(lambda: os.environ.pop("STORAGE_DB_PORT", None))
+        self.addCleanup(lambda: os.environ.pop("STORAGE_DB_USER", None))
+        self.addCleanup(lambda: os.environ.pop("STORAGE_DB_PASSWORD", None))
+        self.addCleanup(lambda: os.environ.pop("STORAGE_DB_NAME", None))
         return server
 
     def test_anthropic_messages_retries_empty_stream_success_on_alternate_route(self):
@@ -69,7 +82,7 @@ class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
             {
                 "name": "bad",
                 "enabled": True,
-                "priority": 200,
+                "priority": 100,
                 "urls": ["https://bad.example/v1"],
                 "keys": [{"key": "bad-key"}],
                 "route_policy": {},
@@ -77,7 +90,7 @@ class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
             {
                 "name": "good",
                 "enabled": True,
-                "priority": 100,
+                "priority": 200,
                 "urls": ["https://good.example/v1"],
                 "keys": [{"key": "good-key"}],
                 "route_policy": {},
@@ -111,8 +124,7 @@ class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
         }
 
-        def fake_request(**kwargs):
-            url = kwargs["url"]
+        def fake_request(method, url, **kwargs):
             sent_urls.append(url)
             if "bad.example" in url:
                 return FiniteStreamResponse(
@@ -151,6 +163,17 @@ class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
             ],
         )
         self.assertEqual(response.headers.get("X-Proxy-Retries"), "1")
+        failing_bad_route_health = [
+            entry
+            for route_url, entry in server.route_health.items()
+            if "bad.example" in route_url
+            and (
+                int(entry.get("failures") or 0) > 0
+                or int(entry.get("consecutive_failures") or 0) > 0
+                or str(entry.get("last_reason") or "")
+            )
+        ]
+        self.assertEqual(failing_bad_route_health, [])
 
     def test_anthropic_messages_retries_empty_stream_success_on_same_url_distinct_route(self):
         server = self.load_server()
@@ -203,18 +226,18 @@ class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
         }
 
-        def fake_request(**kwargs):
+        def fake_request(method, url, **kwargs):
             auth = kwargs.get("headers", {}).get("Authorization", "")
-            seen.append((kwargs["url"], auth))
+            seen.append((url, auth))
             if len(seen) == 1:
                 return FiniteStreamResponse(
-                    kwargs["url"],
+                    url,
                     [
                         "data: " + json.dumps(terminal_only, separators=(",", ":")),
                         "",
                     ],
                 )
-            return make_json_response(kwargs["url"], healthy_body)
+            return make_json_response(url, healthy_body)
 
         server.UPSTREAM_SESSION.request = fake_request
         client = server.app.test_client()
@@ -242,6 +265,13 @@ class AnthropicMalformedSuccessRetryTests(unittest.TestCase):
         self.assertTrue(any("nv-key-1" in auth for _, auth in seen))
         self.assertTrue(any("nv-key-2" in auth for _, auth in seen))
         self.assertEqual(response.headers.get("X-Proxy-Retries"), "1")
+        failing_route_health = [
+            entry
+            for route_url, entry in server.route_health.items()
+            if "integrate.api.nvidia.com" in route_url
+            and int(entry.get("failures") or 0) > 0
+        ]
+        self.assertEqual(failing_route_health, [])
 
     def test_anthropic_messages_returns_proxy_502_instead_of_upstream_404(self):
         server = self.load_server()

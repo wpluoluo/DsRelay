@@ -728,6 +728,19 @@ class StreamCompletionTests(unittest.TestCase):
             "stop",
         )
 
+    def test_consume_openai_sse_events_captures_stream_read_exception(self):
+        upstream = ErrorAfterPartialStreamResponse(
+            [": upstream-opened"],
+            requests.ConnectionError("Read timed out."),
+        )
+
+        consumed = consume_openai_sse_events(upstream, {})
+
+        self.assertEqual(consumed["response_events"], [])
+        self.assertTrue(
+            any(line.startswith("stream_read_exception:ConnectionError") for line in consumed["raw_error_lines"])
+        )
+
     def test_anthropic_stream_sends_message_stop_after_openai_finish_reason(self):
         upstream = SlowAfterTerminalResponse(openai_stream_lines())
         request_payload = {"model": "test-model", "stream": True, "messages": [{"role": "user", "content": "hello"}]}
