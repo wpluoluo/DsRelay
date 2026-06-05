@@ -35,6 +35,32 @@ class RequestCacheTests(unittest.TestCase):
 
         self.assertEqual(non_stream_key, stream_key)
 
+    def test_cache_key_ignores_upstream_prompt_cache_hint_fields(self):
+        base_payload = {
+            "model": "demo-model",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+        route_policy = {"prompt_cache_mode": "exact"}
+
+        plain_key = build_cache_key(
+            protocol="openai_chat_completions",
+            path="chat/completions",
+            payload=base_payload,
+            route_policy=route_policy,
+        )
+        hinted_key = build_cache_key(
+            protocol="openai_chat_completions",
+            path="chat/completions",
+            payload={
+                **base_payload,
+                "prompt_cache_key": "session-a",
+                "prompt_cache_retention": "24h",
+            },
+            route_policy=route_policy,
+        )
+
+        self.assertEqual(plain_key, hinted_key)
+
     def test_stream_request_can_use_prompt_cache_when_payload_supported(self):
         payload = {
             "model": "demo-model",

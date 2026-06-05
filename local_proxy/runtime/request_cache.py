@@ -94,6 +94,8 @@ def normalize_cache_payload(payload: dict | None) -> dict:
     normalized = deepcopy(payload)
     normalized.pop("stream", None)
     normalized.pop("stream_options", None)
+    normalized.pop("prompt_cache_key", None)
+    normalized.pop("prompt_cache_retention", None)
     return normalized
 
 

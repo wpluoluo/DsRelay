@@ -306,7 +306,7 @@ class ProxyEntrypointAuthTests(unittest.TestCase):
         generated_key = create_payload["generated_key"]
         key_id = create_payload["keys"][0]["id"]
         self.assertRegex(generated_key, r"^sk-[A-Za-z0-9]{48}$")
-        self.assertNotIn(generated_key, str(create_payload["keys"]))
+        self.assertEqual(create_payload["keys"][0]["key"], generated_key)
 
         ok_response = client.get(
             "/v1",
@@ -369,7 +369,7 @@ class ProxyEntrypointAuthTests(unittest.TestCase):
         self.assertIn("proxy_api_key_records", fake_storage.saved_payload)
         self.assertEqual(fake_storage.saved_payload["proxy_api_key_records"][0]["id"], record["id"])
         self.assertEqual(fake_storage.saved_payload["proxy_api_key_records"][0]["key_hash"], record["key_hash"])
-        self.assertNotIn(generated_key, str(fake_storage.saved_payload))
+        self.assertEqual(fake_storage.saved_payload["proxy_api_key_records"][0]["key"], generated_key)
         self.assertRegex(generated_key, r"^sk-[A-Za-z0-9]{48}$")
 
     def test_saving_public_config_payload_does_not_drop_managed_proxy_keys(self):

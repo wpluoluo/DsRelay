@@ -70,6 +70,7 @@ def make_proxy_api_key_record(name: str | None = None) -> tuple[dict, str]:
     record = {
         "id": f"pak_{uuid.uuid4().hex[:16]}",
         "name": str(name or "").strip() or "NEWAPI",
+        "key": key,
         "key_hash": hash_proxy_api_key(key),
         "key_preview": preview_proxy_api_key(key),
         "enabled": True,
@@ -105,17 +106,18 @@ def normalize_proxy_api_key_records(records) -> list[dict]:
         if raw_key:
             preview = preview_proxy_api_key(raw_key)
 
-        normalized.append(
-            {
-                "id": key_id,
-                "name": name[:80],
-                "key_hash": key_hash,
-                "key_preview": preview,
-                "enabled": raw.get("enabled") is not False,
-                "created_at": created_at,
-                "updated_at": updated_at,
-            }
-        )
+        item = {
+            "id": key_id,
+            "name": name[:80],
+            "key_hash": key_hash,
+            "key_preview": preview,
+            "enabled": raw.get("enabled") is not False,
+            "created_at": created_at,
+            "updated_at": updated_at,
+        }
+        if raw_key:
+            item["key"] = raw_key
+        normalized.append(item)
     return normalized
 
 
@@ -123,6 +125,7 @@ def public_proxy_api_key_record(record: dict) -> dict:
     return {
         "id": str(record.get("id") or ""),
         "name": str(record.get("name") or ""),
+        "key": str(record.get("key") or ""),
         "key_preview": str(record.get("key_preview") or ""),
         "enabled": record.get("enabled") is not False,
         "created_at": str(record.get("created_at") or ""),

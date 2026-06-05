@@ -562,7 +562,7 @@
       width: 100%;
       border-collapse: separate;
       border-spacing: 0;
-      min-width: 1280px;
+      min-width: 1180px;
       font-size: 12px;
       table-layout: fixed;
     }
@@ -622,6 +622,12 @@
       font-family: "Cascadia Code", "JetBrains Mono", "Consolas", monospace;
       word-break: break-word;
     }
+    .request-line-main { font-weight: 800; color: var(--ink); }
+    .request-line-path { font-family: "Cascadia Code", "JetBrains Mono", "Consolas", monospace; color: var(--muted); }
+    .request-metric-list { display: grid; gap: 3px; }
+    .request-metric-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+    .request-metric-label { min-width: 52px; color: var(--muted); font-size: 10.5px; font-weight: 800; }
+    .request-metric-value { font-size: 11px; color: var(--ink); overflow-wrap: anywhere; }
 
     /* ===== Log workbench ===== */
     .log-panel { padding: 0; overflow: hidden; }
@@ -886,7 +892,8 @@
     .key-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
     .key-name { font-size: 14px; font-weight: 800; color: var(--ink); overflow-wrap: anywhere; }
     .key-meta { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
-    .key-preview { font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; background: var(--surface-alt); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; overflow-wrap: anywhere; }
+    .key-preview { font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; background: var(--surface-alt); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; overflow-wrap: anywhere; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .key-preview-value { min-width: 0; overflow-wrap: anywhere; }
     .key-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
     .generated-key-box { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 12px; display: none; gap: 10px; margin-bottom: 14px; }
     .generated-key-box.show { display: grid; }
@@ -1223,7 +1230,6 @@
             </div>
             <button class="btn btn-primary" id="createProxyKeyBtn" type="button"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> 生成入口 Key</button>
           </div>
-          <div class="subtle" style="font-size:12px;margin:-4px 0 12px;">托管 Key 生成格式为 sk- 加 48 位字母数字；仅保存哈希和预览，随运行配置写入本地配置，并在启用 MySQL 时同步到 app_config。</div>
           <div class="generated-key-box" id="generatedProxyKeyBox">
             <div style="font-size:12px;font-weight:800;color:var(--accent);">新 Key 只显示一次</div>
             <div class="generated-key-row">
@@ -1956,12 +1962,13 @@
             '<div><div class="key-name">' + escapeHtml(item.name || "NEWAPI") + '</div>' +
             '<div class="key-meta"><span class="pool-badge ' + badgeClass + '">' + badgeText + '</span><span>创建 ' + escapeHtml(item.created_at || "-") + '</span><span>更新 ' + escapeHtml(item.updated_at || "-") + '</span></div></div>' +
             '<div class="key-actions">' +
+              '<button class="pool-inline-btn primary" data-key-action="copy">复制</button>' +
               '<button class="pool-inline-btn" data-key-action="rename">改名</button>' +
               '<button class="pool-inline-btn" data-key-action="toggle">' + (enabled ? "停用" : "启用") + '</button>' +
               '<button class="pool-inline-btn danger" data-key-action="delete">删除</button>' +
             '</div>' +
           '</div>' +
-          '<div class="key-preview">' + escapeHtml(item.key_preview || "无预览") + '</div>' +
+          '<div class="key-preview"><span class="key-preview-value">' + escapeHtml(item.key || item.key_preview || "无预览") + '</span></div>' +
         '</div>';
       }).join("");
     }
@@ -2168,29 +2175,31 @@
         var upstreamPromptCacheNote = String(entry.upstream_prompt_cache_note || "");
         var upstreamUrl = String(entry.upstream_url || "");
         var actualRouteUrl = String(entry.route_url || upstreamUrl || "");
-        var cacheSummary = "本地缓存读 " + cacheReadBytes + " B";
+        var localCacheText = cacheStatus;
+        var localCacheTone = "warn";
+        if (entry.local_response_cache_hit) {
+          localCacheText = "命中" + (entry.cache_source ? (" · " + entry.cache_source) : "");
+          localCacheTone = "ok";
+        } else if (cacheStatus.indexOf("bypass") === 0) {
+          localCacheText = "跳过" + (cacheNote ? (" · " + cacheNote) : "");
+        } else if (cacheStatus === "miss_tools_readonly") {
+          localCacheText = "未命中 · 只读工具可缓存";
+        } else {
+          localCacheText = "未命中" + (cacheNote ? (" · " + cacheNote) : "");
+        }
+        var upstreamCacheTone = upstreamPromptCacheStatus === "hit" ? "ok" : (upstreamPromptCacheStatus === "off" ? "" : "accent");
+        var upstreamCacheText = upstreamPromptCacheStatus + (upstreamPromptCacheNote ? (" · " + upstreamPromptCacheNote) : "");
         var tokenSummary = "Token " + promptTokens + " IN · " + completionTokens + " OUT";
         if (cacheReadTokens > 0) tokenSummary += " · 缓存读 " + cacheReadTokens;
         if (cacheCreationTokens > 0) tokenSummary += " · 缓存写 " + cacheCreationTokens;
         if (totalTokens > 0) tokenSummary += " · 总 " + totalTokens;
-        if (entry.local_response_cache_hit) {
-          cacheSummary += " · 命中";
-          if (entry.cache_source) cacheSummary += " · " + entry.cache_source;
-        } else if (cacheStatus === "miss_stream" || cacheStatus === "bypass_stream" || cacheStatus === "bypass_tools" || cacheStatus === "bypass_format" || cacheStatus === "bypass_policy" || cacheStatus === "bypass_payload") {
-          cacheSummary += " · 跳过";
-          if (cacheNote) cacheSummary += " · " + cacheNote;
-        } else {
-          cacheSummary += " · 未命中";
-        }
-        cacheSummary += " · 前缀缓存 " + upstreamPromptCacheStatus;
-        if (upstreamPromptCacheNote) cacheSummary += " · " + upstreamPromptCacheNote;
         return '<tr>' +
           '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(entry.started_at || "-") + '</div><div class="request-cell-sub request-mono">' + escapeHtml(entry.request_id || "-") + '</div></div></td>' +
-          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(entry.remote || "-") + '</div><div class="request-cell-sub">重试 ' + escapeHtml(entry.retry_count || 0) + ' · 候选线路 ' + escapeHtml(routePoolSize || 1) + (routeAttemptCount ? (' · 尝试线路 ' + escapeHtml(routeAttemptCount)) : '') + '</div></div></td>' +
-          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(poolName) + ' · ' + escapeHtml(routeIndex) + ' · ' + escapeHtml(keyIndex) + '</div><div class="request-cell-sub request-mono request-ellipsis">线路路径 ' + escapeHtml(actualRouteUrl || "-") + '</div><div class="request-cell-sub">' + (entry.client_gone ? '客户端断开' : '请求完成') + '</div></div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(entry.remote || "-") + '</div><div class="request-cell-sub">重试 ' + escapeHtml(entry.retry_count || 0) + ' · 候选 ' + escapeHtml(routePoolSize || 1) + (routeAttemptCount ? (' · 已试 ' + escapeHtml(routeAttemptCount)) : '') + '</div></div></td>' +
+          '<td><div class="request-stack"><div class="request-line-main">' + escapeHtml(poolName) + ' · ' + escapeHtml(routeIndex) + ' · ' + escapeHtml(keyIndex) + '</div><div class="request-line-path request-ellipsis">' + escapeHtml(actualRouteUrl || "-") + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-cell-title request-ellipsis">' + escapeHtml(logicalModel) + '</div><div class="request-cell-sub request-ellipsis">' + escapeHtml(resolvedModel) + '</div><div class="request-cell-sub">' + escapeHtml(poolName) + '</div></div></td>' +
-          '<td><div class="request-chip-row"><span class="request-chip ok">' + escapeHtml(entry.duration_ms || "-") + ' ms</span><span class="request-chip">' + escapeHtml(inputBytes) + ' IN</span><span class="request-chip">' + escapeHtml(outputBytes) + ' OUT</span></div><div class="request-cell-sub">' + escapeHtml(tokenSummary) + '</div><div class="request-cell-sub">' + escapeHtml(cacheSummary) + '</div></td>' +
-          '<td><div class="request-stack"><div class="request-cell-sub">请求 ' + escapeHtml(entry.request_repairs || 0) + ' · DSML ' + escapeHtml(entry.sanitized_markers || 0) + ' · 工具 ' + escapeHtml(entry.repaired_tool_args || 0) + '</div><div class="request-cell-sub">本地缓存 ' + escapeHtml(cacheStatus) + (cacheNote ? (' · ' + escapeHtml(cacheNote)) : '') + '</div><div class="request-cell-sub">前缀缓存 ' + escapeHtml(upstreamPromptCacheStatus) + (upstreamPromptCacheNote ? (' · ' + escapeHtml(upstreamPromptCacheNote)) : '') + '</div></div></td>' +
+          '<td><div class="request-metric-list"><div class="request-chip-row"><span class="request-chip ok">' + escapeHtml(entry.duration_ms || "-") + ' ms</span><span class="request-chip">' + escapeHtml(inputBytes) + ' IN</span><span class="request-chip">' + escapeHtml(outputBytes) + ' OUT</span></div><div class="request-metric-row"><span class="request-metric-label">Token</span><span class="request-metric-value">' + escapeHtml(tokenSummary) + '</span></div><div class="request-metric-row"><span class="request-metric-label">官方缓存</span><span class="request-chip ' + upstreamCacheTone + '">' + escapeHtml(upstreamCacheText) + '</span></div><div class="request-metric-row"><span class="request-metric-label">本地缓存</span><span class="request-chip ' + localCacheTone + '">' + escapeHtml(localCacheText) + '</span><span class="request-cell-sub">' + escapeHtml(cacheReadBytes) + ' B</span></div></div></td>' +
+          '<td><div class="request-stack"><div class="request-cell-sub">请求 ' + escapeHtml(entry.request_repairs || 0) + ' · DSML ' + escapeHtml(entry.sanitized_markers || 0) + ' · 工具 ' + escapeHtml(entry.repaired_tool_args || 0) + '</div></div></td>' +
           '<td><div class="request-chip-row"><span class="request-chip ' + statusTone + '">状态 ' + escapeHtml(statusLabel) + '</span>' + (entry.error ? '<span class="request-chip err">异常</span>' : '') + '</div>' + (entry.error ? '<div class="request-cell-sub request-ellipsis" style="color:var(--error);">' + escapeHtml(entry.error) + '</div>' : '') + '</td>' +
         '</tr>';
       }).join("");
@@ -3135,7 +3144,18 @@
       var item = (proxyKeyData.keys || []).find(function(k) { return k.id === keyId; });
       if (!item) return;
       var action = btn.dataset.keyAction;
-      if (action === "rename") {
+      if (action === "copy") {
+        var keyValue = String(item.key || "").trim();
+        if (!keyValue) {
+          setProxyKeyStatus("这条历史 Key 没有保存原始值，无法复制完整 Key；请重新生成后使用。", "warn");
+          return;
+        }
+        navigator.clipboard.writeText(keyValue).then(function() {
+          setProxyKeyStatus("已复制入口 Key。", "ok");
+        }).catch(function() {
+          setProxyKeyStatus("复制失败，请手动选中 Key。", "err");
+        });
+      } else if (action === "rename") {
         var nextName = prompt("入口 Key 名称", item.name || "NEWAPI");
         if (nextName === null) return;
         mutateProxyKey({ action: "update", id: keyId, name: nextName }, "入口 Key 名称已更新。");
