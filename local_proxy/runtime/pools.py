@@ -239,6 +239,18 @@ class ConnectionPoolState:
             normalized_url = self._resolve_stored_route_url(str(url or "").strip())
             return list(self.url_key_map.get(normalized_url, []))
 
+    def route_identity(self, url: str) -> dict:
+        with self.lock:
+            normalized_url = self._resolve_stored_route_url(str(url or "").strip())
+            keys = list(self.url_key_map.get(normalized_url, []))
+            pool_name = self.url_pool_name_map.get(normalized_url, "")
+            return {
+                "url": normalized_url if normalized_url in self.url_key_map else str(url or "").strip(),
+                "pool_name": pool_name,
+                "key_count": len(keys),
+                "has_keys": bool(keys),
+            }
+
     def choose_key(self, url: str, *, exclude: set[str] | None = None) -> dict | None:
         exclude = set(exclude or ())
         now = time.time()

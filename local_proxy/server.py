@@ -131,12 +131,14 @@ from local_proxy.runtime.policies import (
 )
 from local_proxy.runtime.request_cache import (
     DEFAULT_REQUEST_CACHE_TTL_SECONDS,
-    all_tools_read_only,
     build_cache_key,
     build_coalescing_key,
     build_cache_record,
     build_cached_execution,
+    is_cache_lookup_eligible_request,
+    is_cache_storable_response,
     is_cacheable_request,
+    response_has_tool_calls,
 )
 from local_proxy.storage import ProxyStorage
 from local_proxy.upstream.capabilities import (
@@ -242,6 +244,31 @@ def parse_upstream_url_pool() -> list[str]:
 
 def base_upstream_url(route_url: str) -> str:
     return ConnectionPoolState.strip_route_identity(route_url)
+
+
+def resolve_route_observability_identity(route_url: str, *, selected_key_index=None) -> dict:
+    route_text = str(route_url or "").strip()
+    if not route_text:
+        return {
+            "route_url": "",
+            "upstream_url": "",
+            "pool_name": "",
+            "api_key_index": None,
+            "key_count": 0,
+        }
+    identity = connection_pool_state.route_identity(route_text)
+    resolved_route_url = route_text
+    key_count = int(identity.get("key_count") or 0)
+    api_key_index = selected_key_index
+    if key_count <= 0:
+        api_key_index = None
+    return {
+        "route_url": resolved_route_url,
+        "upstream_url": base_upstream_url(resolved_route_url),
+        "pool_name": str(identity.get("pool_name") or ""),
+        "api_key_index": api_key_index,
+        "key_count": key_count,
+    }
 
 
 def is_internal_route_url(route_url: str) -> bool:
@@ -2541,7 +2568,7 @@ def execute_upstream_request(
         payload=upstream_payload if isinstance(upstream_payload, dict) else None,
         route_policy=route_policy,
     )
-    if storage is not None and is_cacheable_request(
+    if storage is not None and is_cache_lookup_eligible_request(
         request_payload=upstream_payload,
         route_policy=route_policy,
         stream=requested_stream,
@@ -2633,10 +2660,48 @@ def execute_upstream_request(
             (attempt.get("route_url") for attempt in reversed(attempts) if attempt.get("route_url")),
             route_url,
         )
-        selected_upstream_url = next(
-            (attempt.get("upstream_url") for attempt in reversed(attempts) if attempt.get("upstream_url")),
+        final_attempt_key_index = next(
+            (
+                attempt.get("api_key_index")
+                for attempt in reversed(attempts)
+                if str(attempt.get("route_url") or "") == str(selected_route_url or "")
+                and attempt.get("api_key_index") is not None
+            ),
+            None,
+        )
+        selected_route_identity = resolve_route_observability_identity(
+            selected_route_url,
+            selected_key_index=final_attempt_key_index,
+        )
+        selected_route_url = selected_route_identity["route_url"] or selected_route_url
+        selected_upstream_url = selected_route_identity["upstream_url"] or next(
+            (
+                attempt.get("upstream_url")
+                for attempt in reversed(attempts)
+                if str(attempt.get("route_url") or "") == str(selected_route_url or "")
+                and attempt.get("upstream_url")
+            ),
             upstream_url,
         )
+        attempted_pool_names = list(dict.fromkeys(
+            str(resolve_route_observability_identity(str(attempt.get("route_url") or "")).get("pool_name") or "")
+            for attempt in attempts
+            if str(attempt.get("route_url") or "").strip()
+        ))
+        attempted_pool_names = [name for name in attempted_pool_names if name]
+        if not attempted_pool_names and selected_route_identity["pool_name"]:
+            attempted_pool_names = [selected_route_identity["pool_name"]]
+        selected_key_index = selected_route_identity["api_key_index"]
+        if selected_key_index is None and selected_route_identity["key_count"] > 0:
+            selected_key_index = next(
+                (
+                    attempt.get("api_key_index")
+                    for attempt in reversed(attempts)
+                    if str(attempt.get("route_url") or "") == str(selected_route_url or "")
+                    and attempt.get("api_key_index") is not None
+                ),
+                key_choice.get("key_index") if str(key_choice.get("url") or "") == str(selected_route_url or "") else None,
+            )
         learned_request_repairs = sum(
             int(attempt.get("learned_request_repairs", 0) or 0)
             for attempt in attempts
@@ -2680,17 +2745,9 @@ def execute_upstream_request(
                 (str(attempt.get("model") or "") for attempt in reversed(attempts) if str(attempt.get("model") or "").strip()),
                 model_candidates[0] if model_candidates else "",
             ),
-            "selected_pool_name": next(
-                (str(attempt.get("pool_name") or "") for attempt in reversed(attempts) if str(attempt.get("pool_name") or "").strip()),
-                str(key_choice.get("pool_name") or ""),
-            ),
-            "attempted_pool_names": list(dict.fromkeys(
-                str(attempt.get("pool_name") or "") for attempt in attempts if str(attempt.get("pool_name") or "").strip()
-            )),
-            "selected_key_index": next(
-                (attempt.get("api_key_index") for attempt in reversed(attempts) if attempt.get("api_key_index") is not None),
-                key_choice.get("key_index"),
-            ),
+            "selected_pool_name": selected_route_identity["pool_name"],
+            "attempted_pool_names": attempted_pool_names,
+            "selected_key_index": selected_key_index,
             "selected_route_index": next(
                 (
                     upstream_urls.index(str(attempt.get("route_url") or ""))
@@ -3404,14 +3461,20 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
         or logical_model
         or ""
     )
+    route_url = str(execution.get("route_url") or execution.get("upstream_url") or "")
+    route_identity = resolve_route_observability_identity(
+        route_url,
+        selected_key_index=execution.get("selected_key_index"),
+    )
+    route_url = route_identity["route_url"] or route_url
     pool_name = str(
-        execution.get("selected_pool_name")
+        route_identity["pool_name"]
+        or execution.get("selected_pool_name")
         or execution.get("upstream_pool_name")
-        or (execution.get("initial_key_choice") or {}).get("pool_name")
         or ""
     )
-    api_key_index = execution.get("selected_key_index")
-    if api_key_index is None:
+    api_key_index = route_identity["api_key_index"]
+    if api_key_index is None and int(route_identity.get("key_count") or 0) > 0:
         api_key_index = execution.get("upstream_key_index")
     input_bytes = estimate_request_payload_bytes(effective_payload)
     cache_hit = bool(execution.get("cache_hit"))
@@ -3430,20 +3493,13 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
         if str((route_policy or {}).get("prompt_cache_mode") or "off") != "exact":
             cache_status = "bypass_policy"
             cache_note = "策略未开启"
-        elif is_cacheable_request(request_payload=payload_dict, route_policy=route_policy, stream=False):
-            if payload_dict.get("tools") and all_tools_read_only(payload_dict.get("tools")):
-                cache_status = "miss_tools_readonly"
-                cache_note = "只读工具可缓存"
+        elif is_cache_lookup_eligible_request(request_payload=payload_dict, route_policy=route_policy, stream=False):
+            if response_has_tool_calls(response_body):
+                cache_status = "bypass_tools"
+                cache_note = "工具调用结果不缓存"
             else:
                 cache_status = "miss"
                 cache_note = "本次未命中"
-        elif payload_dict.get("tools"):
-            if all_tools_read_only(payload_dict.get("tools")):
-                cache_status = "bypass_tools"
-                cache_note = "工具选择不支持缓存"
-            else:
-                cache_status = "bypass_tools"
-                cache_note = "副作用工具不缓存"
         elif payload_dict.get("response_format"):
             cache_status = "bypass_format"
             cache_note = "结构化输出不缓存"
@@ -3477,7 +3533,7 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
     meta = {
         "logical_model": logical_model,
         "resolved_model": resolved_model,
-        "route_url": str(execution.get("route_url") or execution.get("upstream_url") or ""),
+        "route_url": route_url,
         "upstream_subpath": str(execution.get("upstream_subpath") or ""),
         "pool_name": pool_name,
         "attempted_pool_names": list(execution.get("attempted_pool_names") or []) or ([pool_name] if pool_name else []),
@@ -3611,6 +3667,11 @@ def save_request_cache_entry(
 ) -> None:
     if storage is None or not isinstance(response_body, dict):
         return
+    cache_payload = (
+        execution.get("upstream_payload")
+        if isinstance(execution, dict) and isinstance(execution.get("upstream_payload"), dict)
+        else request_payload
+    )
     choices = response_body.get("choices") or []
     if choices:
         has_useful_content = False
@@ -3626,10 +3687,10 @@ def save_request_cache_entry(
         if not has_useful_content:
             return
     route_policy = execution.get("route_policy") if isinstance(execution, dict) else None
-    if not is_cacheable_request(
-        request_payload=request_payload,
+    if not is_cache_storable_response(
+        request_payload=cache_payload,
         route_policy=route_policy if isinstance(route_policy, dict) else {},
-        stream=False,
+        response_body=response_body,
     ):
         return
     try:
@@ -3638,7 +3699,7 @@ def save_request_cache_entry(
             cache_key = build_cache_key(
                 protocol=protocol,
                 path=path,
-                payload=request_payload,
+                payload=cache_payload,
                 route_policy=route_policy if isinstance(route_policy, dict) else {},
             )
         storage.save_request_cache(
@@ -3646,7 +3707,7 @@ def save_request_cache_entry(
                 cache_key=cache_key,
                 protocol=protocol,
                 path=path,
-                request_payload=request_payload,
+                request_payload=cache_payload,
                 route_policy=route_policy if isinstance(route_policy, dict) else {},
                 response_body=response_body,
                 upstream_url=upstream_url,

@@ -344,6 +344,7 @@ class ResponsesCompatTests(unittest.TestCase):
                 server.ConnectionPoolState.route_id_for("nv", "https://integrate.api.nvidia.com/v1", 1),
                 server.ConnectionPoolState.route_id_for("opencode-ai", "https://opencode.ai/zen/v1", 1),
             ]
+            server.connection_pool_state.rebuild(server.PROXY_POOLS)
 
             def fake_request_upstream_with_retries(request_kwargs, **kwargs):
                 seen["upstream_urls"] = list(kwargs.get("upstream_urls") or [])
@@ -360,6 +361,7 @@ class ResponsesCompatTests(unittest.TestCase):
         finally:
             server.PROXY_POOLS = original_pools
             server.UPSTREAM_URL_POOL = original_upstream_pool
+            server.connection_pool_state.rebuild(server.PROXY_POOLS)
 
         self.assertEqual(
             seen["upstream_urls"],
@@ -381,6 +383,74 @@ class ResponsesCompatTests(unittest.TestCase):
                 ).replace("/v1#__route=", "/v1/chat/completions#__route=")
             ],
         )
+
+    def test_execute_upstream_request_attributes_final_keyless_route_from_route_url(self):
+        original_pools = server.PROXY_POOLS
+        original_upstream_pool = server.UPSTREAM_URL_POOL
+        try:
+            server.PROXY_POOLS = [
+                {
+                    "name": "nv",
+                    "enabled": True,
+                    "priority": 100,
+                    "urls": ["https://integrate.api.nvidia.com/v1"],
+                    "keys": [{"key": "nv-key"}],
+                    "supported_models_text": "deepseek-v4-flash",
+                    "route_policy": {"text_upstream_protocol": "auto"},
+                },
+                {
+                    "name": "opencode-ai",
+                    "enabled": True,
+                    "priority": 90,
+                    "urls": ["https://opencode.ai/zen/v1"],
+                    "keys": [],
+                    "supported_models_text": "deepseek-v4-flash",
+                    "route_policy": {"text_upstream_protocol": "auto"},
+                },
+            ]
+            server.UPSTREAM_URL_POOL = [
+                server.ConnectionPoolState.route_id_for("nv", "https://integrate.api.nvidia.com/v1", 1),
+                server.ConnectionPoolState.route_id_for("opencode-ai", "https://opencode.ai/zen/v1", 1),
+            ]
+            server.connection_pool_state.rebuild(server.PROXY_POOLS)
+            opencode_route = server.ConnectionPoolState.route_id_for(
+                "opencode-ai",
+                "https://opencode.ai/zen/v1",
+                1,
+            ).replace("/v1#__route=", "/v1/chat/completions#__route=")
+
+            def fake_request_upstream_with_retries(request_kwargs, **kwargs):
+                return None, [
+                    {
+                        "route_url": opencode_route,
+                        "upstream_url": "https://opencode.ai/zen/v1/chat/completions",
+                        "pool_name": "nv",
+                        "api_key_index": 0,
+                        "model": "deepseek-v4-flash",
+                    }
+                ], None
+
+            payload = {
+                "model": "deepseek-v4-flash",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": False,
+            }
+            with server.app.test_request_context("/v1/chat/completions", method="POST", json=payload):
+                with patch.object(server, "request_upstream_with_retries", side_effect=fake_request_upstream_with_retries):
+                    result = server.execute_upstream_request("chat/completions", payload, "req-keyless-final")
+        finally:
+            server.PROXY_POOLS = original_pools
+            server.UPSTREAM_URL_POOL = original_upstream_pool
+            server.connection_pool_state.rebuild(server.PROXY_POOLS)
+
+        self.assertEqual(result["route_url"], opencode_route)
+        self.assertEqual(result["upstream_url"], "https://opencode.ai/zen/v1/chat/completions")
+        self.assertEqual(result["selected_pool_name"], "opencode-ai")
+        self.assertIsNone(result["selected_key_index"])
+        self.assertEqual(result["attempted_pool_names"], ["opencode-ai"])
+        meta = server.build_request_observability_meta(result, payload)
+        self.assertEqual(meta["pool_name"], "opencode-ai")
+        self.assertIsNone(meta["api_key_index"])
 
     def test_execute_upstream_request_rejects_model_not_supported_by_explicit_pools(self):
         original_pools = server.PROXY_POOLS

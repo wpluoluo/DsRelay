@@ -633,10 +633,8 @@
     .token-flow.in { color: #0f9f6e; }
     .token-flow.out { color: #7c3aed; }
     .cache-hover { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 999px; color: #2563eb; background: #eff6ff; border: 1px solid #bfdbfe; cursor: default; }
-    .cache-hover::before { content: ""; position: absolute; left: 100%; top: -18px; width: 252px; height: 168px; opacity: 0; pointer-events: none; z-index: 7; }
     .cache-hover::after { content: ""; position: absolute; right: -8px; top: 50%; transform: translateY(-50%); border-width: 7px 8px 7px 0; border-style: solid; border-color: transparent #111827 transparent transparent; opacity: 0; pointer-events: none; transition: opacity var(--transition); z-index: 8; }
-    .cache-hover-panel { position: absolute; right: -250px; top: 50%; transform: translateY(-50%); width: 238px; border-radius: 9px; background: #111827; color: #d1d5db; box-shadow: 0 10px 26px rgba(15,23,42,.22); padding: 12px 14px; opacity: 0; pointer-events: auto; transition: opacity var(--transition); z-index: 9; }
-    .cache-hover:hover::before, .cache-hover:focus-within::before { pointer-events: auto; }
+    .cache-hover-panel { position: absolute; right: -250px; top: 50%; transform: translateY(-50%); width: 238px; border-radius: 9px; background: #111827; color: #d1d5db; box-shadow: 0 10px 26px rgba(15,23,42,.22); padding: 12px 14px; opacity: 0; pointer-events: none; transition: opacity var(--transition); z-index: 9; }
     .cache-hover:hover::after, .cache-hover:hover .cache-hover-panel, .cache-hover:focus-within::after, .cache-hover:focus-within .cache-hover-panel { opacity: 1; }
     .cache-tip-title { color: #e5e7eb; font-size: 12px; font-weight: 800; margin-bottom: 8px; }
     .cache-tip-row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; line-height: 1.55; }

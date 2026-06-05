@@ -4,9 +4,12 @@ from local_proxy.runtime.request_cache import (
     build_cache_key,
     build_cached_execution,
     build_coalescing_key,
+    is_cache_lookup_eligible_request,
+    is_cache_storable_response,
     is_cacheable_request,
 )
-from local_proxy.server import build_request_observability_meta
+from local_proxy.server import build_request_observability_meta, save_request_cache_entry
+import local_proxy.server as server
 
 
 class RequestCacheTests(unittest.TestCase):
@@ -76,6 +79,115 @@ class RequestCacheTests(unittest.TestCase):
                 stream=True,
             )
         )
+
+    def test_tool_request_lookup_can_cache_plain_text_response(self):
+        payload = {
+            "model": "demo-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [
+                {"type": "function", "function": {"name": "ToolSearch", "parameters": {}}},
+            ],
+        }
+        response_body = {
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11},
+        }
+        route_policy = {"prompt_cache_mode": "exact"}
+
+        self.assertTrue(
+            is_cache_lookup_eligible_request(
+                request_payload=payload,
+                route_policy=route_policy,
+                stream=True,
+            )
+        )
+        self.assertTrue(
+            is_cache_storable_response(
+                request_payload=payload,
+                route_policy=route_policy,
+                response_body=response_body,
+            )
+        )
+
+    def test_tool_call_response_is_not_stored(self):
+        payload = {
+            "model": "demo-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [
+                {"type": "function", "function": {"name": "ToolSearch", "parameters": {}}},
+            ],
+        }
+        response_body = {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {"name": "ToolSearch", "arguments": "{}"},
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        self.assertFalse(
+            is_cache_storable_response(
+                request_payload=payload,
+                route_policy={"prompt_cache_mode": "exact"},
+                response_body=response_body,
+            )
+        )
+
+    def test_save_request_cache_uses_execution_upstream_payload_key(self):
+        class FakeStorage:
+            def __init__(self):
+                self.saved = None
+
+            def save_request_cache(self, payload):
+                self.saved = payload
+
+        fake_storage = FakeStorage()
+        original_storage = server.storage
+        try:
+            server.storage = fake_storage
+            upstream_payload = {
+                "model": "upstream-model",
+                "messages": [{"role": "user", "content": "hello"}],
+                "reasoning_effort": "medium",
+                "prompt_cache_key": "pcache:v1:test",
+            }
+            cache_key = build_cache_key(
+                protocol="openai_chat_completions",
+                path="chat/completions",
+                payload=upstream_payload,
+                route_policy={"prompt_cache_mode": "exact"},
+            )
+            save_request_cache_entry(
+                execution={
+                    "cache_key": cache_key,
+                    "upstream_payload": upstream_payload,
+                    "route_policy": {"prompt_cache_mode": "exact"},
+                    "route_url": "https://good.example/v1/chat/completions#__route=good",
+                },
+                protocol="openai_chat_completions",
+                path="chat/completions",
+                request_payload={
+                    "model": "logical-model",
+                    "messages": [{"role": "user", "content": "hello"}],
+                },
+                response_body={"choices": [{"message": {"content": "ok"}}]},
+                upstream_url="https://good.example/v1/chat/completions",
+            )
+        finally:
+            server.storage = original_storage
+
+        self.assertIsNotNone(fake_storage.saved)
+        self.assertEqual(fake_storage.saved["cache_key"], cache_key)
+        self.assertEqual(fake_storage.saved["request_payload"]["model"], "upstream-model")
+        self.assertEqual(fake_storage.saved["request_fingerprint"], cache_key)
 
     def test_coalescing_key_matches_exact_payload_except_transport_flags(self):
         base_payload = {

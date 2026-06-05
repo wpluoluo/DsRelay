@@ -157,6 +157,37 @@ def is_cacheable_request(*, request_payload: dict | None, route_policy: dict | N
     return True
 
 
+def is_cache_lookup_eligible_request(*, request_payload: dict | None, route_policy: dict | None, stream: bool) -> bool:
+    if not isinstance(request_payload, dict):
+        return False
+    if str((route_policy or {}).get("prompt_cache_mode") or "off") != "exact":
+        return False
+    if request_payload.get("response_format"):
+        return False
+    messages = request_payload.get("messages")
+    return isinstance(messages, list) and bool(messages)
+
+
+def response_has_tool_calls(response_body: dict | None) -> bool:
+    if not isinstance(response_body, dict):
+        return False
+    for choice in response_body.get("choices") or []:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message") or {}
+        if isinstance(message, dict) and message.get("tool_calls"):
+            return True
+    return False
+
+
+def is_cache_storable_response(*, request_payload: dict | None, route_policy: dict | None, response_body: dict | None) -> bool:
+    if not is_cache_lookup_eligible_request(request_payload=request_payload, route_policy=route_policy, stream=False):
+        return False
+    if response_has_tool_calls(response_body):
+        return False
+    return True
+
+
 def build_cached_execution(
     *,
     cached_payload: dict,
