@@ -2015,10 +2015,15 @@ def build_session_affinity_key(
 
 def infer_prompt_cache_provider(route_policy: dict | None, upstream_url: str | None) -> str:
     explicit = str((route_policy or {}).get("prompt_cache_provider") or "auto").strip().lower()
+    route_text = str(upstream_url or "").strip().lower()
+    is_observe_only_host = bool(
+        route_text and any(marker in route_text for marker in PROMPT_CACHE_OBSERVE_ONLY_HOST_MARKERS)
+    )
+    if is_observe_only_host and explicit in {"auto", "openai", "openrouter"}:
+        return "observe"
     if explicit in {"openai", "openrouter", "deepseek", "anthropic", "gemini", "observe", "none"}:
         return explicit
 
-    route_text = str(upstream_url or "").strip().lower()
     if not route_text:
         return "none"
     if any(marker in route_text for marker in PROMPT_CACHE_ROUTING_HINT_HOST_MARKERS):

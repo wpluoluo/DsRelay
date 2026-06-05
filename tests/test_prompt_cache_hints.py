@@ -157,6 +157,34 @@ class PromptCacheHintTests(unittest.TestCase):
         self.assertFalse(metrics["prompt_cache_hint_applied"])
         self.assertEqual(metrics["prompt_cache_provider"], "observe")
 
+    def test_legacy_openai_provider_on_observe_only_host_does_not_inject(self):
+        payload = {
+            "model": "deepseek-v4-flash-free",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+        route_policy = {
+            "reasoning_effort": "medium",
+            "prompt_cache_mode": "exact",
+            "prompt_cache_hints_mode": "auto",
+            "prompt_cache_provider": "openai",
+            "prompt_cache_retention": "24h",
+            "max_output_tokens": 0,
+        }
+
+        updated, repairs, metrics = apply_route_policy_to_payload(
+            "chat/completions",
+            payload,
+            route_policy,
+            upstream_url="https://opencode.ai/zen/v1/chat/completions",
+            session_affinity_key="session:v1:test",
+        )
+
+        self.assertEqual(repairs, 1)
+        self.assertNotIn("prompt_cache_key", updated)
+        self.assertNotIn("prompt_cache_retention", updated)
+        self.assertFalse(metrics["prompt_cache_hint_applied"])
+        self.assertEqual(metrics["prompt_cache_provider"], "observe")
+
     def test_explicit_openrouter_provider_injects_prompt_cache_hint(self):
         payload = {
             "model": "gpt-test",
