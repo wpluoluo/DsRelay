@@ -3013,7 +3013,24 @@ def normalize_chat_completion_dsml_tool_calls(response_body: dict, tool_schemas:
     return repaired
 
 
+def coerce_stream_index(value, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return max(0, int(value))
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return default
+        try:
+            return max(0, int(float(stripped)))
+        except Exception:
+            return default
+    return default
+
+
 def get_choice_stream_state(choice_states: dict, choice_index: int) -> dict:
+    choice_index = coerce_stream_index(choice_index)
     return choice_states.setdefault(
         choice_index,
         {
@@ -3134,7 +3151,9 @@ def normalize_stream_tool_calls(
     repaired = 0
 
     for tool_call in tool_calls:
-        tool_index = tool_call.get("index", 0)
+        if not isinstance(tool_call, dict):
+            continue
+        tool_index = coerce_stream_index(tool_call.get("index", 0))
         tool_state = get_tool_call_stream_state(choice_state, tool_index)
         function_delta = dict(tool_call.get("function") or {})
         emit_tool_call = {"index": tool_index}
@@ -3297,7 +3316,9 @@ def finalize_pending_stream_tool_calls(choice_state: dict, tool_schemas: dict) -
 
 def normalize_stream_choice(choice: dict, choice_states: dict, tool_schemas: dict) -> tuple[dict | None, int, int]:
     normalized_choice = dict(choice)
-    choice_index = normalized_choice.get("index", 0)
+    choice_index = coerce_stream_index(normalized_choice.get("index", 0))
+    if normalized_choice.get("index") != choice_index:
+        normalized_choice["index"] = choice_index
     state = get_choice_stream_state(choice_states, choice_index)
     delta = dict(normalized_choice.get("delta") or {})
     message_payload = normalized_choice.get("message") or {}
@@ -3599,8 +3620,10 @@ def normalize_sse_line(line: str, choice_states: dict, tool_schemas: dict) -> tu
 
 
 def merge_tool_call_delta(message: dict, tool_call_delta: dict) -> None:
+    if not isinstance(tool_call_delta, dict):
+        return
     tool_calls = message.setdefault("tool_calls", [])
-    call_index = tool_call_delta.get("index", 0)
+    call_index = coerce_stream_index(tool_call_delta.get("index", 0))
     while len(tool_calls) <= call_index:
         tool_calls.append(
             {
@@ -3637,7 +3660,7 @@ def build_chat_completion_from_sse(events: list[dict]) -> dict:
             usage = event["usage"]
 
         for choice in event.get("choices", []):
-            choice_index = choice.get("index", 0)
+            choice_index = coerce_stream_index(choice.get("index", 0))
             aggregate = aggregated_choices.setdefault(
                 choice_index,
                 {

@@ -139,6 +139,8 @@ from local_proxy.runtime.request_cache import (
     is_cache_storable_response,
     is_cacheable_request,
     response_has_tool_calls,
+    response_tool_calls_are_read_only,
+    response_tool_call_names,
 )
 from local_proxy.storage import ProxyStorage
 from local_proxy.upstream.capabilities import (
@@ -3520,8 +3522,15 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
             cache_note = "策略未开启"
         elif is_cache_lookup_eligible_request(request_payload=payload_dict, route_policy=route_policy, stream=False):
             if response_has_tool_calls(response_body):
-                cache_status = "bypass_tools"
-                cache_note = "工具调用结果不缓存"
+                if response_tool_calls_are_read_only(response_body):
+                    cache_status = "miss"
+                    cache_note = "只读工具调用可缓存"
+                else:
+                    cache_status = "bypass_tools"
+                    names = response_tool_call_names(response_body)
+                    cache_note = "工具调用结果不缓存"
+                    if names:
+                        cache_note = f"非只读工具调用不缓存：{', '.join(names[:5])}"
             else:
                 cache_status = "miss"
                 cache_note = "本次未命中"

@@ -7,6 +7,7 @@ from local_proxy.runtime.request_cache import (
     is_cache_lookup_eligible_request,
     is_cache_storable_response,
     is_cacheable_request,
+    response_tool_calls_are_read_only,
 )
 from local_proxy.server import build_request_observability_meta, save_request_cache_entry
 import local_proxy.server as server
@@ -114,7 +115,7 @@ class RequestCacheTests(unittest.TestCase):
             "model": "demo-model",
             "messages": [{"role": "user", "content": "hello"}],
             "tools": [
-                {"type": "function", "function": {"name": "ToolSearch", "parameters": {}}},
+                {"type": "function", "function": {"name": "Write", "parameters": {}}},
             ],
         }
         response_body = {
@@ -125,7 +126,7 @@ class RequestCacheTests(unittest.TestCase):
                             {
                                 "id": "call_1",
                                 "type": "function",
-                                "function": {"name": "ToolSearch", "arguments": "{}"},
+                                "function": {"name": "Write", "arguments": "{\"path\":\"a.txt\",\"content\":\"x\"}"},
                             }
                         ]
                     }
@@ -134,6 +135,40 @@ class RequestCacheTests(unittest.TestCase):
         }
 
         self.assertFalse(
+            is_cache_storable_response(
+                request_payload=payload,
+                route_policy={"prompt_cache_mode": "exact"},
+                response_body=response_body,
+            )
+        )
+
+    def test_read_only_tool_call_response_is_storable(self):
+        payload = {
+            "model": "demo-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [
+                {"type": "function", "function": {"name": "Read", "parameters": {}}},
+            ],
+        }
+        response_body = {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {"name": "Read", "arguments": "{\"file_path\":\"a.txt\"}"},
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+
+        self.assertTrue(response_tool_calls_are_read_only(response_body))
+        self.assertTrue(
             is_cache_storable_response(
                 request_payload=payload,
                 route_policy={"prompt_cache_mode": "exact"},

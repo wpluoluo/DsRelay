@@ -177,6 +177,49 @@ class ToolArgumentCompatTests(unittest.TestCase):
         self.assertEqual(terminal_event["choices"][0]["finish_reason"], "stop")
         self.assertNotIn("tool_calls", json.dumps(terminal_event))
 
+    def test_stream_tool_call_list_index_is_coerced(self):
+        choice_states = {}
+        chunk = {
+            "id": "chatcmpl-list-index",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "demo",
+            "choices": [
+                {
+                    "index": ["0"],
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": [0],
+                                "id": "call_read",
+                                "type": "function",
+                                "function": {
+                                    "name": "Grep",
+                                    "arguments": "{\"query\":\"needle\"}",
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        }
+
+        normalized_line, _, repaired, event = normalize_sse_line(
+            "data: " + json.dumps(chunk),
+            choice_states,
+            GREP_TOOL_SCHEMAS,
+        )
+
+        self.assertIsNotNone(normalized_line)
+        self.assertGreaterEqual(repaired, 1)
+        self.assertEqual(event["choices"][0]["index"], 0)
+        self.assertEqual(event["choices"][0]["delta"]["tool_calls"][0]["index"], 0)
+        self.assertEqual(
+            json.loads(event["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"]),
+            {"pattern": "needle"},
+        )
+
     def test_grep_query_alias_is_normalized_to_pattern(self):
         normalized, modified = normalize_tool_arguments_payload(
             "Grep",

@@ -88,6 +88,36 @@ def all_tools_read_only(tools) -> bool:
     return all(is_read_only_tool_name(name) for name in tool_names)
 
 
+def response_tool_call_names(response_body: dict | None) -> list[str]:
+    if not isinstance(response_body, dict):
+        return []
+    names: list[str] = []
+    for choice in response_body.get("choices") or []:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message") or {}
+        if not isinstance(message, dict):
+            continue
+        for tool_call in message.get("tool_calls") or []:
+            if not isinstance(tool_call, dict):
+                continue
+            function_data = tool_call.get("function") or {}
+            if isinstance(function_data, dict):
+                name = str(function_data.get("name") or "").strip()
+            else:
+                name = ""
+            if not name:
+                name = str(tool_call.get("name") or tool_call.get("tool_name") or "").strip()
+            if name:
+                names.append(name)
+    return names
+
+
+def response_tool_calls_are_read_only(response_body: dict | None) -> bool:
+    names = response_tool_call_names(response_body)
+    return bool(names) and all(is_read_only_tool_name(name) for name in names)
+
+
 def normalize_cache_payload(payload: dict | None) -> dict:
     if not isinstance(payload, dict):
         return {}
@@ -175,7 +205,7 @@ def response_has_tool_calls(response_body: dict | None) -> bool:
         if not isinstance(choice, dict):
             continue
         message = choice.get("message") or {}
-        if isinstance(message, dict) and message.get("tool_calls"):
+        if isinstance(message, dict) and isinstance(message.get("tool_calls"), list) and message.get("tool_calls"):
             return True
     return False
 
@@ -284,8 +314,10 @@ def is_cache_storable_response(
 ) -> bool:
     if not is_cache_lookup_eligible_request(request_payload=request_payload, route_policy=route_policy, stream=False):
         return False
-    if response_has_tool_calls(response_body):
+    if response_has_tool_calls(response_body) and not response_tool_calls_are_read_only(response_body):
         return False
+    if response_has_tool_calls(response_body):
+        return True
     if not response_has_cacheable_assistant_text(protocol=protocol, response_body=response_body):
         return False
     return True
