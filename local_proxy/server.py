@@ -5430,6 +5430,15 @@ def proxy_response(
                         )
                     elif not stream_error and not resume_save_meta:
                         resume_save_meta = clear_interruption_resume_records(execution)
+                    completed_response_body = None
+                    if (
+                        not stream_error
+                        and not stream_client_gone
+                        and response_events
+                        and isinstance(completed_response_body := build_chat_completion_from_sse(response_events), dict)
+                    ):
+                        ensure_openai_response_usage(completed_response_body, request_payload)
+                        attach_execution_response_body(execution, completed_response_body)
                     tail_summary = " || ".join(stream_tail_lines[-4:])
                     finish_reason_summary = ", ".join(terminal_finish_reasons[-4:])
                     if stream_client_gone:
@@ -5495,19 +5504,14 @@ def proxy_response(
                         extra_meta=build_request_observability_meta(execution, request_payload) | resume_save_meta,
                     )
                     if (
-                        not stream_error
-                        and not stream_client_gone
-                        and response_events
-                        and isinstance(aggregated_body := build_chat_completion_from_sse(response_events), dict)
+                        isinstance(completed_response_body, dict)
                     ):
-                        ensure_openai_response_usage(aggregated_body, request_payload)
-                        attach_execution_response_body(execution, aggregated_body)
                         save_request_cache_entry(
                             execution=execution or {},
                             protocol=protocol or "openai_chat_completions",
                             path=route_hint,
                             request_payload=request_payload,
-                            response_body=aggregated_body,
+                            response_body=completed_response_body,
                             upstream_url=upstream_url,
                         )
 

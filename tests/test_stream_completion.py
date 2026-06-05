@@ -21,6 +21,7 @@ from local_proxy.server import (
     handle_gemini_stream_response,
     openai_stream_response_with_connect_heartbeat,
     proxy_response,
+    request_recorder,
     start_background_upstream_execution,
     wait_background_upstream_execution,
 )
@@ -665,6 +666,11 @@ class StreamCompletionTests(unittest.TestCase):
         self.assertEqual(usage_events[0]["usage"]["total_tokens"], 168)
         self.assertEqual(usage_events[0]["usage"]["prompt_tokens_details"]["cached_tokens"], 77)
         self.assertEqual(usage_events[0]["usage"]["cache_read_input_tokens"], 77)
+        recent = next(item for item in request_recorder.snapshot()["recent_requests"] if item["request_id"] == "streamusagepreserve")
+        self.assertEqual(recent["prompt_tokens"], 123)
+        self.assertEqual(recent["completion_tokens"], 45)
+        self.assertEqual(recent["total_tokens"], 168)
+        self.assertEqual(recent["cache_read_input_tokens"], 77)
 
     def test_openai_stream_maps_prompt_cache_hit_tokens(self):
         usage_event = {

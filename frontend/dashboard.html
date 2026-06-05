@@ -1588,6 +1588,30 @@
       return formatCount(value);
     }
 
+    function summarizeOfficialCacheStatus(status, readTokens) {
+      var normalized = String(status || "").toLowerCase();
+      if (Number(readTokens || 0) > 0 || normalized === "hit") return "命中";
+      if (normalized === "hinted") return "已提示";
+      if (normalized === "miss") return "未命中";
+      if (normalized === "off" || normalized === "disabled") return "关闭";
+      if (normalized === "bypass" || normalized.indexOf("bypass") === 0) return "跳过";
+      if (normalized === "passthrough") return "沿用";
+      if (normalized === "eligible") return "可用";
+      return status ? String(status) : "关闭";
+    }
+
+    function summarizeLocalCacheStatus(status, hit) {
+      var normalized = String(status || "").toLowerCase();
+      if (hit || normalized === "hit") return "命中";
+      if (normalized.indexOf("bypass") === 0) return "跳过";
+      if (normalized === "off" || normalized === "disabled") return "关闭";
+      return "未命中";
+    }
+
+    function isCacheTooltipActive() {
+      return Boolean(document.querySelector(".cache-hover:hover, .cache-hover:focus-within"));
+    }
+
     function icon(name) {
       var i = {
         bar: '<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="11" width="3.5" height="7" rx="0.6" fill="currentColor" opacity="0.45"/><rect x="8" y="5" width="3.5" height="13" rx="0.6" fill="currentColor"/><rect x="14" y="8" width="3.5" height="10" rx="0.6" fill="currentColor" opacity="0.7"/></svg>',
@@ -2238,35 +2262,24 @@
         var cacheReadTokens = Number(entry.cache_read_input_tokens || 0);
         var cacheCreationTokens = Number(entry.cache_creation_input_tokens || 0);
         var cacheStatus = String(entry.local_response_cache_status || entry.cache_status || (entry.cache_hit ? "hit" : "miss"));
-        var cacheNote = String(entry.local_response_cache_note || entry.cache_note || "");
         var upstreamPromptCacheStatus = String(entry.upstream_prompt_cache_status || "off");
-        var upstreamPromptCacheNote = String(entry.upstream_prompt_cache_note || "");
         var upstreamUrl = String(entry.upstream_url || "");
         var actualRouteUrl = String(entry.route_url || upstreamUrl || "");
-        var localCacheText = cacheStatus;
-        if (entry.local_response_cache_hit) {
-          localCacheText = "命中" + (entry.cache_source ? (" · " + entry.cache_source) : "");
-        } else if (cacheStatus.indexOf("bypass") === 0) {
-          localCacheText = "跳过" + (cacheNote ? (" · " + cacheNote) : "");
-        } else if (cacheStatus === "miss_tools_readonly") {
-          localCacheText = "未命中 · 只读工具可缓存";
-        } else {
-          localCacheText = "未命中" + (cacheNote ? (" · " + cacheNote) : "");
-        }
-        var upstreamCacheText = upstreamPromptCacheStatus + (upstreamPromptCacheNote ? (" · " + upstreamPromptCacheNote) : "");
+        var localCacheText = summarizeLocalCacheStatus(cacheStatus, entry.local_response_cache_hit || entry.cache_hit);
+        var upstreamCacheText = summarizeOfficialCacheStatus(upstreamPromptCacheStatus, cacheReadTokens);
         var tokenTotal = totalTokens || (promptTokens + completionTokens);
         var cacheTooltip = '' +
           '<div class="cache-hover" aria-label="缓存明细">' +
             '<svg width="12" height="12" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.6"/><path d="M10 6.5v4.2M10 13.6v.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
-            '<div class="cache-hover-panel">' +
+              '<div class="cache-hover-panel">' +
               '<div class="cache-tip-title">Token 明细</div>' +
-              '<div class="cache-tip-row"><span class="cache-tip-label">输入 Token</span><span class="cache-tip-value">' + escapeHtml(formatTokenCount(promptTokens)) + '</span></div>' +
-              '<div class="cache-tip-row"><span class="cache-tip-label">输出 Token</span><span class="cache-tip-value">' + escapeHtml(formatTokenCount(completionTokens)) + '</span></div>' +
+              '<div class="cache-tip-row"><span class="cache-tip-label">请求 Token</span><span class="cache-tip-value">' + escapeHtml(formatTokenCount(promptTokens)) + '</span></div>' +
+              '<div class="cache-tip-row"><span class="cache-tip-label">回复 Token</span><span class="cache-tip-value">' + escapeHtml(formatTokenCount(completionTokens)) + '</span></div>' +
               '<div class="cache-tip-row"><span class="cache-tip-label">缓存读取 Token</span><span class="cache-tip-value">' + escapeHtml(formatTokenCount(cacheReadTokens)) + '</span></div>' +
               '<div class="cache-tip-row"><span class="cache-tip-label">缓存写入 Token</span><span class="cache-tip-value">' + escapeHtml(formatTokenCount(cacheCreationTokens)) + '</span></div>' +
               '<div class="cache-tip-row"><span class="cache-tip-label">官方缓存</span><span class="cache-tip-value">' + escapeHtml(upstreamCacheText) + '</span></div>' +
               '<div class="cache-tip-row"><span class="cache-tip-label">本地缓存</span><span class="cache-tip-value">' + escapeHtml(localCacheText) + '</span></div>' +
-              '<div class="cache-tip-row"><span class="cache-tip-label">本地缓存读</span><span class="cache-tip-value">' + escapeHtml(formatByteCount(cacheReadBytes)) + '</span></div>' +
+              '<div class="cache-tip-row"><span class="cache-tip-label">本地读取字节</span><span class="cache-tip-value">' + escapeHtml(formatByteCount(cacheReadBytes)) + '</span></div>' +
               '<div class="cache-tip-row cache-tip-total"><span class="cache-tip-label">总 Token</span><span class="cache-tip-value">' + escapeHtml(formatTokenCount(tokenTotal)) + '</span></div>' +
             '</div>' +
           '</div>';
@@ -2275,7 +2288,7 @@
           '<td><div class="request-stack"><div class="request-cell-title">' + escapeHtml(entry.remote || "-") + '</div><div class="request-cell-sub">重试 ' + escapeHtml(entry.retry_count || 0) + ' · 候选 ' + escapeHtml(routePoolSize || 1) + (routeAttemptCount ? (' · 已试 ' + escapeHtml(routeAttemptCount)) : '') + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-line-main">' + escapeHtml(poolName) + ' · ' + escapeHtml(routeIndex) + ' · ' + escapeHtml(keyIndex) + '</div><div class="request-line-path request-ellipsis">' + escapeHtml(actualRouteUrl || "-") + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-cell-title request-ellipsis">' + escapeHtml(logicalModel) + '</div><div class="request-cell-sub request-ellipsis">' + escapeHtml(resolvedModel) + '</div><div class="request-cell-sub">' + escapeHtml(poolName) + '</div></div></td>' +
-          '<td><div class="request-metric-list"><div class="request-chip-row"><span class="request-chip ok">' + escapeHtml(entry.duration_ms || "-") + ' ms</span><span class="request-chip">输入 ' + escapeHtml(formatByteCount(inputBytes)) + '</span><span class="request-chip">输出 ' + escapeHtml(formatByteCount(outputBytes)) + '</span></div><div class="request-token-line"><span class="token-flow in">↓ ' + escapeHtml(formatTokenCount(promptTokens)) + '</span><span class="token-flow out">↑ ' + escapeHtml(formatTokenCount(completionTokens)) + '</span>' + cacheTooltip + '</div></div></td>' +
+          '<td><div class="request-metric-list"><div class="request-chip-row"><span class="request-chip ok">' + escapeHtml(entry.duration_ms || "-") + ' ms</span><span class="request-chip">请求字节 ' + escapeHtml(formatByteCount(inputBytes)) + '</span><span class="request-chip">响应字节 ' + escapeHtml(formatByteCount(outputBytes)) + '</span></div><div class="request-token-line"><span class="token-flow in">↓ ' + escapeHtml(formatTokenCount(promptTokens)) + '</span><span class="token-flow out">↑ ' + escapeHtml(formatTokenCount(completionTokens)) + '</span>' + cacheTooltip + '</div></div></td>' +
           '<td><div class="request-stack"><div class="request-cell-sub">请求 ' + escapeHtml(entry.request_repairs || 0) + ' · DSML ' + escapeHtml(entry.sanitized_markers || 0) + ' · 工具 ' + escapeHtml(entry.repaired_tool_args || 0) + '</div></div></td>' +
           '<td><div class="request-chip-row"><span class="request-chip ' + statusTone + '">状态 ' + escapeHtml(statusLabel) + '</span>' + (entry.error ? '<span class="request-chip err">异常</span>' : '') + '</div>' + (entry.error ? '<div class="request-cell-sub request-ellipsis" style="color:var(--error);">' + escapeHtml(entry.error) + '</div>' : '') + '</td>' +
         '</tr>';
@@ -2432,7 +2445,9 @@
         renderRuntimeOverview(data);
         renderConfig(data.config || {}, false);
         renderStats(data.stats || {}, activeCount, streamCount);
-        renderRequestTable(data);
+        if (!isCacheTooltipActive()) {
+          renderRequestTable(data);
+        }
         renderLogTable(data.recent_logs || [], data.recent_requests || []);
         if (data.config) {
           renderProxyKeys({
