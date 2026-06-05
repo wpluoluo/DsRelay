@@ -723,6 +723,69 @@ class StreamCompletionTests(unittest.TestCase):
         self.assertEqual(last_usage["prompt_cache_hit_tokens"], 77)
         self.assertEqual(last_usage["prompt_cache_miss_tokens"], 46)
 
+    def test_openai_stream_repairs_zero_completion_usage_when_output_exists(self):
+        content_event = {
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": "visible reply"},
+                    "finish_reason": None,
+                }
+            ],
+            "usage": None,
+        }
+        usage_event = {
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            "usage": {
+                "prompt_tokens": 6552,
+                "completion_tokens": 0,
+                "total_tokens": 6552,
+                "prompt_tokens_details": {"cached_tokens": 6500},
+            },
+        }
+        upstream = SlowAfterTerminalResponse(
+            [
+                "data: " + json.dumps(content_event, separators=(",", ":")),
+                "",
+                "data: " + json.dumps(usage_event, separators=(",", ":")),
+                "",
+            ]
+        )
+        response = proxy_response(
+            upstream,
+            sanitize_dsml=True,
+            request_id="streamzerooutputusage",
+            upstream_url=upstream.url,
+            started_at=time.perf_counter(),
+            requested_stream=True,
+            route_hint="chat/completions",
+            tool_schemas={},
+            retry_count=0,
+            protocol="openai_chat_completions",
+            request_payload={"model": "test-model", "stream": True, "messages": [{"role": "user", "content": "hello"}]},
+            execution={},
+        )
+
+        body = collect_response_body(response).decode("utf-8")
+        usage_events = openai_stream_usage_events(body)
+        last_usage = usage_events[-1]["usage"]
+
+        self.assertEqual(last_usage["prompt_tokens"], 6552)
+        self.assertGreater(last_usage["completion_tokens"], 0)
+        self.assertEqual(last_usage["total_tokens"], 6552 + last_usage["completion_tokens"])
+        self.assertEqual(last_usage["cache_read_input_tokens"], 6500)
+        recent = next(item for item in request_recorder.snapshot()["recent_requests"] if item["request_id"] == "streamzerooutputusage")
+        self.assertGreater(recent["completion_tokens"], 0)
+        self.assertEqual(recent["total_tokens"], 6552 + recent["completion_tokens"])
+
     def test_consume_openai_sse_events_does_not_wait_for_upstream_close_after_finish(self):
         upstream = SlowAfterTerminalResponse(openai_stream_lines())
 

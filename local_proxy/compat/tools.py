@@ -3630,7 +3630,7 @@ def build_chat_completion_from_sse(events: list[dict]) -> dict:
     usage = None
 
     for event in events:
-        if "usage" in event:
+        if isinstance(event.get("usage"), dict):
             usage = event["usage"]
 
         for choice in event.get("choices", []):

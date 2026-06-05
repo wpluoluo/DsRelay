@@ -328,6 +328,7 @@ OPENAI_PROMPT_CACHE_HOST_MARKERS = (
     "volces.com",
     "deepseek.com",
     "nvidia.com",
+    "opencode.ai",
 )
 
 

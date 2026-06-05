@@ -160,9 +160,10 @@ def build_openai_usage_from_response(response_body: dict | None, request_payload
         prompt_tokens = prompt_cache_hit_tokens + prompt_cache_miss_tokens
     if prompt_tokens <= 0 and isinstance(request_payload, dict):
         prompt_tokens = estimate_payload_tokens(request_payload)
-    if completion_tokens <= 0:
-        completion_tokens = estimate_openai_response_completion_tokens(response_body)
-    if total_tokens <= 0:
+    estimated_completion_tokens = estimate_openai_response_completion_tokens(response_body)
+    if completion_tokens <= 0 and estimated_completion_tokens > 0:
+        completion_tokens = estimated_completion_tokens
+    if total_tokens <= 0 or (completion_tokens > 0 and total_tokens <= prompt_tokens):
         total_tokens = prompt_tokens + completion_tokens
 
     if cached_tokens > 0:
