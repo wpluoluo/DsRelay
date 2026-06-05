@@ -318,17 +318,18 @@ FINGERPRINT_SESSION_HINT_HEADER_NAMES = (
     "X-Session-Id",
     "X-Thread-Id",
 )
-OPENAI_PROMPT_CACHE_HOST_MARKERS = (
+PROMPT_CACHE_ROUTING_HINT_HOST_MARKERS = (
     "api.openai.com",
     "openai.azure.com",
     "openrouter.ai",
-    "juece.cloud",
-    "siliconflow.cn",
-    "siliconflow.com",
-    "volces.com",
+)
+PROMPT_CACHE_OBSERVE_ONLY_HOST_MARKERS = (
     "deepseek.com",
     "nvidia.com",
     "opencode.ai",
+    "generativelanguage.googleapis.com",
+    "googleapis.com",
+    "anthropic.com",
 )
 
 
@@ -487,16 +488,29 @@ def extract_usage_cache_details(usage: dict | None) -> dict:
         }
     prompt_details = usage.get("prompt_tokens_details")
     prompt_details = prompt_details if isinstance(prompt_details, dict) else {}
-    prompt_tokens = coerce_non_negative_int(usage.get("prompt_tokens") or usage.get("input_tokens"))
-    completion_tokens = coerce_non_negative_int(usage.get("completion_tokens") or usage.get("output_tokens"))
-    total_tokens = coerce_non_negative_int(usage.get("total_tokens"))
+    prompt_tokens = coerce_non_negative_int(
+        usage.get("prompt_tokens")
+        or usage.get("input_tokens")
+        or usage.get("promptTokenCount")
+    )
+    completion_tokens = coerce_non_negative_int(
+        usage.get("completion_tokens")
+        or usage.get("output_tokens")
+        or usage.get("candidatesTokenCount")
+    )
+    total_tokens = coerce_non_negative_int(usage.get("total_tokens") or usage.get("totalTokenCount"))
     cache_read_input_tokens = coerce_non_negative_int(
         usage.get("cache_read_input_tokens")
         or prompt_details.get("cached_tokens")
+        or usage.get("cachedContentTokenCount")
+        or usage.get("cached_content_token_count")
         or usage.get("prompt_cache_hit_tokens")
     )
     cache_creation_input_tokens = coerce_non_negative_int(
-        usage.get("cache_creation_input_tokens") or prompt_details.get("cache_creation_tokens")
+        usage.get("cache_creation_input_tokens")
+        or prompt_details.get("cache_creation_tokens")
+        or prompt_details.get("cache_write_tokens")
+        or usage.get("cache_write_tokens")
     )
     prompt_cache_hit_tokens = coerce_non_negative_int(
         usage.get("prompt_cache_hit_tokens") or cache_read_input_tokens
@@ -521,6 +535,8 @@ def build_usage_observability_meta(response_body: dict | None) -> dict:
     if not isinstance(response_body, dict):
         return {}
     usage = response_body.get("usage")
+    if not isinstance(usage, dict):
+        usage = response_body.get("usageMetadata") or response_body.get("usage_metadata")
     details = extract_usage_cache_details(usage)
     if not any(details.values()):
         return {}
@@ -1999,14 +2015,16 @@ def build_session_affinity_key(
 
 def infer_prompt_cache_provider(route_policy: dict | None, upstream_url: str | None) -> str:
     explicit = str((route_policy or {}).get("prompt_cache_provider") or "auto").strip().lower()
-    if explicit in {"openai", "none"}:
+    if explicit in {"openai", "openrouter", "deepseek", "anthropic", "gemini", "observe", "none"}:
         return explicit
 
     route_text = str(upstream_url or "").strip().lower()
     if not route_text:
         return "none"
-    if any(marker in route_text for marker in OPENAI_PROMPT_CACHE_HOST_MARKERS):
+    if any(marker in route_text for marker in PROMPT_CACHE_ROUTING_HINT_HOST_MARKERS):
         return "openai"
+    if any(marker in route_text for marker in PROMPT_CACHE_OBSERVE_ONLY_HOST_MARKERS):
+        return "observe"
     return "none"
 
 
@@ -2038,7 +2056,8 @@ def apply_prompt_cache_hints_to_openai_payload(
         "prompt_cache_hint_key_source": "",
         "prompt_cache_retention": "",
     }
-    if hint_mode == "off" or provider == "none":
+    can_inject_routing_hint = provider in {"openai", "openrouter"}
+    if hint_mode == "off" or provider in {"none", "observe", "deepseek", "anthropic", "gemini"}:
         return payload, 0, metrics
 
     next_payload = dict(payload)
@@ -2051,6 +2070,9 @@ def apply_prompt_cache_hints_to_openai_payload(
         if existing_key or existing_retention:
             metrics["prompt_cache_hint_passthrough"] = True
             metrics["prompt_cache_retention"] = existing_retention
+        return next_payload, repairs, metrics
+
+    if not can_inject_routing_hint:
         return next_payload, repairs, metrics
 
     if not session_affinity_key:
@@ -3404,7 +3426,7 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
         upstream_prompt_cache_note = "沿用下游传入 hint"
     elif bool(route_policy_metrics.get("prompt_cache_hint_applied")):
         upstream_prompt_cache_status = "hinted"
-        upstream_prompt_cache_note = "已注入前缀缓存 hint"
+        upstream_prompt_cache_note = "已发送上游缓存 Hint"
     else:
         upstream_prompt_cache_status = "eligible"
         upstream_prompt_cache_note = "线路支持前缀缓存"
@@ -4775,23 +4797,31 @@ def convert_openai_stream_event_to_gemini_chunks(event: dict, stream_state: dict
         if usage:
             prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
             completion_tokens = int(usage.get("completion_tokens", 0) or 0)
-            chunk["usageMetadata"] = {
+            usage_metadata = {
                 "promptTokenCount": prompt_tokens,
                 "candidatesTokenCount": completion_tokens,
                 "totalTokenCount": int(usage.get("total_tokens", prompt_tokens + completion_tokens) or 0),
             }
+            cache_tokens = int(extract_usage_cache_details(usage).get("cache_read_input_tokens") or 0)
+            if cache_tokens > 0:
+                usage_metadata["cachedContentTokenCount"] = cache_tokens
+            chunk["usageMetadata"] = usage_metadata
         chunks.append(chunk)
 
     if usage and not chunks:
         prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
         completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+        usage_metadata = {
+            "promptTokenCount": prompt_tokens,
+            "candidatesTokenCount": completion_tokens,
+            "totalTokenCount": int(usage.get("total_tokens", prompt_tokens + completion_tokens) or 0),
+        }
+        cache_tokens = int(extract_usage_cache_details(usage).get("cache_read_input_tokens") or 0)
+        if cache_tokens > 0:
+            usage_metadata["cachedContentTokenCount"] = cache_tokens
         chunks.append(
             {
-                "usageMetadata": {
-                    "promptTokenCount": prompt_tokens,
-                    "candidatesTokenCount": completion_tokens,
-                    "totalTokenCount": int(usage.get("total_tokens", prompt_tokens + completion_tokens) or 0),
-                },
+                "usageMetadata": usage_metadata,
                 "modelVersion": model,
             }
         )

@@ -98,7 +98,9 @@ def extract_prompt_cache_usage_details(usage: dict | None) -> dict:
     )
     cache_creation_tokens = coerce_non_negative_int(
         prompt_tokens_details.get("cache_creation_tokens")
+        or prompt_tokens_details.get("cache_write_tokens")
         or usage.get("cache_creation_input_tokens")
+        or usage.get("cache_write_tokens")
     )
     prompt_cache_hit_tokens = coerce_non_negative_int(
         usage.get("prompt_cache_hit_tokens") or cached_tokens
@@ -915,13 +917,18 @@ def convert_openai_response_to_gemini(response_body: dict, tool_schemas: dict | 
     usage = response_body.get("usage") or {}
     prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
     completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+    cache_details = extract_prompt_cache_usage_details(usage if isinstance(usage, dict) else {})
+    cache_read_tokens = int(cache_details.get("cached_tokens") or 0)
+    usage_metadata = {
+        "promptTokenCount": prompt_tokens,
+        "candidatesTokenCount": completion_tokens,
+        "totalTokenCount": int(usage.get("total_tokens", prompt_tokens + completion_tokens) or 0),
+    }
+    if cache_read_tokens > 0:
+        usage_metadata["cachedContentTokenCount"] = cache_read_tokens
     return {
         "candidates": candidates,
-        "usageMetadata": {
-            "promptTokenCount": prompt_tokens,
-            "candidatesTokenCount": completion_tokens,
-            "totalTokenCount": int(usage.get("total_tokens", prompt_tokens + completion_tokens) or 0),
-        },
+        "usageMetadata": usage_metadata,
         "modelVersion": response_body.get("model"),
         "responseId": response_body.get("id"),
     }

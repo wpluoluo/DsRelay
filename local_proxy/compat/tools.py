@@ -40,7 +40,10 @@ def normalize_openai_usage_payload(usage: dict | None) -> dict:
         or usage.get("prompt_cache_hit_tokens")
     )
     cache_creation_tokens = _coerce_non_negative_int(
-        prompt_details.get("cache_creation_tokens") or usage.get("cache_creation_input_tokens")
+        prompt_details.get("cache_creation_tokens")
+        or prompt_details.get("cache_write_tokens")
+        or usage.get("cache_creation_input_tokens")
+        or usage.get("cache_write_tokens")
     )
     prompt_cache_hit_tokens = _coerce_non_negative_int(
         usage.get("prompt_cache_hit_tokens") or cached_tokens

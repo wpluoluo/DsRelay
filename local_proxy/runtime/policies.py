@@ -51,7 +51,7 @@ def normalize_prompt_cache_hints_mode(value: object) -> str:
 
 def normalize_prompt_cache_provider(value: object) -> str:
     candidate = str(value or "").strip().lower()
-    if candidate in {"auto", "openai", "none"}:
+    if candidate in {"auto", "openai", "openrouter", "deepseek", "anthropic", "gemini", "observe", "none"}:
         return candidate
     return str(DEFAULT_ROUTE_POLICY["prompt_cache_provider"])
 
