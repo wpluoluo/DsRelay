@@ -3430,10 +3430,17 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
         if str((route_policy or {}).get("prompt_cache_mode") or "off") != "exact":
             cache_status = "bypass_policy"
             cache_note = "策略未开启"
-        elif payload_dict.get("tools") or payload_dict.get("tool_choice"):
-            if all_tools_read_only(payload_dict.get("tools")):
+        elif is_cacheable_request(request_payload=payload_dict, route_policy=route_policy, stream=False):
+            if payload_dict.get("tools") and all_tools_read_only(payload_dict.get("tools")):
                 cache_status = "miss_tools_readonly"
                 cache_note = "只读工具可缓存"
+            else:
+                cache_status = "miss"
+                cache_note = "本次未命中"
+        elif payload_dict.get("tools"):
+            if all_tools_read_only(payload_dict.get("tools")):
+                cache_status = "bypass_tools"
+                cache_note = "工具选择不支持缓存"
             else:
                 cache_status = "bypass_tools"
                 cache_note = "副作用工具不缓存"
@@ -3465,8 +3472,8 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
         upstream_prompt_cache_status = "hinted"
         upstream_prompt_cache_note = "已发送上游缓存 Hint"
     else:
-        upstream_prompt_cache_status = "eligible"
-        upstream_prompt_cache_note = "线路支持前缀缓存"
+        upstream_prompt_cache_status = "miss"
+        upstream_prompt_cache_note = "本次未返回缓存命中"
     meta = {
         "logical_model": logical_model,
         "resolved_model": resolved_model,
@@ -3722,6 +3729,7 @@ def finalize_request_record(
 def collect_local_model_ids() -> list[str]:
     model_ids: list[str] = []
     seen: set[str] = set()
+    has_explicit_model_config = False
 
     def add(model_name: str | None) -> None:
         text = str(model_name or "").strip().removeprefix("models/")
@@ -3736,16 +3744,27 @@ def collect_local_model_ids() -> list[str]:
     for pool in PROXY_POOLS or []:
         if not isinstance(pool, dict):
             continue
-        for supported_model in parse_supported_model_ids(pool.get("supported_models_text")):
-            add(supported_model)
+        if pool.get("enabled") is False:
+            continue
+        supported_models = parse_supported_model_ids(pool.get("supported_models_text"))
         route_aliases = parse_model_aliases(pool.get("model_aliases_text"))
+        if supported_models or route_aliases:
+            has_explicit_model_config = True
+        for supported_model in supported_models:
+            add(supported_model)
         for logical_model, targets in route_aliases.items():
             add(logical_model)
             for target in targets or []:
                 add(target)
 
-    for capability_model in (MODEL_CAPABILITIES or {}).keys():
-        add(capability_model)
+    if has_explicit_model_config:
+        return sorted(
+            model_ids,
+            key=lambda item: (
+                0 if "/" not in item else 1,
+                item.lower(),
+            ),
+        )
 
     model_lists = model_route_cache.get("model_lists") if isinstance(model_route_cache, dict) else {}
     now = time.time()

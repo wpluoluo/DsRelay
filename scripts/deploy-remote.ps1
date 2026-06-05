@@ -10,7 +10,8 @@ param(
     [string]$RemoteDeployDir,
     [string]$RemoteServiceName = "local-proxy",
     [string]$SharedDockerNetwork,
-    [int]$AppPort = 0
+    [int]$AppPort = 0,
+    [switch]$SyncRuntimeConfig
 )
 
 $ErrorActionPreference = "Stop"
@@ -269,7 +270,7 @@ if (-not $commit) {
 
 $archivePath = Join-Path $repoRoot "local-proxy-$commit.tar"
 $runtimeConfigPath = Join-Path $repoRoot "config\proxy-config.json"
-$hasRuntimeConfig = Test-Path $runtimeConfigPath
+$hasRuntimeConfig = $SyncRuntimeConfig -and (Test-Path $runtimeConfigPath)
 
 Write-Step "Archive commit $commit"
 if (Test-Path $archivePath) {
@@ -293,8 +294,10 @@ foreach ($cfg in $targetConfigs) {
     Write-Step "[$($cfg.Target)] Upload archive to $($cfg.ServerUser)@$($cfg.ServerHost):$remoteArchivePath"
     Invoke-RemoteHelper $pythonCommand ($uploadArgs + @("--local-path", $archivePath, "--remote-path", $remoteArchivePath)) $passwordValue
     if ($hasRuntimeConfig) {
-        Write-Step "[$($cfg.Target)] Upload local runtime config"
+        Write-Step "[$($cfg.Target)] Upload local runtime config because -SyncRuntimeConfig was specified"
         Invoke-RemoteHelper $pythonCommand ($uploadArgs + @("--local-path", $runtimeConfigPath, "--remote-path", $remoteRuntimeConfigPath)) $passwordValue
+    } else {
+        Write-Step "[$($cfg.Target)] Skip runtime config sync; preserving remote managed keys and live settings"
     }
 
     $remoteEnvUpdates = [ordered]@{
@@ -406,7 +409,7 @@ while [ "$attempt" -le 45 ]; do
   attempt=$((attempt + 1))
 done
 curl -fsS http://127.0.0.1:__APP_PORT__/health
-if [ -f "__REMOTE_RUNTIME_CONFIG_PATH__" ]; then
+if [ "__SYNC_RUNTIME_CONFIG__" = "1" ] && [ -f "__REMOTE_RUNTIME_CONFIG_PATH__" ]; then
   python3 - <<'PY'
 import json
 import re
@@ -498,6 +501,7 @@ rm -rf "__REMOTE_EXTRACT_DIR__" "__REMOTE_ARCHIVE_PATH__"
     $deployCommand = $deployCommand.Replace("__REMOTE_ARCHIVE_PATH__", $remoteArchivePath)
     $deployCommand = $deployCommand.Replace("__REMOTE_RUNTIME_CONFIG_PATH__", $remoteRuntimeConfigPath)
     $deployCommand = $deployCommand.Replace("__REMOTE_RUNTIME_CONFIG_RESULT_PATH__", $remoteRuntimeConfigResultPath)
+    $deployCommand = $deployCommand.Replace("__SYNC_RUNTIME_CONFIG__", $(if ($hasRuntimeConfig) { "1" } else { "0" }))
     $deployCommand = $deployCommand.Replace("__REMOTE_SERVICE_NAME__", [string]$cfg.RemoteServiceName)
     $deployCommand = $deployCommand.Replace("__COMPOSE_FILE__", $composeFile)
     $deployCommand = $deployCommand.Replace("__APP_PORT__", [string]$cfg.AppPort)

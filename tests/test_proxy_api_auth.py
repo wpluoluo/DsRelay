@@ -453,6 +453,59 @@ class ProxyEntrypointAuthTests(unittest.TestCase):
         saved_payload = __import__("json").loads(server.PROXY_CONFIG_PATH.read_text(encoding="utf-8"))
         self.assertEqual(saved_payload["request_timeout"], 5)
 
+    def test_models_list_excludes_capability_only_models_when_routes_are_explicit(self):
+        server = self.load_server_with_keys("proxy-secret")
+        original_pools = server.PROXY_POOLS
+        original_capabilities = server.MODEL_CAPABILITIES
+        original_model_route_cache = server.model_route_cache
+        try:
+            server.PROXY_POOLS = [
+                {
+                    "name": "nv",
+                    "enabled": True,
+                    "priority": 100,
+                    "urls": ["https://integrate.api.nvidia.com/v1"],
+                    "keys": [{"key": "nv-key"}],
+                    "supported_models_text": "deepseek-ai/deepseek-v4-flash",
+                    "model_aliases_text": "deepseek-v4-flash=deepseek-ai/deepseek-v4-flash",
+                }
+            ]
+            server.MODEL_CAPABILITIES = {
+                "gpt-5.4": {"context_tokens": 1000000, "max_output_tokens": 128000}
+            }
+            server.model_route_cache = {
+                "routes": {},
+                "model_lists": {
+                    "stale-route": {
+                        "expires_at": __import__("time").time() + 300,
+                        "models": ["gpt-5.4", "deepseek-v4-flash"],
+                    }
+                },
+                "capabilities": {},
+            }
+
+            client = server.app.test_client()
+            response = client.get("/v1/models", headers={"Authorization": "Bearer proxy-secret"})
+            model_ids = {
+                item["id"]
+                for item in response.get_json()["data"]
+                if isinstance(item, dict) and item.get("id")
+            }
+            missing_response = client.get(
+                "/v1/models/gpt-5.4",
+                headers={"Authorization": "Bearer proxy-secret"},
+            )
+        finally:
+            server.PROXY_POOLS = original_pools
+            server.MODEL_CAPABILITIES = original_capabilities
+            server.model_route_cache = original_model_route_cache
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("deepseek-v4-flash", model_ids)
+        self.assertIn("deepseek-ai/deepseek-v4-flash", model_ids)
+        self.assertNotIn("gpt-5.4", model_ids)
+        self.assertEqual(missing_response.status_code, 404)
+
     def test_initialize_runtime_config_bootstraps_disk_payload_into_mysql_storage(self):
         server = self.load_server_with_keys("")
         temp_dir = tempfile.TemporaryDirectory()

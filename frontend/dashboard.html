@@ -1596,7 +1596,7 @@
       if (normalized === "off" || normalized === "disabled") return "关闭";
       if (normalized === "bypass" || normalized.indexOf("bypass") === 0) return "跳过";
       if (normalized === "passthrough") return "沿用";
-      if (normalized === "eligible") return "可用";
+      if (normalized === "eligible") return "未命中";
       return status ? String(status) : "关闭";
     }
 

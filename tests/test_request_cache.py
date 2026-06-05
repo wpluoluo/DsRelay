@@ -6,6 +6,7 @@ from local_proxy.runtime.request_cache import (
     build_coalescing_key,
     is_cacheable_request,
 )
+from local_proxy.server import build_request_observability_meta
 
 
 class RequestCacheTests(unittest.TestCase):
@@ -125,6 +126,33 @@ class RequestCacheTests(unittest.TestCase):
         self.assertEqual(execution["upstream_url_pool"], ["https://good.example/v1/chat/completions#__route=good"])
         self.assertEqual(execution["route_pool_size"], 1)
         self.assertEqual(execution["attempt_route_count"], 1)
+
+    def test_observability_does_not_mark_tool_choice_only_request_as_bypassed(self):
+        payload = {
+            "model": "demo-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tool_choice": "auto",
+        }
+        meta = build_request_observability_meta(
+            {
+                "route_policy": {"prompt_cache_mode": "exact"},
+                "upstream_payload": payload,
+                "response_body": {
+                    "choices": [{"message": {"content": "ok"}}],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+                },
+                "route_policy_metrics": {
+                    "prompt_cache_hints_mode": "auto",
+                    "prompt_cache_provider": "observe",
+                },
+            },
+            payload,
+        )
+
+        self.assertEqual(meta["local_response_cache_status"], "miss")
+        self.assertEqual(meta["local_response_cache_note"], "本次未命中")
+        self.assertEqual(meta["upstream_prompt_cache_status"], "miss")
+        self.assertEqual(meta["upstream_prompt_cache_note"], "本次未返回缓存命中")
 
 
 if __name__ == "__main__":
