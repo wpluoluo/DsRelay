@@ -396,7 +396,7 @@ chmod +x ./start.sh
 docker compose -f "__COMPOSE_FILE__" up -d --build __REMOTE_SERVICE_NAME__
 attempt=1
 while [ "$attempt" -le 45 ]; do
-  if curl -fsS http://127.0.0.1:__APP_PORT__/health >/dev/null; then
+  if curl -fsS http://127.0.0.1:__APP_PORT__/health >/dev/null 2>/dev/null; then
     break
   fi
   if [ "$attempt" -eq 45 ]; then
