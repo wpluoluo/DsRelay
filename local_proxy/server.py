@@ -2456,6 +2456,7 @@ def execute_upstream_request(
     request_payload: dict | None,
     request_id: str,
     *,
+    cache_protocol: str | None = None,
     request_method: str = "POST",
     raw_body: bytes | None = None,
     initial_blocked_urls: set[str] | None = None,
@@ -2499,7 +2500,9 @@ def execute_upstream_request(
         request_payload,
         request_method=request_method,
     )
-    request_protocol = "openai_chat_completions" if upstream_subpath == "chat/completions" else subpath.replace("/", "_")
+    request_protocol = str(cache_protocol or "").strip() or (
+        "openai_chat_completions" if upstream_subpath == "chat/completions" else subpath.replace("/", "_")
+    )
     session_affinity_key = build_session_affinity_key(
         request_protocol,
         upstream_payload if isinstance(upstream_payload, dict) else request_payload,
@@ -2579,22 +2582,35 @@ def execute_upstream_request(
             proxy_logger.warning("load_request_cache_failed key=%s error=%s", cache_key[:12], str(exc))
             cached_payload = {}
         if isinstance(cached_payload, dict) and cached_payload.get("response_body"):
-            bump_cache_stat("prompt_cache_hits")
-            cached_execution = build_cached_execution(
-                cached_payload=cached_payload,
+            if not is_cache_storable_response(
                 request_payload=upstream_payload,
-                request_repairs=request_repairs,
-                model_candidates=model_candidates,
                 route_policy=route_policy,
-                cache_key=cache_key,
-                route_policy_metrics=route_policy_metrics,
-            )
-            cached_execution["interruption_resume"] = resume_metrics
-            cached_execution["request_context"] = request_context
-            cached_execution["coalescing_key"] = coalescing_key
-            cached_execution["session_affinity_key"] = session_affinity_key
-            return cached_execution
-        bump_cache_stat("prompt_cache_misses")
+                response_body=cached_payload.get("response_body"),
+                protocol=request_protocol,
+            ):
+                proxy_logger.warning(
+                    "request_cache_stale_unusable key=%s protocol=%s path=%s",
+                    cache_key[:12],
+                    request_protocol,
+                    upstream_subpath,
+                )
+                cached_payload = {}
+            else:
+                bump_cache_stat("prompt_cache_hits")
+                cached_execution = build_cached_execution(
+                    cached_payload=cached_payload,
+                    request_payload=upstream_payload,
+                    request_repairs=request_repairs,
+                    model_candidates=model_candidates,
+                    route_policy=route_policy,
+                    cache_key=cache_key,
+                    route_policy_metrics=route_policy_metrics,
+                )
+                cached_execution["interruption_resume"] = resume_metrics
+                cached_execution["request_context"] = request_context
+                cached_execution["coalescing_key"] = coalescing_key
+                cached_execution["session_affinity_key"] = session_affinity_key
+                return cached_execution
 
     inflight_entry = None
     is_inflight_owner = True
@@ -2778,11 +2794,19 @@ def close_execution_upstream_response(execution: dict | None) -> None:
     close_response_quietly(execution.get("upstream_response"))
 
 
-def start_background_upstream_execution(subpath: str, request_payload: dict | None, request_id: str) -> BackgroundExecution:
+def start_background_upstream_execution(
+    subpath: str,
+    request_payload: dict | None,
+    request_id: str,
+    *,
+    cache_protocol: str | None = None,
+) -> BackgroundExecution:
     request_method = request.method
     raw_body = request.get_data(cache=True)
     request_context = freeze_request_context_snapshot()
-    request_protocol = "openai_chat_completions" if resolve_upstream_text_subpath(subpath, {}, request_payload) == "chat/completions" else subpath.replace("/", "_")
+    request_protocol = str(cache_protocol or "").strip() or (
+        "openai_chat_completions" if resolve_upstream_text_subpath(subpath, {}, request_payload) == "chat/completions" else subpath.replace("/", "_")
+    )
 
     def build_background_execution_failure_result(exc: BaseException) -> dict:
         requested_stream = bool(isinstance(request_payload, dict) and request_payload.get("stream"))
@@ -2861,6 +2885,7 @@ def start_background_upstream_execution(subpath: str, request_payload: dict | No
                 subpath,
                 request_payload,
                 request_id,
+                cache_protocol=request_protocol,
                 request_method=request_method,
                 raw_body=raw_body,
                 request_context=request_context,
@@ -3672,25 +3697,21 @@ def save_request_cache_entry(
         if isinstance(execution, dict) and isinstance(execution.get("upstream_payload"), dict)
         else request_payload
     )
-    choices = response_body.get("choices") or []
-    if choices:
-        has_useful_content = False
-        for choice in choices:
-            message = choice.get("message") or {}
-            if (
-                (isinstance(message.get("content"), str) and message["content"].strip())
-                or message.get("tool_calls")
-                or (isinstance(message.get("reasoning"), str) and message["reasoning"].strip())
-            ):
-                has_useful_content = True
-                break
-        if not has_useful_content:
+    cache_path = normalize_downstream_subpath(path)
+    if str(protocol or "").strip().lower() == "openai_chat_completions":
+        malformed_issue = inspect_success_payload(
+            route_hint=cache_path,
+            content_type="application/json",
+            response_body=response_body,
+        )
+        if malformed_issue:
             return
     route_policy = execution.get("route_policy") if isinstance(execution, dict) else None
     if not is_cache_storable_response(
         request_payload=cache_payload,
         route_policy=route_policy if isinstance(route_policy, dict) else {},
         response_body=response_body,
+        protocol=protocol,
     ):
         return
     try:
@@ -3698,7 +3719,7 @@ def save_request_cache_entry(
         if not cache_key:
             cache_key = build_cache_key(
                 protocol=protocol,
-                path=path,
+                path=cache_path or path,
                 payload=cache_payload,
                 route_policy=route_policy if isinstance(route_policy, dict) else {},
             )
@@ -3706,7 +3727,7 @@ def save_request_cache_entry(
             build_cache_record(
                 cache_key=cache_key,
                 protocol=protocol,
-                path=path,
+                path=cache_path or path,
                 request_payload=cache_payload,
                 route_policy=route_policy if isinstance(route_policy, dict) else {},
                 response_body=response_body,
@@ -3718,6 +3739,7 @@ def save_request_cache_entry(
                 ttl_seconds=REQUEST_CACHE_TTL_SECONDS,
             )
         )
+        bump_cache_stat("prompt_cache_misses")
         bump_cache_stat("prompt_cache_writes")
     except Exception as exc:  # pragma: no cover
         proxy_logger.warning("save_request_cache_failed key=%s error=%s", str(execution.get("cache_key") or "")[:12], str(exc))
@@ -5676,6 +5698,7 @@ def proxy_response(
         response_events = []
         raw_error_lines = []
         skip_next_blank = False
+        stream_read_issue = None
 
         try:
             for raw_line in iter_response_lines(upstream_response):
@@ -5715,7 +5738,12 @@ def proxy_response(
 
                 if normalized_line and not normalized_line.startswith("data:"):
                     raw_error_lines.append(normalized_line)
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
+            stream_read_issue = {
+                "code": "sse_read_failed",
+                "message": "Upstream streaming response was interrupted before a complete response was received.",
+                "preview": (build_preview_summary(preview_parts) or str(exc))[:280],
+            }
             proxy_logger.error(
                 "request_id=%s 上游=%s 线路=%s 状态=%s 流式=false 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 错误=%s 预览=%s",
                 request_id,
@@ -5730,19 +5758,6 @@ def proxy_response(
                 str(exc),
                 build_preview_summary(preview_parts) or "",
             )
-            finalize_request_record(
-                request_id,
-                started_at=started_at,
-                status_code=upstream_response.status_code,
-                bytes_sent=total_bytes,
-                stream=False,
-                error=str(exc),
-                sanitized_markers=sanitized_markers,
-                response_preview=build_preview_summary(preview_parts),
-                repaired_tool_args=repaired_tool_args,
-                extra_meta=build_request_observability_meta(execution, request_payload),
-            )
-            raise
 
         if raw_error_lines and not response_events:
             body_text = "\n".join(raw_error_lines)
@@ -5786,6 +5801,8 @@ def proxy_response(
             response_events=response_events,
             raw_error_lines=raw_error_lines,
         )
+        if stream_read_issue:
+            issue = stream_read_issue
         resume_clear_meta = {}
         if issue:
             next_execution = retry_malformed_success_once(
@@ -6437,7 +6454,12 @@ def gemini_generate_content(subpath: str, request_payload: dict | None):
 
     execution = None
     if requested_stream:
-        background_execution = start_background_upstream_execution("chat/completions", openai_payload, request_id)
+        background_execution = start_background_upstream_execution(
+            "chat/completions",
+            openai_payload,
+            request_id,
+            cache_protocol="gemini_generate_content",
+        )
         ready, async_execution, async_error = wait_background_upstream_execution(
             background_execution,
             STREAM_OPEN_GRACE_SECONDS,
@@ -6476,7 +6498,12 @@ def gemini_generate_content(subpath: str, request_payload: dict | None):
         else:
             execution = async_execution
     else:
-        execution = execute_upstream_request("chat/completions", openai_payload, request_id)
+        execution = execute_upstream_request(
+            "chat/completions",
+            openai_payload,
+            request_id,
+            cache_protocol="gemini_generate_content",
+        )
 
     execution = execution or {}
     upstream_url = execution["upstream_url"]
@@ -6688,7 +6715,12 @@ def anthropic_messages():
 
     execution = None
     if requested_stream:
-        background_execution = start_background_upstream_execution("chat/completions", openai_payload, request_id)
+        background_execution = start_background_upstream_execution(
+            "chat/completions",
+            openai_payload,
+            request_id,
+            cache_protocol="anthropic_messages",
+        )
         ready, async_execution, async_error = wait_background_upstream_execution(
             background_execution,
             STREAM_OPEN_GRACE_SECONDS,
@@ -6739,7 +6771,12 @@ def anthropic_messages():
         else:
             execution = async_execution
     else:
-        execution = execute_upstream_request("chat/completions", openai_payload, request_id)
+        execution = execute_upstream_request(
+            "chat/completions",
+            openai_payload,
+            request_id,
+            cache_protocol="anthropic_messages",
+        )
 
     execution = execution or {}
     upstream_url = execution["upstream_url"]
@@ -9035,7 +9072,12 @@ def proxy_entrypoint(subpath: str):
 
     execution = None
     if requested_stream and upstream_subpath == "chat/completions":
-        background_execution = start_background_upstream_execution(upstream_subpath, request_payload, request_id)
+        background_execution = start_background_upstream_execution(
+            upstream_subpath,
+            request_payload,
+            request_id,
+            cache_protocol=detected_protocol,
+        )
         ready, async_execution, async_error = wait_background_upstream_execution(
             background_execution,
             STREAM_OPEN_GRACE_SECONDS,
@@ -9078,7 +9120,12 @@ def proxy_entrypoint(subpath: str):
         else:
             execution = async_execution
     else:
-        execution = execute_upstream_request(upstream_subpath, request_payload, request_id)
+        execution = execute_upstream_request(
+            upstream_subpath,
+            request_payload,
+            request_id,
+            cache_protocol=detected_protocol,
+        )
 
     execution = execution or {}
     upstream_url = execution["upstream_url"]

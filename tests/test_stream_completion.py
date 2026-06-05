@@ -484,6 +484,59 @@ class StreamCompletionTests(unittest.TestCase):
         self.assertEqual(execute_mock.call_count, 1)
         self.assertTrue(upstream.closed_by_proxy)
 
+    def test_openai_non_stream_sse_read_exception_returns_proxy_502(self):
+        upstream = ErrorAfterPartialStreamResponse(
+            [
+                "data: " + json.dumps(
+                    {
+                        "id": "chatcmpl-partial-non-stream",
+                        "object": "chat.completion.chunk",
+                        "created": 1,
+                        "model": "test-model",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"role": "assistant", "content": "partial"},
+                                "finish_reason": None,
+                            }
+                        ],
+                    },
+                    separators=(",", ":"),
+                ),
+                "",
+            ],
+            requests.exceptions.ConnectionError("Read timed out."),
+        )
+        request_payload = {"model": "test-model", "messages": [{"role": "user", "content": "hello"}]}
+
+        with mock.patch("local_proxy.server.execute_upstream_request", return_value=None) as execute_mock:
+            response = proxy_response(
+                upstream,
+                sanitize_dsml=True,
+                request_id="non-stream-sse-read-timeout",
+                upstream_url=upstream.url,
+                started_at=time.perf_counter(),
+                requested_stream=False,
+                route_hint="chat/completions",
+                tool_schemas={},
+                retry_count=0,
+                protocol="openai_chat_completions",
+                request_payload=request_payload,
+                execution={
+                    "route_url": upstream.url,
+                    "upstream_url_pool": [upstream.url, "https://fallback.example/v1/chat/completions"],
+                    "route_pool_size": 2,
+                    "request_context": {},
+                },
+            )
+
+        payload = json.loads(collect_response_body(response).decode("utf-8"))
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(payload["error"]["code"], "sse_read_failed")
+        self.assertIn("interrupted", payload["error"]["message"])
+        self.assertEqual(execute_mock.call_count, 1)
+        self.assertTrue(upstream.closed_by_proxy)
+
     def test_openai_stream_wraps_bare_json_chunks_into_sse_frames(self):
         first = {
             "id": "chatcmpl-bare",

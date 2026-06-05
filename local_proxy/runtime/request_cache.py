@@ -180,10 +180,113 @@ def response_has_tool_calls(response_body: dict | None) -> bool:
     return False
 
 
-def is_cache_storable_response(*, request_payload: dict | None, route_policy: dict | None, response_body: dict | None) -> bool:
+def _openai_choice_has_text(choice: dict | None) -> bool:
+    if not isinstance(choice, dict):
+        return False
+    message = choice.get("message") or {}
+    content = message.get("content")
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and str(item.get("text") or "").strip():
+                return True
+    return False
+
+
+def _openai_response_has_cacheable_text(response_body: dict | None) -> bool:
+    if not isinstance(response_body, dict):
+        return False
+    choices = response_body.get("choices") or []
+    if not isinstance(choices, list) or not choices:
+        return False
+    return any(_openai_choice_has_text(choice) for choice in choices)
+
+
+def _gemini_response_has_cacheable_text(response_body: dict | None) -> bool:
+    if not isinstance(response_body, dict):
+        return False
+    candidates = response_body.get("candidates") or []
+    if not isinstance(candidates, list) or not candidates:
+        return False
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        content = candidate.get("content") or {}
+        parts = content.get("parts") or []
+        if not isinstance(parts, list):
+            continue
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            if part.get("functionCall"):
+                return False
+            if str(part.get("text") or "").strip():
+                return True
+    return False
+
+
+def _anthropic_response_has_cacheable_text(response_body: dict | None) -> bool:
+    if not isinstance(response_body, dict):
+        return False
+    content = response_body.get("content") or []
+    if not isinstance(content, list) or not content:
+        return False
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if str(block.get("type") or "") == "tool_use":
+            return False
+        if str(block.get("type") or "") == "text" and str(block.get("text") or "").strip():
+            return True
+    return False
+
+
+def _responses_response_has_cacheable_text(response_body: dict | None) -> bool:
+    if not isinstance(response_body, dict):
+        return False
+    output_items = response_body.get("output") or []
+    if not isinstance(output_items, list) or not output_items:
+        return False
+    for output_item in output_items:
+        if not isinstance(output_item, dict):
+            continue
+        if str(output_item.get("type") or "") != "message":
+            continue
+        content_items = output_item.get("content") or []
+        if not isinstance(content_items, list):
+            continue
+        for content_item in content_items:
+            if not isinstance(content_item, dict):
+                continue
+            if str(content_item.get("type") or "") == "output_text" and str(content_item.get("text") or "").strip():
+                return True
+    return False
+
+
+def response_has_cacheable_assistant_text(*, protocol: str | None, response_body: dict | None) -> bool:
+    normalized_protocol = str(protocol or "").strip().lower()
+    if normalized_protocol == "gemini_generate_content":
+        return _gemini_response_has_cacheable_text(response_body)
+    if normalized_protocol == "anthropic_messages":
+        return _anthropic_response_has_cacheable_text(response_body)
+    if normalized_protocol == "openai_responses":
+        return _responses_response_has_cacheable_text(response_body)
+    return _openai_response_has_cacheable_text(response_body)
+
+
+def is_cache_storable_response(
+    *,
+    request_payload: dict | None,
+    route_policy: dict | None,
+    response_body: dict | None,
+    protocol: str | None = None,
+) -> bool:
     if not is_cache_lookup_eligible_request(request_payload=request_payload, route_policy=route_policy, stream=False):
         return False
     if response_has_tool_calls(response_body):
+        return False
+    if not response_has_cacheable_assistant_text(protocol=protocol, response_body=response_body):
         return False
     return True
 
