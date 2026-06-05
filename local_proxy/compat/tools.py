@@ -19,6 +19,81 @@ MAX_COMPLETION_TOKENS = 0
 MODEL_CAPABILITIES = {}
 
 
+SCHEMA_PREFERRED_KEY_ORDER = (
+    "type",
+    "description",
+    "properties",
+    "required",
+    "additionalProperties",
+    "items",
+    "enum",
+    "anyOf",
+    "oneOf",
+    "allOf",
+)
+
+
+def _json_order_fingerprint(value) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except Exception:
+        return repr(value)
+
+
+def _stable_json_schema_for_prompt_cache(schema):
+    if isinstance(schema, list):
+        return [_stable_json_schema_for_prompt_cache(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+
+    result = {}
+    properties = schema.get("properties")
+    property_order = []
+    if isinstance(properties, dict):
+        property_order = sorted(str(key) for key in properties.keys())
+
+    def append_key(key):
+        if key not in schema:
+            return
+        value = schema.get(key)
+        if key == "properties" and isinstance(value, dict):
+            result[key] = {
+                name: _stable_json_schema_for_prompt_cache(value[name])
+                for name in property_order
+                if name in value
+            }
+            return
+        if key == "required" and isinstance(value, list):
+            known = [name for name in property_order if name in set(str(item) for item in value)]
+            unknown = sorted(str(item) for item in value if str(item) not in set(known))
+            result[key] = known + unknown
+            return
+        result[key] = _stable_json_schema_for_prompt_cache(value)
+
+    for preferred_key in SCHEMA_PREFERRED_KEY_ORDER:
+        append_key(preferred_key)
+    for key in sorted(str(item) for item in schema.keys() if item not in result):
+        append_key(key)
+    return result
+
+
+def stable_json_schema_for_prompt_cache(schema) -> tuple[object, bool]:
+    stable_schema = _stable_json_schema_for_prompt_cache(schema)
+    return stable_schema, _json_order_fingerprint(stable_schema) != _json_order_fingerprint(schema)
+
+
+def openai_tool_sort_key(tool) -> tuple[str, str]:
+    if not isinstance(tool, dict):
+        return ("", _json_order_fingerprint(tool))
+    function_meta = tool.get("function")
+    name = ""
+    if isinstance(function_meta, dict):
+        name = str(function_meta.get("name") or "")
+    if not name:
+        name = str(tool.get("name") or "")
+    return (name.lower(), _json_order_fingerprint(tool))
+
+
 def _coerce_non_negative_int(value) -> int:
     if value is None or isinstance(value, bool):
         return 0
@@ -2601,6 +2676,13 @@ def normalize_openai_tool_definition(tool) -> tuple[object, bool]:
         if "parameters" not in normalized_function and normalized_function.get("input_schema") is not None:
             normalized_function["parameters"] = normalized_function.pop("input_schema")
             changed = True
+        if "parameters" in normalized_function:
+            stable_parameters, schema_changed = stable_json_schema_for_prompt_cache(
+                normalized_function.get("parameters")
+            )
+            if schema_changed:
+                normalized_function["parameters"] = stable_parameters
+                changed = True
         if normalized_tool.get("type") != "function":
             normalized_tool["type"] = "function"
             changed = True
@@ -2613,6 +2695,7 @@ def normalize_openai_tool_definition(tool) -> tuple[object, bool]:
             or normalized_tool.get("input_schema")
             or {"type": "object", "properties": {}}
         )
+        parameters, _ = stable_json_schema_for_prompt_cache(parameters)
         return (
             {
                 "type": "function",
@@ -2767,6 +2850,10 @@ def normalize_openai_request_payload(request_payload: dict | None) -> tuple[dict
             normalized_tools.append(normalized_tool)
             if changed:
                 tool_repairs += 1
+        sorted_tools = sorted(normalized_tools, key=openai_tool_sort_key)
+        if _json_order_fingerprint(sorted_tools) != _json_order_fingerprint(normalized_tools):
+            normalized_tools = sorted_tools
+            tool_repairs += 1
         normalized_payload["tools"] = normalized_tools
         if tool_repairs:
             repairs += tool_repairs

@@ -3802,6 +3802,19 @@ def finalize_request_record(
     extra_meta: dict | None = None,
 ) -> int:
     duration_ms = int((time.perf_counter() - started_at) * 1000)
+    cache_meta = extra_meta if isinstance(extra_meta, dict) else {}
+    proxy_logger.info(
+        "request_id=%s 缓存摘要 本地缓存=%s 本地说明=%s 模型缓存=%s 模型说明=%s 读缓存tokens=%s 写缓存tokens=%s 输入tokens=%s 输出tokens=%s",
+        request_id,
+        cache_meta.get("local_response_cache_status") or cache_meta.get("cache_status") or "",
+        cache_meta.get("local_response_cache_note") or cache_meta.get("cache_note") or "",
+        cache_meta.get("upstream_prompt_cache_status") or "",
+        cache_meta.get("upstream_prompt_cache_note") or "",
+        int(cache_meta.get("cache_read_input_tokens") or 0),
+        int(cache_meta.get("cache_creation_input_tokens") or 0),
+        int(cache_meta.get("prompt_tokens") or 0),
+        int(cache_meta.get("completion_tokens") or 0),
+    )
     record_request_finished(
         request_id,
         status_code=status_code,

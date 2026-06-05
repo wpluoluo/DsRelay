@@ -1,7 +1,12 @@
 import json
 import unittest
 
-from local_proxy.compat.tools import normalize_sse_line, normalize_tool_arguments_payload, normalize_tool_call_list
+from local_proxy.compat.tools import (
+    normalize_openai_request_payload,
+    normalize_sse_line,
+    normalize_tool_arguments_payload,
+    normalize_tool_call_list,
+)
 
 
 BASH_TOOL_SCHEMAS = {
@@ -77,6 +82,109 @@ SKILL_TOOL_SCHEMAS = {
 
 
 class ToolArgumentCompatTests(unittest.TestCase):
+    def test_openai_tool_order_is_stable_for_prompt_cache_prefix(self):
+        payload = {
+            "model": "demo-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "Write",
+                        "description": "write file",
+                        "parameters": {
+                            "required": ["content", "path"],
+                            "type": "object",
+                            "properties": {
+                                "path": {"description": "path", "type": "string"},
+                                "content": {"type": "string", "description": "content"},
+                            },
+                        },
+                    },
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "Read",
+                        "description": "read file",
+                        "parameters": {
+                            "properties": {
+                                "path": {"type": "string", "description": "path"},
+                            },
+                            "required": ["path"],
+                            "type": "object",
+                        },
+                    },
+                },
+            ],
+        }
+        swapped = {**payload, "tools": list(reversed(payload["tools"]))}
+
+        normalized_a, repairs_a = normalize_openai_request_payload(payload)
+        normalized_b, repairs_b = normalize_openai_request_payload(swapped)
+
+        self.assertGreaterEqual(repairs_a, 1)
+        self.assertGreaterEqual(repairs_b, 1)
+        self.assertEqual(normalized_a["tools"], normalized_b["tools"])
+        self.assertEqual(
+            [tool["function"]["name"] for tool in normalized_a["tools"]],
+            ["Read", "Write"],
+        )
+
+    def test_openai_tool_schema_order_is_stable_for_prompt_cache_prefix(self):
+        payload_a = {
+            "model": "demo-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "Search",
+                        "parameters": {
+                            "required": ["query", "path"],
+                            "properties": {
+                                "path": {"description": "base path", "type": "string"},
+                                "query": {"type": "string", "description": "query text"},
+                            },
+                            "type": "object",
+                            "additionalProperties": False,
+                        },
+                    },
+                }
+            ],
+        }
+        payload_b = {
+            "model": "demo-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [
+                {
+                    "function": {
+                        "parameters": {
+                            "additionalProperties": False,
+                            "type": "object",
+                            "properties": {
+                                "query": {"description": "query text", "type": "string"},
+                                "path": {"type": "string", "description": "base path"},
+                            },
+                            "required": ["path", "query"],
+                        },
+                        "name": "Search",
+                    },
+                    "type": "function",
+                }
+            ],
+        }
+
+        normalized_a, repairs_a = normalize_openai_request_payload(payload_a)
+        normalized_b, repairs_b = normalize_openai_request_payload(payload_b)
+
+        self.assertGreaterEqual(repairs_a + repairs_b, 1)
+        self.assertEqual(normalized_a["tools"], normalized_b["tools"])
+        parameters = normalized_a["tools"][0]["function"]["parameters"]
+        self.assertEqual(list(parameters.keys())[:4], ["type", "properties", "required", "additionalProperties"])
+        self.assertEqual(list(parameters["properties"].keys()), ["path", "query"])
+        self.assertEqual(parameters["required"], ["path", "query"])
+
     def test_bash_alias_argument_is_normalized_to_command(self):
         normalized, modified = normalize_tool_arguments_payload(
             "Bash",

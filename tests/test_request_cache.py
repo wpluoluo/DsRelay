@@ -66,6 +66,59 @@ class RequestCacheTests(unittest.TestCase):
 
         self.assertEqual(plain_key, hinted_key)
 
+    def test_cache_key_is_stable_after_openai_tool_normalization(self):
+        from local_proxy.compat.tools import normalize_openai_request_payload
+
+        payload_a = {
+            "model": "demo-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "Write",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string"},
+                                "content": {"type": "string"},
+                            },
+                            "required": ["content", "path"],
+                        },
+                    },
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "Read",
+                        "parameters": {
+                            "required": ["path"],
+                            "properties": {"path": {"type": "string"}},
+                            "type": "object",
+                        },
+                    },
+                },
+            ],
+        }
+        payload_b = {**payload_a, "tools": list(reversed(payload_a["tools"]))}
+        normalized_a, _ = normalize_openai_request_payload(payload_a)
+        normalized_b, _ = normalize_openai_request_payload(payload_b)
+
+        self.assertEqual(
+            build_cache_key(
+                protocol="openai_chat_completions",
+                path="chat/completions",
+                payload=normalized_a,
+                route_policy={"prompt_cache_mode": "exact"},
+            ),
+            build_cache_key(
+                protocol="openai_chat_completions",
+                path="chat/completions",
+                payload=normalized_b,
+                route_policy={"prompt_cache_mode": "exact"},
+            ),
+        )
+
     def test_stream_request_can_use_prompt_cache_when_payload_supported(self):
         payload = {
             "model": "demo-model",
