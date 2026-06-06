@@ -364,6 +364,8 @@ def build_dashboard_state(context: dict) -> dict:
         ):
             continue
         next_item = dict(item)
+        if next_item.get("status_code") is not None or next_item.get("error") or next_item.get("client_gone"):
+            next_item.pop("status_text", None)
         resolved_route = _resolve_request_route(
             next_item.get("route_url") or next_item.get("upstream_url") or "",
             active_route_urls=active_route_urls,

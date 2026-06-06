@@ -97,6 +97,7 @@ class RequestRecorder:
     ) -> dict:
         with self.lock:
             request_meta = self.active_requests.pop(request_id, {"request_id": request_id})
+            request_meta.pop("active", None)
             request_meta["status_code"] = status_code
             request_meta["bytes_sent"] = bytes_sent
             request_meta["duration_ms"] = duration_ms
@@ -106,6 +107,8 @@ class RequestRecorder:
             request_meta["sanitized_markers"] = sanitized_markers
             request_meta["response_preview"] = response_preview
             request_meta["repaired_tool_args"] = repaired_tool_args
+            if status_code is not None or error or client_gone:
+                request_meta.pop("status_text", None)
             if isinstance(extra_meta, dict):
                 request_meta.update(
                     {

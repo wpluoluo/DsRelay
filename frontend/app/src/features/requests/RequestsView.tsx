@@ -2,16 +2,17 @@ import { useMutation } from '@tanstack/react-query';
 import { ListChecks, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { clearRequestCache, clearRequests } from '../../api';
-import { Button, Empty, Panel, PanelHead, Select, TextInput } from '../../components';
+import { Button, Select, TextInput } from '../../components';
+import { ActionButton, EmptyState, FilterToolbar, TablePageLayout, ToolbarButtonRow } from '../../components/admin';
 import { queryClient } from '../../state/queryClient';
 import type { DashboardState, RequestEntry } from '../../types';
-import { formatByteCount, formatMs, formatTokenCount, maskEmpty, summarizeLocalCacheStatus, summarizeUpstreamCacheStatus } from '../../utils';
+import { formatByteCount, formatMs, formatNumber, formatTokenCount, maskEmpty, summarizeLocalCacheStatus, summarizeUpstreamCacheStatus } from '../../utils';
 
 export function RequestsView({ state }: { state: DashboardState }) {
   const [filters, setFilters] = useState({ scope: 'recent', start: '', end: '', requestId: '', model: '', protocol: '', remote: '' });
+  const active = state.active_requests || [];
+  const recent = state.recent_requests || [];
   const rows = useMemo(() => {
-    const active = state.active_requests || [];
-    const recent = state.recent_requests || [];
     const sourceRows = filters.scope === 'active' ? active : filters.scope === 'all' ? [...active, ...recent] : recent;
     const start = filters.start ? new Date(filters.start).getTime() : 0;
     const end = filters.end ? new Date(filters.end).getTime() : 0;
@@ -28,48 +29,69 @@ export function RequestsView({ state }: { state: DashboardState }) {
       if (filters.remote && !String(entry.remote || '').toLowerCase().includes(filters.remote.toLowerCase())) return false;
       return true;
     });
-  }, [filters, state.active_requests, state.recent_requests]);
+  }, [active, filters, recent]);
+  const successCount = rows.filter((entry) => !entry.error && Number(entry.status_code || 0) < 400).length;
+  const errorCount = rows.length - successCount;
+  const totalTokens = rows.reduce((sum, entry) => sum + Number(entry.total_tokens || entry.prompt_tokens || 0) + Number(entry.completion_tokens || 0), 0);
+  const totalDuration = rows.reduce((sum, entry) => sum + Number(entry.duration_ms || 0), 0);
+  const avgDuration = rows.length ? Math.round(totalDuration / rows.length) : 0;
   return (
-    <Panel className="request-workbench">
-      <PanelHead title={<><ListChecks size={18} />请求观测</>} action={<RequestActions />} />
-      <div className="request-filter-bar">
-        <label className="filter-field"><span>范围</span><Select value={filters.scope} onChange={(e) => setFilters((current) => ({ ...current, scope: e.target.value }))}><option value="recent">最近请求</option><option value="active">活跃请求</option><option value="all">全部</option></Select></label>
-        <label className="filter-field"><span>开始时间</span><TextInput type="datetime-local" value={filters.start} onChange={(e) => setFilters((current) => ({ ...current, start: e.target.value }))} /></label>
-        <label className="filter-field"><span>结束时间</span><TextInput type="datetime-local" value={filters.end} onChange={(e) => setFilters((current) => ({ ...current, end: e.target.value }))} /></label>
-        <label className="filter-field"><span>请求 ID</span><TextInput value={filters.requestId} onChange={(e) => setFilters((current) => ({ ...current, requestId: e.target.value }))} /></label>
-        <label className="filter-field"><span>模型</span><TextInput value={filters.model} onChange={(e) => setFilters((current) => ({ ...current, model: e.target.value }))} /></label>
-        <label className="filter-field"><span>协议</span><TextInput value={filters.protocol} onChange={(e) => setFilters((current) => ({ ...current, protocol: e.target.value }))} /></label>
-        <label className="filter-field"><span>来源</span><TextInput value={filters.remote} onChange={(e) => setFilters((current) => ({ ...current, remote: e.target.value }))} /></label>
+    <section className="grid-page">
+      <div className="key-stat-grid">
+        <div className="key-stat"><div className="key-stat-icon blue"><ListChecks size={18} /></div><div><span>当前结果</span><strong>{formatNumber(rows.length)}</strong><small>筛选后的请求数</small></div></div>
+        <div className="key-stat"><div className="key-stat-icon green"><ListChecks size={18} /></div><div><span>成功请求</span><strong>{formatNumber(successCount)}</strong><small>异常 {formatNumber(errorCount)}</small></div></div>
+        <div className="key-stat"><div className="key-stat-icon amber"><ListChecks size={18} /></div><div><span>累计 Token</span><strong>{formatTokenCount(totalTokens)}</strong><small>当前筛选范围</small></div></div>
+        <div className="key-stat"><div className="key-stat-icon slate"><ListChecks size={18} /></div><div><span>平均耗时</span><strong>{formatMs(avgDuration)}</strong><small>活跃 {formatNumber(active.length)}</small></div></div>
       </div>
-      <div className="table-wrap table-scroll table-requests">
-        <table>
-          <colgroup>
-            <col className="col-req-time" />
-            <col className="col-req-source" />
-            <col className="col-req-route" />
-            <col className="col-req-model" />
-            <col className="col-req-metrics" />
-            <col className="col-req-repairs" />
-            <col className="col-req-status" />
-          </colgroup>
-          <thead><tr><th>时间</th><th>来源</th><th>线路</th><th>模型</th><th>指标</th><th>修复</th><th>状态</th></tr></thead>
-          <tbody>
-            {rows.length ? rows.slice(0, 80).map((entry, index) => <RequestRow key={`${entry.request_id || index}-${index}`} entry={entry} />) : <tr><td colSpan={7}><Empty>当前筛选条件下没有请求记录。</Empty></td></tr>}
-          </tbody>
-        </table>
-      </div>
-    </Panel>
+      <TablePageLayout
+        filters={
+          <FilterToolbar
+            right={<RequestActions />}
+          >
+            <label className="filter-field"><span>范围</span><Select value={filters.scope} onChange={(e) => setFilters((current) => ({ ...current, scope: e.target.value }))}><option value="recent">最近请求</option><option value="active">活跃请求</option><option value="all">全部</option></Select></label>
+            <label className="filter-field"><span>开始时间</span><TextInput type="datetime-local" value={filters.start} onChange={(e) => setFilters((current) => ({ ...current, start: e.target.value }))} /></label>
+            <label className="filter-field"><span>结束时间</span><TextInput type="datetime-local" value={filters.end} onChange={(e) => setFilters((current) => ({ ...current, end: e.target.value }))} /></label>
+            <label className="filter-field"><span>请求 ID</span><TextInput value={filters.requestId} onChange={(e) => setFilters((current) => ({ ...current, requestId: e.target.value }))} /></label>
+            <label className="filter-field"><span>模型</span><TextInput value={filters.model} onChange={(e) => setFilters((current) => ({ ...current, model: e.target.value }))} /></label>
+            <label className="filter-field"><span>协议</span><TextInput value={filters.protocol} onChange={(e) => setFilters((current) => ({ ...current, protocol: e.target.value }))} /></label>
+            <label className="filter-field"><span>来源</span><TextInput value={filters.remote} onChange={(e) => setFilters((current) => ({ ...current, remote: e.target.value }))} /></label>
+          </FilterToolbar>
+        }
+        table={
+          <div className="table-wrap table-scroll table-requests">
+            <table>
+              <colgroup>
+                <col className="col-req-time" />
+                <col className="col-req-source" />
+                <col className="col-req-route" />
+                <col className="col-req-model" />
+                <col className="col-req-metrics" />
+                <col className="col-req-repairs" />
+                <col className="col-req-status" />
+              </colgroup>
+              <thead><tr><th>时间</th><th>来源</th><th>线路</th><th>模型</th><th>指标</th><th>修复</th><th>状态</th></tr></thead>
+              <tbody>
+                {rows.length ? rows.slice(0, 80).map((entry, index) => <RequestRow key={`${entry.request_id || index}-${index}`} entry={entry} />) : <tr><td colSpan={7}><EmptyState title="暂无请求记录" description="当前筛选条件下没有请求记录。" /></td></tr>}
+              </tbody>
+            </table>
+          </div>
+        }
+      />
+    </section>
   );
 }
 
 function RequestActions() {
   const clearMutation = useMutation({ mutationFn: clearRequests, onSuccess: () => queryClient.invalidateQueries({ queryKey: ['dashboard-state'] }) });
   const cacheMutation = useMutation({ mutationFn: clearRequestCache, onSuccess: () => queryClient.invalidateQueries({ queryKey: ['dashboard-state'] }) });
-  return <div className="button-row"><Button onClick={() => clearMutation.mutate()}><Trash2 size={14} />清空请求</Button><Button onClick={() => cacheMutation.mutate()}><Trash2 size={14} />清空缓存</Button></div>;
+  return <ToolbarButtonRow><ActionButton onClick={() => clearMutation.mutate()}><Trash2 size={14} />清空请求</ActionButton><ActionButton onClick={() => cacheMutation.mutate()}><Trash2 size={14} />清空缓存</ActionButton></ToolbarButtonRow>;
 }
 
 function RequestRow({ entry }: { entry: RequestEntry }) {
-  const status = entry.status_text || entry.status_code || (entry.error ? '异常' : entry.active ? '处理中' : '-');
+  const isTerminal = Boolean(entry.error || entry.client_gone || entry.status_code);
+  const status = isTerminal
+    ? (entry.error ? '异常' : entry.client_gone ? '客户端断开' : entry.status_code || '-')
+    : (entry.status_text || (entry.active ? '处理中' : '-'));
   const tone = entry.error ? 'bad' : Number(entry.status_code || 0) >= 400 ? 'warn' : 'ok';
   const statusTone = entry.error || Number(entry.status_code || 0) >= 400 ? 'err' : entry.status_code ? 'ok' : 'warn';
   const poolName = entry.pool_name || entry.selected_pool_name || '-';
@@ -122,7 +144,7 @@ function RequestRow({ entry }: { entry: RequestEntry }) {
         </div>
       </td>
       <td><div className="request-stack"><div className="request-cell-sub">请求 {entry.request_repairs || 0} · DSML {entry.sanitized_markers || 0} · 工具 {entry.repaired_tool_args || 0}</div></div></td>
-      <td><div className="request-chip-row"><span className={`request-chip ${statusTone}`}>状态 {String(status)}</span>{entry.error ? <span className="request-chip err">异常</span> : null}</div>{entry.error ? <div className="request-cell-sub request-ellipsis request-error">{entry.error}</div> : null}</td>
+      <td className="request-status-cell"><div className="request-chip-row"><span className={`request-chip ${statusTone}`}>状态 {String(status)}</span>{entry.error ? <span className="request-chip err">异常</span> : null}</div>{entry.error ? <div className="request-cell-sub request-ellipsis request-error">{entry.error}</div> : null}</td>
     </tr>
   );
 }

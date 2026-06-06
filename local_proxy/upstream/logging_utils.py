@@ -1,8 +1,23 @@
 from __future__ import annotations
 
 
+def _stringify_attempt_url(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        parts = [str(item or "").strip() for item in value if str(item or "").strip()]
+        return " | ".join(parts)
+    return str(value or "").strip()
+
+
 def summarize_attempt_routes(attempts: list[dict]) -> tuple[list[str], str]:
-    attempt_urls = [attempt.get("upstream_url", "") for attempt in attempts if attempt.get("upstream_url")]
+    attempt_urls = []
+    for attempt in attempts or []:
+        if not isinstance(attempt, dict):
+            continue
+        candidate = _stringify_attempt_url(attempt.get("upstream_url", ""))
+        if candidate:
+            attempt_urls.append(candidate)
     unique_urls = list(dict.fromkeys(attempt_urls))
     return unique_urls, " -> ".join(attempt_urls)
 
