@@ -129,6 +129,10 @@ from local_proxy.runtime.policies import (
     get_route_policy_for_url,
     normalize_pool_route_policies,
 )
+from local_proxy.runtime.prompt_cache import (
+    build_prompt_prefix_observability,
+    should_force_prompt_cache_affinity,
+)
 from local_proxy.runtime.request_cache import (
     DEFAULT_REQUEST_CACHE_TTL_SECONDS,
     DEFAULT_TOOL_RESULT_CACHE_TTL_SECONDS,
@@ -3135,6 +3139,7 @@ def build_attempt_url_cycle(candidate_urls: list[str], blocked_urls: set[str]) -
         randomize_endpoints=UPSTREAM_RANDOMIZE_ENDPOINTS,
         route_score_provider=(lambda route_url: get_route_selection_score(logical_model, route_url)),
         session_affinity_key=session_affinity_key,
+        force_fingerprint_affinity=should_force_prompt_cache_affinity(candidate_urls),
     )
     debug_meta = router_build_route_selection_debug(
         candidate_urls,
@@ -3143,6 +3148,7 @@ def build_attempt_url_cycle(candidate_urls: list[str], blocked_urls: set[str]) -
         state_lock=state_lock,
         randomize_endpoints=UPSTREAM_RANDOMIZE_ENDPOINTS,
         session_affinity_key=session_affinity_key,
+        force_fingerprint_affinity=should_force_prompt_cache_affinity(candidate_urls),
     )
     debug_meta["ordered_urls"] = list(ordered or [])
     debug_meta["selected_url"] = ordered[0] if ordered else ""
@@ -3546,6 +3552,7 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
     route_policy_metrics = execution.get("route_policy_metrics") if isinstance(execution.get("route_policy_metrics"), dict) else {}
     resume_metrics = execution.get("interruption_resume") if isinstance(execution.get("interruption_resume"), dict) else {}
     tool_result_cache_metrics = execution.get("tool_result_cache") if isinstance(execution.get("tool_result_cache"), dict) else {}
+    prompt_prefix_meta = build_prompt_prefix_observability(effective_payload if isinstance(effective_payload, dict) else {})
     prompt_cache_hints_mode = str(route_policy_metrics.get("prompt_cache_hints_mode") or "")
     prompt_cache_provider = str(route_policy_metrics.get("prompt_cache_provider") or "")
     cache_status = "miss"
@@ -3646,6 +3653,7 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
         "upstream_prompt_cache_status": upstream_prompt_cache_status,
         "upstream_prompt_cache_note": upstream_prompt_cache_note,
     }
+    meta.update(prompt_prefix_meta)
     meta.update(usage_details)
     if int(meta.get("prompt_tokens") or 0) <= 0 and isinstance(effective_payload, dict):
         meta["prompt_tokens"] = estimate_payload_tokens(effective_payload)
@@ -3916,7 +3924,7 @@ def finalize_request_record(
     duration_ms = int((time.perf_counter() - started_at) * 1000)
     cache_meta = extra_meta if isinstance(extra_meta, dict) else {}
     proxy_logger.info(
-        "request_id=%s 缓存摘要 本地缓存=%s 本地说明=%s 模型缓存=%s 模型说明=%s 读缓存tokens=%s 写缓存tokens=%s 输入tokens=%s 输出tokens=%s",
+        "request_id=%s 缓存摘要 本地缓存=%s 本地说明=%s 模型缓存=%s 模型说明=%s 读缓存tokens=%s 写缓存tokens=%s 输入tokens=%s 输出tokens=%s 前缀=%s 消息前缀=%s 工具前缀=%s",
         request_id,
         cache_meta.get("local_response_cache_status") or cache_meta.get("cache_status") or "",
         cache_meta.get("local_response_cache_note") or cache_meta.get("cache_note") or "",
@@ -3926,6 +3934,9 @@ def finalize_request_record(
         int(cache_meta.get("cache_creation_input_tokens") or 0),
         int(cache_meta.get("prompt_tokens") or 0),
         int(cache_meta.get("completion_tokens") or 0),
+        cache_meta.get("prompt_prefix_hash") or "",
+        cache_meta.get("prompt_messages_hash") or "",
+        cache_meta.get("prompt_tools_hash") or "",
     )
     record_request_finished(
         request_id,

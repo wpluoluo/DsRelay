@@ -302,6 +302,76 @@ class GatewayFailoverTests(unittest.TestCase):
 
         self.assertEqual(ordered[0], "https://c.example/v1/chat/completions")
 
+    def test_route_cycle_keeps_fingerprint_affinity_for_prompt_cache_sensitive_routes(self):
+        route_health = {}
+        route_selection_state = {
+            "affinity:session:v1:fingerprint:test": {
+                "route_url": "https://opencode.ai/zen/v1/chat/completions",
+                "last_used_at": 1.0,
+            }
+        }
+
+        class DummyLock:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with patch("builtins.hash", return_value=0), patch("local_proxy.upstream.router.random.shuffle", lambda seq: None):
+            ordered = build_attempt_url_cycle(
+                [
+                    "https://a.example/v1/chat/completions",
+                    "https://opencode.ai/zen/v1/chat/completions",
+                    "https://integrate.api.nvidia.com/v1/chat/completions",
+                ],
+                set(),
+                route_health=route_health,
+                route_selection_state=route_selection_state,
+                state_lock=DummyLock(),
+                randomize_endpoints=True,
+                route_score_provider=lambda url: 10.0,
+                session_affinity_key="session:v1:fingerprint:test",
+                force_fingerprint_affinity=True,
+            )
+
+        self.assertEqual(ordered[0], "https://opencode.ai/zen/v1/chat/completions")
+
+    def test_prompt_cache_fingerprint_affinity_does_not_override_route_priority(self):
+        route_health = {}
+        route_selection_state = {
+            "affinity:session:v1:fingerprint:test": {
+                "route_url": "https://opencode.ai/zen/v1/chat/completions",
+                "last_used_at": 1.0,
+            }
+        }
+
+        class DummyLock:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with patch("builtins.hash", return_value=0), patch("local_proxy.upstream.router.random.shuffle", lambda seq: None):
+            ordered = build_attempt_url_cycle(
+                [
+                    "https://a.example/v1/chat/completions",
+                    "https://opencode.ai/zen/v1/chat/completions",
+                    "https://integrate.api.nvidia.com/v1/chat/completions",
+                ],
+                set(),
+                route_health=route_health,
+                route_selection_state=route_selection_state,
+                state_lock=DummyLock(),
+                randomize_endpoints=True,
+                route_score_provider=lambda url: 10.0 if url.startswith("https://a.example") else 0.0,
+                session_affinity_key="session:v1:fingerprint:test",
+                force_fingerprint_affinity=True,
+            )
+
+        self.assertEqual(ordered[0], "https://a.example/v1/chat/completions")
+
     def test_route_cycle_keeps_explicit_affinity_even_when_randomization_enabled(self):
         route_health = {}
         route_selection_state = {
@@ -434,6 +504,33 @@ class GatewayFailoverTests(unittest.TestCase):
         self.assertEqual(debug_meta["session_affinity_type"], "fingerprint")
         self.assertFalse(debug_meta["session_affinity_applied"])
         self.assertEqual(debug_meta["rotation_reason"], "randomized_ignore_fingerprint_affinity")
+
+    def test_route_selection_debug_marks_prompt_cache_fingerprint_affinity(self):
+        route_health = {}
+
+        class DummyLock:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        debug_meta = build_route_selection_debug(
+            [
+                "https://opencode.ai/zen/v1/chat/completions",
+                "https://integrate.api.nvidia.com/v1/chat/completions",
+            ],
+            set(),
+            route_health=route_health,
+            state_lock=DummyLock(),
+            randomize_endpoints=True,
+            session_affinity_key="session:v1:fingerprint:test",
+            force_fingerprint_affinity=True,
+        )
+
+        self.assertEqual(debug_meta["session_affinity_type"], "fingerprint")
+        self.assertTrue(debug_meta["session_affinity_applied"])
+        self.assertEqual(debug_meta["rotation_reason"], "prompt_cache_affinity")
 
     def test_streaming_success_response_is_returned_without_preconsuming_body(self):
         stream_response = StreamingSuccessResponse("https://slow.example/v1/chat/completions")

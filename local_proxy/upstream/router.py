@@ -34,11 +34,18 @@ MODEL_UNAVAILABLE_UPSTREAM_ERROR_MARKERS = (
 )
 
 
-def should_apply_session_route_affinity(session_affinity_key: str | None, *, randomize_endpoints: bool) -> bool:
+def should_apply_session_route_affinity(
+    session_affinity_key: str | None,
+    *,
+    randomize_endpoints: bool,
+    force_fingerprint_affinity: bool = False,
+) -> bool:
     key = str(session_affinity_key or "").strip()
     if not key:
         return False
     if key.startswith("session:v1:explicit:"):
+        return True
+    if force_fingerprint_affinity and key.startswith("session:v1:fingerprint:"):
         return True
     return not randomize_endpoints
 
@@ -227,6 +234,24 @@ def _extract_preferred_route(
     return head_urls, remaining_groups
 
 
+def _extract_preferred_route_within_top_group(
+    ranked_groups: list[tuple[tuple[float, int, float], list[str]]],
+    preferred_url: str,
+) -> tuple[list[str], list[tuple[tuple[float, int, float], list[str]]]]:
+    if not preferred_url or not ranked_groups:
+        return [], [(rank_key, list(urls)) for rank_key, urls in ranked_groups]
+    top_rank, top_urls = ranked_groups[0]
+    if preferred_url not in top_urls:
+        return [], [(rank_key, list(urls)) for rank_key, urls in ranked_groups]
+    head_urls = [preferred_url]
+    remaining_groups: list[tuple[tuple[float, int, float], list[str]]] = []
+    top_tail = [url for url in top_urls if url != preferred_url]
+    if top_tail:
+        remaining_groups.append((top_rank, top_tail))
+    remaining_groups.extend((rank_key, list(urls)) for rank_key, urls in ranked_groups[1:])
+    return head_urls, remaining_groups
+
+
 def _rotate_route_group(
     route_urls: list[str],
     route_selection_state: dict,
@@ -279,6 +304,7 @@ def build_attempt_url_cycle(
     randomize_endpoints: bool,
     route_score_provider: Callable[[str], float] | None = None,
     session_affinity_key: str | None = None,
+    force_fingerprint_affinity: bool = False,
 ) -> list[str]:
     active_urls = [
         url
@@ -302,6 +328,7 @@ def build_attempt_url_cycle(
         if should_apply_session_route_affinity(
             session_affinity_key,
             randomize_endpoints=randomize_endpoints,
+            force_fingerprint_affinity=force_fingerprint_affinity,
         ):
             affinity_key = str(session_affinity_key or "").strip()
         preferred_url = ""
@@ -309,7 +336,10 @@ def build_attempt_url_cycle(
             affinity_entry = route_selection_state.get(f"affinity:{affinity_key}", {})
             preferred_url = str(affinity_entry.get("route_url") or "")
 
-        head_urls, remaining_groups = _extract_preferred_route(ranked_groups, preferred_url)
+        if force_fingerprint_affinity and classify_session_route_affinity(session_affinity_key) == "fingerprint":
+            head_urls, remaining_groups = _extract_preferred_route_within_top_group(ranked_groups, preferred_url)
+        else:
+            head_urls, remaining_groups = _extract_preferred_route(ranked_groups, preferred_url)
         rotated = list(head_urls)
         for _, group_urls in remaining_groups:
             rotated.extend(
@@ -338,11 +368,13 @@ def build_route_selection_debug(
     state_lock,
     randomize_endpoints: bool,
     session_affinity_key: str | None = None,
+    force_fingerprint_affinity: bool = False,
 ) -> dict:
     affinity_type = classify_session_route_affinity(session_affinity_key)
     affinity_applied = should_apply_session_route_affinity(
         session_affinity_key,
         randomize_endpoints=randomize_endpoints,
+        force_fingerprint_affinity=force_fingerprint_affinity,
     )
     cooldown_urls = []
     for url in candidate_urls:
@@ -351,6 +383,8 @@ def build_route_selection_debug(
     reason = "health_priority"
     if affinity_type == "explicit" and affinity_applied:
         reason = "explicit_affinity"
+    elif affinity_type == "fingerprint" and affinity_applied and randomize_endpoints and force_fingerprint_affinity:
+        reason = "prompt_cache_affinity"
     elif affinity_type == "fingerprint" and randomize_endpoints:
         reason = "randomized_ignore_fingerprint_affinity"
     elif randomize_endpoints:
@@ -360,6 +394,7 @@ def build_route_selection_debug(
         "session_affinity_applied": affinity_applied,
         "session_affinity_key": str(session_affinity_key or ""),
         "randomize_endpoints": bool(randomize_endpoints),
+        "force_fingerprint_affinity": bool(force_fingerprint_affinity),
         "rotation_reason": reason,
         "blocked_urls": list(blocked_urls or []),
         "cooldown_urls": cooldown_urls,

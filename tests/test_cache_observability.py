@@ -1,6 +1,7 @@
 import unittest
 
 from local_proxy.compat.protocols import build_openai_usage_from_response
+from local_proxy.runtime.prompt_cache import build_prompt_prefix_observability
 from local_proxy.server import build_usage_observability_meta
 
 
@@ -43,6 +44,29 @@ class CacheObservabilityTests(unittest.TestCase):
         self.assertEqual(meta["total_tokens"], 107)
         self.assertEqual(meta["cache_read_input_tokens"], 55)
         self.assertEqual(meta["prompt_cache_hit_tokens"], 55)
+
+    def test_prompt_prefix_observability_is_stable_for_tool_order(self):
+        payload_a = {
+            "model": "deepseek-v4-flash",
+            "messages": [
+                {"role": "system", "content": " rules\n"},
+                {"role": "user", "content": "hello"},
+            ],
+            "tools": [
+                {"type": "function", "function": {"name": "Write", "parameters": {"type": "object"}}},
+                {"type": "function", "function": {"name": "Read", "parameters": {"type": "object"}}},
+            ],
+        }
+        payload_b = {
+            **payload_a,
+            "tools": list(reversed(payload_a["tools"])),
+        }
+
+        meta_a = build_prompt_prefix_observability(payload_a)
+        meta_b = build_prompt_prefix_observability(payload_b)
+
+        self.assertEqual(meta_a["prompt_prefix_hash"], meta_b["prompt_prefix_hash"])
+        self.assertEqual(meta_a["prompt_tool_count"], 2)
 
 
 if __name__ == "__main__":
