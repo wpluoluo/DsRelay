@@ -8,6 +8,14 @@ export function formatNumber(value: unknown): string {
   return number.toLocaleString('zh-CN');
 }
 
+export function formatTokenCount(value: unknown): string {
+  return `${formatNumber(value)} Token`;
+}
+
+export function formatByteCount(value: unknown): string {
+  return formatNumber(value);
+}
+
 export function formatMs(value: unknown): string {
   const number = Number(value || 0);
   if (!Number.isFinite(number) || number <= 0) return '0 ms';
@@ -46,4 +54,24 @@ export function splitLines(value: unknown): string[] {
 export function textFromLines(lines: unknown): string {
   if (!Array.isArray(lines)) return '';
   return lines.map((line) => String(line || '').trim()).filter(Boolean).join('\n');
+}
+
+export function summarizeUpstreamCacheStatus(status: unknown, readTokens: unknown): string {
+  const normalized = String(status || '').toLowerCase();
+  if (Number(readTokens || 0) > 0 || normalized === 'hit') return '命中';
+  if (normalized === 'hinted') return '已提示';
+  if (normalized === 'miss') return '未命中';
+  if (normalized === 'passthrough') return '透传';
+  if (normalized === 'off') return '关闭';
+  if (normalized === 'eligible') return '未命中';
+  return status ? String(status) : '关闭';
+}
+
+export function summarizeLocalCacheStatus(status: unknown, hit: unknown): string {
+  const normalized = String(status || '').toLowerCase();
+  if (hit || normalized === 'hit') return '命中';
+  if (normalized.startsWith('bypass')) return '跳过';
+  if (normalized === 'off' || normalized === 'disabled') return '关闭';
+  if (normalized === 'miss') return '未命中';
+  return status ? String(status) : '未命中';
 }
