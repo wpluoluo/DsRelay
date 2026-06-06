@@ -41,8 +41,17 @@ export function RequestsView({ state }: { state: DashboardState }) {
         <label className="filter-field"><span>协议</span><TextInput value={filters.protocol} onChange={(e) => setFilters((current) => ({ ...current, protocol: e.target.value }))} /></label>
         <label className="filter-field"><span>来源</span><TextInput value={filters.remote} onChange={(e) => setFilters((current) => ({ ...current, remote: e.target.value }))} /></label>
       </div>
-      <div className="table-wrap">
+      <div className="table-wrap table-scroll table-requests">
         <table>
+          <colgroup>
+            <col className="col-req-time" />
+            <col className="col-req-source" />
+            <col className="col-req-route" />
+            <col className="col-req-model" />
+            <col className="col-req-metrics" />
+            <col className="col-req-repairs" />
+            <col className="col-req-status" />
+          </colgroup>
           <thead><tr><th>时间</th><th>来源</th><th>线路</th><th>模型</th><th>指标</th><th>修复</th><th>状态</th></tr></thead>
           <tbody>
             {rows.length ? rows.slice(0, 80).map((entry, index) => <RequestRow key={`${entry.request_id || index}-${index}`} entry={entry} />) : <tr><td colSpan={7}><Empty>当前筛选条件下没有请求记录。</Empty></td></tr>}

@@ -9,8 +9,17 @@ export function LogsView({ state }: { state: DashboardState }) {
   return (
     <Panel>
       <PanelHead title={<><Server size={18} />运行日志</>} />
-      <div className="table-wrap">
+      <div className="table-wrap table-scroll table-logs">
         <table>
+          <colgroup>
+            <col className="col-log-time" />
+            <col className="col-log-level" />
+            <col className="col-log-request" />
+            <col className="col-log-event" />
+            <col className="col-log-route" />
+            <col className="col-log-model" />
+            <col className="col-log-message" />
+          </colgroup>
           <thead><tr><th>时间</th><th>级别</th><th>请求</th><th>事件</th><th>线路</th><th>模型</th><th>消息</th></tr></thead>
           <tbody>
             {lines.length ? lines.map((line, index) => <LogRow key={`${index}-${line}`} line={line} recentMap={recentMap} />) : <tr><td colSpan={7}><Empty>暂无日志。</Empty></td></tr>}
@@ -37,9 +46,9 @@ function LogRow({ line, recentMap }: { line: string; recentMap: Record<string, R
   const message = text.replace(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s*/, '').replace(/\[(INFO|WARNING|ERROR|DEBUG)\]\s*/, '').trim();
   return (
     <tr>
-      <td><div className="request-cell-title">{time}</div></td>
+      <td><div className="request-cell-title no-wrap">{time}</div></td>
       <td><span className={`request-chip log-level-chip ${levelTone(level)}`}>{level}</span></td>
-      <td><div className="request-cell-sub request-mono">{maskEmpty(requestId)}</div></td>
+      <td><div className="request-cell-sub request-mono log-request-id">{maskEmpty(requestId)}</div></td>
       <td><div className="log-event"><div className="log-event-title">{eventTitle}</div><div className="log-subtle">状态 {status}</div></div></td>
       <td><div className="log-event"><div className="log-event-title">{pool}</div><div className="log-route">{keyText}</div></div></td>
       <td><div className="log-event"><div className="log-event-title">{model}</div><div className="log-route">{route}</div>{recent ? <div className="request-chip-row"><RouteScopeChip entry={recent} /></div> : null}</div></td>

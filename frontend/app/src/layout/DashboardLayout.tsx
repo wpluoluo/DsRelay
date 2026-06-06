@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, Outlet } from '@tanstack/react-router';
-import { Activity, KeyRound, ListChecks, RefreshCw, Server, Settings } from 'lucide-react';
+import { Activity, BarChart3, ChevronLeft, Database, KeyRound, ListChecks, RefreshCw, Server, Settings } from 'lucide-react';
 import { fetchDashboardState, fetchProxyKeys, saveConfig, testPool } from '../api';
 import { Badge, Button } from '../components';
 import { PoolModal } from '../features/config/PoolModal';
@@ -109,27 +109,28 @@ export function DashboardLayout() {
         <aside className="sidebar">
           <div className="brand">
             <div className="brand-mark">DR</div>
-            <div><strong>DsRelay</strong><span>本地代理控制台</span></div>
+            <div className="brand-copy"><strong>DsRelay</strong><span>本地代理控制台</span></div>
           </div>
-          <nav>
-            <NavLink to="/" icon={<Activity size={16} />} label="总览" />
-            <NavLink to="/requests" icon={<ListChecks size={16} />} label="请求观测" />
-            <NavLink to="/logs" icon={<Server size={16} />} label="运行日志" />
-            <NavLink to="/keys" icon={<KeyRound size={16} />} label="入口 Key" />
-            <NavLink to="/config" icon={<Settings size={16} />} label="路由与策略" />
+          <nav className="sidebar-nav">
+            <div className="sidebar-section-title">控制台</div>
+            <NavLink to="/" icon={<BarChart3 size={18} />} label="总览仪表盘" />
+            <NavLink to="/keys" icon={<KeyRound size={18} />} label="API Key 管理" />
+            <NavLink to="/requests" icon={<ListChecks size={18} />} label="使用记录" />
+            <NavLink to="/logs" icon={<Server size={18} />} label="运行日志" />
+            <div className="sidebar-section-title">系统</div>
+            <NavLink to="/config" icon={<Settings size={18} />} label="渠道与策略" />
           </nav>
           <div className="sidebar-foot">
-            <span>运行中 · {formatUptime(runtime.uptime_seconds)}</span>
+            <div className="sidebar-status-dot"><span />运行中 · {formatUptime(runtime.uptime_seconds)}</div>
             <small>PID {runtime.pid || '-'} · 端口 {runtime.port || '18765'}</small>
           </div>
         </aside>
 
         <main className="main">
-          <header className="hero">
-            <div>
-              <p>本地代理</p>
+          <header className="topbar">
+            <div className="topbar-title">
               <h1>运行控制台</h1>
-              <span className="endpoint">http://127.0.0.1:{runtime.port || '18765'}/v1</span>
+              <p><Database size={13} />入口地址 <span className="endpoint">http://127.0.0.1:{runtime.port || '18765'}/v1</span></p>
             </div>
             <div className="hero-actions">
               <Badge tone={stateQuery.isError ? 'bad' : 'ok'}>{stateQuery.isError ? '连接异常' : '运行中'}</Badge>
@@ -161,5 +162,11 @@ export function DashboardLayout() {
 }
 
 function NavLink({ to, icon, label }: { to: string; icon: React.ReactNode; label: string }) {
-  return <Link to={to} activeOptions={{ exact: to === '/' }} activeProps={{ className: 'active' }}>{icon}<span>{label}</span></Link>;
+  return (
+    <Link to={to} activeOptions={{ exact: to === '/' }} activeProps={{ className: 'active' }}>
+      {icon}
+      <span>{label}</span>
+      <ChevronLeft className="nav-arrow" size={14} />
+    </Link>
+  );
 }
