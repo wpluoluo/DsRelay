@@ -119,6 +119,61 @@ class PromptCacheHintTests(unittest.TestCase):
         self.assertFalse(metrics["prompt_cache_hint_applied"])
         self.assertEqual(metrics["prompt_cache_provider"], "observe")
 
+    def test_opencode_stream_requests_include_usage_for_cache_observability(self):
+        payload = {
+            "model": "deepseek-v4-flash-free",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": True,
+        }
+        route_policy = {
+            "reasoning_effort": "medium",
+            "prompt_cache_mode": "exact",
+            "prompt_cache_hints_mode": "auto",
+            "prompt_cache_provider": "auto",
+            "prompt_cache_retention": "",
+            "max_output_tokens": 0,
+        }
+
+        updated, repairs, metrics = apply_route_policy_to_payload(
+            "chat/completions",
+            payload,
+            route_policy,
+            upstream_url="https://opencode.ai/zen/v1/chat/completions",
+            session_affinity_key="session:v1:test",
+        )
+
+        self.assertEqual(repairs, 2)
+        self.assertEqual(updated["stream_options"], {"include_usage": True})
+        self.assertTrue(metrics["stream_usage_included"])
+        self.assertEqual(metrics["stream_usage_include_source"], "proxy")
+
+    def test_non_cache_sensitive_stream_requests_do_not_force_include_usage(self):
+        payload = {
+            "model": "unknown",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": True,
+        }
+        route_policy = {
+            "reasoning_effort": "medium",
+            "prompt_cache_mode": "exact",
+            "prompt_cache_hints_mode": "off",
+            "prompt_cache_provider": "none",
+            "prompt_cache_retention": "",
+            "max_output_tokens": 0,
+        }
+
+        updated, repairs, metrics = apply_route_policy_to_payload(
+            "chat/completions",
+            payload,
+            route_policy,
+            upstream_url="https://unknown.example/v1/chat/completions",
+            session_affinity_key="session:v1:test",
+        )
+
+        self.assertEqual(repairs, 1)
+        self.assertNotIn("stream_options", updated)
+        self.assertFalse(metrics["stream_usage_included"])
+
     def test_opencode_tool_choice_skips_reasoning_effort(self):
         payload = {
             "model": "deepseek-v4-flash-free",

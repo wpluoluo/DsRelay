@@ -25,6 +25,27 @@ def should_force_prompt_cache_affinity(candidate_urls: list[str] | None) -> bool
     return bool(urls) and any(route_is_prompt_cache_sensitive(url) for url in urls)
 
 
+def ensure_stream_usage_options_for_prompt_cache(payload: dict | None, *, upstream_url: str | None) -> tuple[dict | None, int, dict]:
+    if not isinstance(payload, dict):
+        return payload, 0, {"stream_usage_included": False}
+    if not payload.get("stream") or not route_is_prompt_cache_sensitive(upstream_url):
+        return payload, 0, {"stream_usage_included": False}
+
+    next_payload = dict(payload)
+    stream_options = next_payload.get("stream_options")
+    if not isinstance(stream_options, dict):
+        stream_options = {}
+    else:
+        stream_options = dict(stream_options)
+
+    if stream_options.get("include_usage") is True:
+        return next_payload, 0, {"stream_usage_included": True, "stream_usage_include_source": "existing"}
+
+    stream_options["include_usage"] = True
+    next_payload["stream_options"] = stream_options
+    return next_payload, 1, {"stream_usage_included": True, "stream_usage_include_source": "proxy"}
+
+
 def stable_prompt_cache_json(value) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 

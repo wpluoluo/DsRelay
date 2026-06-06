@@ -131,6 +131,7 @@ from local_proxy.runtime.policies import (
 )
 from local_proxy.runtime.prompt_cache import (
     build_prompt_prefix_observability,
+    ensure_stream_usage_options_for_prompt_cache,
     should_force_prompt_cache_affinity,
 )
 from local_proxy.runtime.request_cache import (
@@ -2473,6 +2474,12 @@ def apply_route_policy_to_payload(
     max_output_tokens = int(route_policy.get("max_output_tokens") or 0)
     if max_output_tokens > 0:
         repairs += clamp_payload_output_tokens(payload, max_output_tokens)
+    payload, usage_repairs, usage_metrics = ensure_stream_usage_options_for_prompt_cache(
+        payload,
+        upstream_url=upstream_url,
+    )
+    repairs += usage_repairs
+    metrics.update(usage_metrics)
     payload, hint_repairs, hint_metrics = apply_prompt_cache_hints_to_openai_payload(
         payload,
         route_policy=route_policy,
