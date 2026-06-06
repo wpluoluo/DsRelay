@@ -5,7 +5,6 @@ def export_runtime_config_for_storage(context: dict) -> dict:
     return {
         "proxy_api_key_records": context["proxy_api_key_records"],
         "pools": context["proxy_pools"],
-        "model_capabilities_text": context["model_capabilities_text"],
         "request_timeout": context["request_timeout"],
         "stream_first_event_timeout_seconds": context["stream_first_event_timeout_seconds"],
         "force_upstream_chat_stream": context["force_upstream_chat_stream"],
@@ -54,7 +53,6 @@ def build_runtime_config_payload(context: dict) -> dict:
         "pools": pools,
         "pools_count": len(pools),
         "pools_enabled_count": sum(1 for p in pools if p.get("enabled", True)),
-        "model_capabilities_text": context["model_capabilities_text"],
         "model_capability_count": context["model_capability_count"],
         "request_timeout": context["request_timeout"],
         "stream_first_event_timeout_seconds": context["stream_first_event_timeout_seconds"],

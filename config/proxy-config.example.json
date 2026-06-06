@@ -27,7 +27,6 @@
       }
     }
   ],
-  "model_capabilities_text": "# model=context_tokens,max_output_tokens\ndeepseek-v4-flash=1048576,393216\ndeepseek-v4-pro=1048576,393216",
   "request_timeout": 600,
   "stream_first_event_timeout_seconds": 30,
   "force_upstream_chat_stream": true,

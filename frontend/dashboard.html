@@ -1292,12 +1292,8 @@
               </div>
               <div class="config-tab-panel" data-config-panel="routing">
               <div class="config-section">
-                <div class="config-grid-2">
-                  <div class="field full">
-                    <label for="modelCapabilitiesText">模型能力表</label>
-                    <textarea id="modelCapabilitiesText" placeholder="deepseek-v4-flash=1048576,393216"></textarea>
-                  </div>
-                </div>
+                <h4><svg width="15" height="15" viewBox="0 0 20 20" fill="none" style="vertical-align:-3px;margin-right:4px;"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>线路模型与协议</h4>
+                <div class="subtle" style="font-size:12px;">模型映射和上游协议在线路里配置；模型参数按协议和模型默认能力自动处理。</div>
               </div>
               </div>
               <div class="config-tab-panel" data-config-panel="strategy">
@@ -1459,7 +1455,6 @@
     const configTabPanels = Array.from(document.querySelectorAll("[data-config-panel]"));
 
     const configForm = document.getElementById("configForm");
-    const modelCapabilitiesTextEl = document.getElementById("modelCapabilitiesText");
     const requestTimeoutEl = document.getElementById("requestTimeout");
     const streamFirstEventTimeoutSecondsEl = document.getElementById("streamFirstEventTimeoutSeconds");
     const maxCompletionTokensEl = document.getElementById("maxCompletionTokens");
@@ -2158,7 +2153,6 @@
 
     function renderConfig(config, force) {
       if (!config || (configDirty && !force)) return;
-      modelCapabilitiesTextEl.value = config.model_capabilities_text || "";
       requestTimeoutEl.value = config.request_timeout ?? 600;
       streamFirstEventTimeoutSecondsEl.value = config.stream_first_event_timeout_seconds ?? config.request_timeout ?? 600;
       maxCompletionTokensEl.value = config.max_completion_tokens ?? 0;
@@ -2349,7 +2343,6 @@
       var payload = {
         upstream_urls_text: config_pools_urls_text(poolData),
         pools: poolData,
-        model_capabilities_text: modelCapabilitiesTextEl.value,
         request_timeout: Number(requestTimeoutEl.value || 0),
         stream_first_event_timeout_seconds: Number(streamFirstEventTimeoutSecondsEl.value || 0),
         max_completion_tokens: Number(maxCompletionTokensEl.value || 0),
@@ -2621,6 +2614,8 @@
       var mode = String(routePolicy.text_upstream_protocol || "auto");
       if (mode === "openai") return "文本上游协议 OpenAI 兼容";
       if (mode === "responses") return "文本上游协议 Responses";
+      if (mode === "anthropic") return "文本上游协议 Anthropic";
+      if (mode === "gemini") return "文本上游协议 Gemini";
       return "文本上游协议 自动";
     }
 
@@ -2780,7 +2775,7 @@
       html += '<div class="field full"><label>该线路支持模型</label><textarea data-field="supported_models_text" placeholder="deepseek-ai/deepseek-v4-flash&#10;deepseek-ai/deepseek-v4-pro">' + escapeHtml(pool.supported_models_text || "") + '</textarea><div class="pool-inline-note">按行填写该线路明确支持的上游模型 ID。填写后只会在这个列表里选，不再靠自动猜测。</div></div>';
       html += '<div class="field full"><label>该线路模型映射</label><textarea data-field="model_aliases_text" placeholder="deepseek-v4-flash=deepseek-ai/deepseek-v4-flash&#10;deepseek-v4-pro=deepseek-ai/deepseek-v4-pro">' + escapeHtml(pool.model_aliases_text || "") + '</textarea><div class="pool-inline-note">按“请求模型=该线路上游模型”逐行填写。只作用于当前连接池；专属模型不要跨线路复用。</div></div>';
       html += '<div class="field"><label>思考强度</label><select data-field="reasoning_effort"><option value="low"' + (pool.route_policy.reasoning_effort === "low" ? " selected" : "") + '>低</option><option value="medium"' + (pool.route_policy.reasoning_effort === "medium" ? " selected" : "") + '>中</option><option value="high"' + (pool.route_policy.reasoning_effort === "high" ? " selected" : "") + '>高</option></select></div>';
-      html += '<div class="field"><label>文本上游协议</label><select data-field="text_upstream_protocol"><option value="auto"' + (pool.route_policy.text_upstream_protocol === "auto" ? " selected" : "") + '>自动</option><option value="openai"' + (pool.route_policy.text_upstream_protocol === "openai" ? " selected" : "") + '>OpenAI 兼容</option><option value="responses"' + (pool.route_policy.text_upstream_protocol === "responses" ? " selected" : "") + '>Responses 原生</option></select><div class="pool-inline-note">控制该线路文本请求的上游协议。`/v1/responses` 在 OpenAI 兼容模式下会转到上游 `/chat/completions`。</div></div>';
+      html += '<div class="field"><label>文本上游协议</label><select data-field="text_upstream_protocol"><option value="auto"' + (pool.route_policy.text_upstream_protocol === "auto" ? " selected" : "") + '>自动</option><option value="openai"' + (pool.route_policy.text_upstream_protocol === "openai" ? " selected" : "") + '>OpenAI 兼容</option><option value="responses"' + (pool.route_policy.text_upstream_protocol === "responses" ? " selected" : "") + '>Responses</option><option value="anthropic"' + (pool.route_policy.text_upstream_protocol === "anthropic" ? " selected" : "") + '>Anthropic</option><option value="gemini"' + (pool.route_policy.text_upstream_protocol === "gemini" ? " selected" : "") + '>Gemini</option></select><div class="pool-inline-note">控制该线路文本请求的上游协议。自动模式会根据线路地址和入站路径选择协议，模型参数由协议默认能力处理。</div></div>';
       html += '<div class="field"><label>本地精确缓存</label><select data-field="prompt_cache_mode"><option value="off"' + (pool.route_policy.prompt_cache_mode === "off" ? " selected" : "") + '>关闭</option><option value="exact"' + (pool.route_policy.prompt_cache_mode === "exact" ? " selected" : "") + '>开启</option></select></div>';
       html += '<div class="field"><label>上游前缀缓存 Hint</label><select data-field="prompt_cache_hints_mode"><option value="off"' + (pool.route_policy.prompt_cache_hints_mode === "off" ? " selected" : "") + '>关闭</option><option value="auto"' + (pool.route_policy.prompt_cache_hints_mode === "auto" ? " selected" : "") + '>自动判断</option><option value="passthrough"' + (pool.route_policy.prompt_cache_hints_mode === "passthrough" ? " selected" : "") + '>仅透传下游 Hint</option></select></div>';
       html += '<div class="field"><label>缓存提供方</label><select data-field="prompt_cache_provider"><option value="auto"' + (pool.route_policy.prompt_cache_provider === "auto" ? " selected" : "") + '>自动识别</option><option value="openai"' + (pool.route_policy.prompt_cache_provider === "openai" ? " selected" : "") + '>OpenAI</option><option value="openrouter"' + (pool.route_policy.prompt_cache_provider === "openrouter" ? " selected" : "") + '>OpenRouter</option><option value="deepseek"' + (pool.route_policy.prompt_cache_provider === "deepseek" ? " selected" : "") + '>DeepSeek</option><option value="anthropic"' + (pool.route_policy.prompt_cache_provider === "anthropic" ? " selected" : "") + '>Anthropic</option><option value="gemini"' + (pool.route_policy.prompt_cache_provider === "gemini" ? " selected" : "") + '>Gemini</option><option value="observe"' + (pool.route_policy.prompt_cache_provider === "observe" ? " selected" : "") + '>仅观测</option><option value="none"' + (pool.route_policy.prompt_cache_provider === "none" ? " selected" : "") + '>不支持</option></select></div>';

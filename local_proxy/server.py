@@ -612,7 +612,7 @@ def build_context_window_exceeded_error_payload(
     message = (
         f"{model_label} 请求预计约 {estimated_total_tokens} tokens，超过配置上下文上限 {context_tokens} tokens。"
         f" 当前请求声明输出上限 {requested_output_tokens} tokens，可用于输入的大致预算约 {allowed_input_tokens} tokens。"
-        " 请缩短历史上下文、减少工具或附件内容，或在模型能力表中填写更准确的上下文能力。"
+        " 请缩短历史上下文、减少工具或附件内容，或检查该线路模型映射是否指向正确的上游模型。"
     )
     return {
         "error": {
@@ -657,9 +657,7 @@ FORCE_UPSTREAM_CHAT_STREAM = os.getenv("FORCE_UPSTREAM_CHAT_STREAM", "1") == "1"
 ENABLE_REQUEST_NORMALIZATION = os.getenv("ENABLE_REQUEST_NORMALIZATION", "1") == "1"
 INJECT_ZH_SYSTEM_PROMPT = os.getenv("INJECT_ZH_SYSTEM_PROMPT", "1") == "1"
 MAX_COMPLETION_TOKENS = max(0, int(os.getenv("MAX_COMPLETION_TOKENS", "0")))
-MODEL_CAPABILITIES_TEXT = normalize_model_capabilities_text(
-    os.getenv("MODEL_CAPABILITIES", DEFAULT_MODEL_CAPABILITIES_TEXT)
-)
+MODEL_CAPABILITIES_TEXT = normalize_model_capabilities_text(DEFAULT_MODEL_CAPABILITIES_TEXT)
 MODEL_CAPABILITIES = parse_model_capabilities(MODEL_CAPABILITIES_TEXT)
 MARKDOWN_OUTPUT_PROMPT_RULE = (
     "输出总结、清单、步骤、测试结果和表格时必须使用规范 Markdown："
@@ -1814,7 +1812,7 @@ def normalize_downstream_subpath(subpath: str) -> str:
 
 def get_text_upstream_protocol(route_policy: dict | None, inbound_subpath: str, request_payload: dict | None) -> str:
     explicit = str((route_policy or {}).get("text_upstream_protocol") or "auto").strip().lower()
-    if explicit in {"openai", "responses"}:
+    if explicit in {"openai", "responses", "anthropic", "gemini"}:
         return explicit
 
     normalized_subpath = normalize_downstream_subpath(inbound_subpath)

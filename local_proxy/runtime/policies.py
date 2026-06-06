@@ -8,6 +8,7 @@ from local_proxy.upstream.models import (
     parse_model_aliases,
     parse_supported_model_ids,
 )
+from local_proxy.upstream.protocol_capabilities import normalize_text_protocol
 
 
 DEFAULT_ROUTE_POLICY = {
@@ -57,10 +58,7 @@ def normalize_prompt_cache_provider(value: object) -> str:
 
 
 def normalize_text_upstream_protocol(value: object) -> str:
-    candidate = str(value or "").strip().lower()
-    if candidate in {"auto", "openai", "responses"}:
-        return candidate
-    return str(DEFAULT_ROUTE_POLICY["text_upstream_protocol"])
+    return normalize_text_protocol(value)
 
 
 def normalize_prompt_cache_retention(value: object) -> str:

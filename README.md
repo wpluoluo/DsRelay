@@ -245,7 +245,6 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18765/health"
 | `IMAGE_UPSTREAM_PROTOCOL` | `auto` | 图像生成协议（auto/openai/google/dashscope） |
 | `IMAGE_TASK_POLL_TIMEOUT_SECONDS` | `90` | 图像异步任务轮询超时（秒） |
 | `IMAGE_TASK_POLL_INTERVAL_SECONDS` | `2` | 图像异步任务轮询间隔（秒） |
-| `MODEL_CAPABILITIES` | — | 模型能力表（格式：`模型名=上下文Token,最大输出Token`） |
 | `PROXY_CONFIG_PATH` | `config/proxy-config.json` | 渠道配置文件路径 |
 | `PROXY_LOG_PATH` | `var/logs/proxy.log` | 代理日志路径 |
 | `SQLITE_DB_PATH` | `var/cache/proxy-cache.sqlite3` | SQLite 数据库路径 |
@@ -541,17 +540,6 @@ deepseek-ai/deepseek-v4-pro
 # 该线路模型映射（格式：请求模型=该线路上游模型）
 deepseek-v4-flash=deepseek-ai/deepseek-v4-flash
 deepseek-v4-pro=deepseek-ai/deepseek-v4-pro
-```
-
-### 模型能力表
-
-模型能力表应以官方文档或官方 Models API 为准；代理不再根据上游报错自动学习并缓存 token 上限。
-
-```text
-# 格式：模型名=上下文Token,最大输出Token
-deepseek-v4-flash=1048576,393216
-deepseek-v4-pro=1048576,393216
-gpt-5.5=1050000,128000
 ```
 
 ---

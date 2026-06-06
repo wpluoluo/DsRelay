@@ -7,6 +7,7 @@ from local_proxy.runtime.policies import normalize_pool_route_policies
 from local_proxy.runtime.pools import normalize_proxy_pools
 from local_proxy.http.proxy_auth import normalize_proxy_api_key_records
 from local_proxy.upstream.capabilities import (
+    DEFAULT_MODEL_CAPABILITIES_TEXT,
     normalize_model_capabilities_text,
     parse_model_capabilities,
 )
@@ -23,9 +24,7 @@ def normalize_runtime_config_payload(
     if "proxy_api_key_records" in config_payload:
         next_proxy_api_key_records = normalize_proxy_api_key_records(config_payload.get("proxy_api_key_records"))
 
-    next_model_capabilities_text = normalize_model_capabilities_text(
-        config_payload.get("model_capabilities_text", current["MODEL_CAPABILITIES_TEXT"])
-    )
+    next_model_capabilities_text = normalize_model_capabilities_text(DEFAULT_MODEL_CAPABILITIES_TEXT)
     next_model_capabilities = parse_model_capabilities(next_model_capabilities_text)
 
     next_request_timeout = parse_int(

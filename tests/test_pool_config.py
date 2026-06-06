@@ -6,6 +6,7 @@ import local_proxy.server as server_module
 from local_proxy.runtime.config_runtime import normalize_runtime_config_payload
 from local_proxy.runtime.pools import ConnectionPoolState, normalize_proxy_pools
 from local_proxy.runtime.policies import get_pool_priority_for_url
+from local_proxy.upstream.capabilities import DEFAULT_MODEL_CAPABILITIES_TEXT, normalize_model_capabilities_text
 from local_proxy.upstream.models import normalize_model_alias_key
 
 
@@ -243,25 +244,44 @@ class PoolConfigTests(unittest.TestCase):
         self.assertEqual(route_policy["prompt_cache_retention"], "24h")
 
     def test_pool_route_policy_keeps_text_upstream_protocol(self):
-        payload = {
-            "pools": [
-                {
-                    "name": "responses-aware",
-                    "enabled": True,
-                    "priority": 100,
-                    "urls": ["https://api.example.com/v1"],
-                    "keys": [{"key": "sk-test-1"}],
-                    "route_policy": {
-                        "text_upstream_protocol": "responses",
-                    },
+        for protocol in ("responses", "anthropic", "gemini"):
+            with self.subTest(protocol=protocol):
+                payload = {
+                    "pools": [
+                        {
+                            "name": "protocol-aware",
+                            "enabled": True,
+                            "priority": 100,
+                            "urls": ["https://api.example.com/v1"],
+                            "keys": [{"key": "sk-test-1"}],
+                            "route_policy": {
+                                "text_upstream_protocol": protocol,
+                            },
+                        }
+                    ]
                 }
-            ]
-        }
 
-        normalized = normalize_runtime_config_payload(payload, current=current_runtime_config())
-        route_policy = normalized["proxy_pools"][0]["route_policy"]
+                normalized = normalize_runtime_config_payload(payload, current=current_runtime_config())
+                route_policy = normalized["proxy_pools"][0]["route_policy"]
 
-        self.assertEqual(route_policy["text_upstream_protocol"], "responses")
+                self.assertEqual(route_policy["text_upstream_protocol"], protocol)
+
+    def test_runtime_config_ignores_manual_model_capability_text(self):
+        normalized = normalize_runtime_config_payload(
+            {
+                "model_capabilities_text": "custom-only-model=1,1",
+            },
+            current=current_runtime_config(MODEL_CAPABILITIES_TEXT="custom-only-model=1,1"),
+        )
+
+        expected = normalize_model_capabilities_text(DEFAULT_MODEL_CAPABILITIES_TEXT)
+        self.assertEqual(normalized["model_capabilities_text"], expected)
+        self.assertNotIn("custom-only-model", normalized["model_capabilities"])
+
+    def test_runtime_config_storage_export_omits_model_capability_text(self):
+        exported = server_module.export_runtime_config_for_storage()
+
+        self.assertNotIn("model_capabilities_text", exported)
 
     def test_pool_model_alias_text_is_preserved_when_normalized(self):
         pools = normalize_proxy_pools(
