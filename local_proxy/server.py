@@ -15,7 +15,7 @@ from copy import deepcopy
 
 import requests
 from requests.adapters import HTTPAdapter
-from flask import Flask, Response, copy_current_request_context, has_request_context, render_template_string, request
+from flask import Flask, Response, copy_current_request_context, has_request_context, render_template_string, request, send_from_directory
 
 from local_proxy.compat.tools import (
     append_preview_text,
@@ -6528,6 +6528,9 @@ def v1_root():
             from flask import redirect as _redirect
 
             return _redirect("/login")
+        dist_index = FRONTEND_DIR / "dist" / "index.html"
+        if dist_index.exists():
+            return send_from_directory(dist_index.parent, dist_index.name)
         dashboard_html = DASHBOARD_TEMPLATE.replace(
             "</body>",
             '<div style="position:fixed;bottom:20px;right:20px;z-index:9999"><a href="/logout" style="display:inline-block;padding:8px 16px;background:#ef4444;color:#fff;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;box-shadow:0 2px 8px rgba(239,68,68,.35)">退出登录</a></div></body>',
@@ -9492,6 +9495,10 @@ def dashboard_redirect():
     return redirect("/v1", code=302)
 
 
+def dashboard_asset(path: str):
+    return send_from_directory(FRONTEND_DIR / "dist", path)
+
+
 register_http_routes(
     app,
     {
@@ -9512,6 +9519,7 @@ register_http_routes(
 )
 
 app.add_url_rule("/", endpoint="dashboard_redirect", view_func=dashboard_redirect)
+app.add_url_rule("/assets/dashboard/<path:path>", endpoint="dashboard_asset", view_func=dashboard_asset)
 app.add_url_rule("/login", endpoint="login_page", view_func=login_page, methods=["GET", "POST"])
 app.add_url_rule("/logout", endpoint="logout", view_func=logout)
 

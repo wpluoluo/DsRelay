@@ -2,6 +2,10 @@
 .venv/
 __pycache__/
 *.py[cod]
+node_modules/
+frontend/app/node_modules/
+frontend/dist/
+frontend/app/tsconfig.tsbuildinfo
 
 config/proxy-config.json
 !config/proxy-config.example.json

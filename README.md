@@ -124,7 +124,8 @@
 | 运行时 | `local_proxy/runtime/` | 状态管理、配置、缓存、连接池 |
 | 上游通信 | `local_proxy/upstream/` | 模型路由、重试、能力探测 |
 | 持久化 | `local_proxy/storage.py` | SQLite 封装 |
-| 监控面板 | `frontend/dashboard.html` | 单页 Web 控制台 |
+| 监控面板 | `frontend/app/` | React + Vite Web 控制台 |
+| 监控面板兜底 | `frontend/dashboard.html` | React 构建产物不存在时的旧版单页控制台 |
 | 启动脚本 | `scripts/start-proxy.ps1` | Windows PowerShell 启动管理 |
 
 ---
@@ -584,7 +585,9 @@ deepseek-v4-pro=deepseek-ai/deepseek-v4-pro
 │   ├── proxy-config.example.json   # 渠道配置模板
 │   └── proxy-config.json           # 运行时渠道配置（已忽略）
 ├── frontend/
-│   └── dashboard.html              # Web 监控控制台（单页应用）
+│   ├── app/                        # React + Vite 控制台源码
+│   ├── dist/                       # 控制台构建产物（构建生成，已忽略）
+│   └── dashboard.html              # 旧版控制台兜底
 ├── scripts/
 │   └── start-proxy.ps1             # PowerShell 启动管理脚本
 ├── var/                            # 运行时数据目录（自动创建）

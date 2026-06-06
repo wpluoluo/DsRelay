@@ -6,6 +6,9 @@
 __pycache__/
 *.py[cod]
 *.pyo
+node_modules/
+frontend/app/node_modules/
+frontend/dist/
 
 # 环境文件（容器内通过 -e 传入）
 .env

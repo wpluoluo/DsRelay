@@ -17,6 +17,8 @@ RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua
 
 COPY . .
 
+RUN cd frontend/app && npm ci && npm run build
+
 RUN python - <<'PY'
 from pathlib import Path
 path = Path("/app/start.sh")
