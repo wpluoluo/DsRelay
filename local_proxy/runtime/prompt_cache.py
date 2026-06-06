@@ -9,9 +9,15 @@ from local_proxy.compat.tools import normalize_openai_tool_definition, openai_to
 
 
 PROMPT_CACHE_SENSITIVE_HOST_MARKERS = (
+    "api.openai.com",
+    "openai.azure.com",
+    "openrouter.ai",
     "deepseek.com",
     "nvidia.com",
     "opencode.ai",
+    "anthropic.com",
+    "generativelanguage.googleapis.com",
+    "googleapis.com",
 )
 
 

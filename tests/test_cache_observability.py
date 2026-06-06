@@ -1,7 +1,10 @@
 import unittest
 
 from local_proxy.compat.protocols import build_openai_usage_from_response
-from local_proxy.runtime.prompt_cache import build_prompt_prefix_observability
+from local_proxy.runtime.prompt_cache import (
+    build_prompt_prefix_observability,
+    should_force_prompt_cache_affinity,
+)
 from local_proxy.server import build_usage_observability_meta
 
 
@@ -67,6 +70,13 @@ class CacheObservabilityTests(unittest.TestCase):
 
         self.assertEqual(meta_a["prompt_prefix_hash"], meta_b["prompt_prefix_hash"])
         self.assertEqual(meta_a["prompt_tool_count"], 2)
+
+    def test_prompt_cache_affinity_covers_major_provider_cache_domains(self):
+        self.assertTrue(should_force_prompt_cache_affinity(["https://api.openai.com/v1/chat/completions"]))
+        self.assertTrue(should_force_prompt_cache_affinity(["https://openrouter.ai/api/v1/chat/completions"]))
+        self.assertTrue(should_force_prompt_cache_affinity(["https://api.anthropic.com/v1/messages"]))
+        self.assertTrue(should_force_prompt_cache_affinity(["https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"]))
+        self.assertFalse(should_force_prompt_cache_affinity(["https://unknown.example/v1/chat/completions"]))
 
 
 if __name__ == "__main__":
