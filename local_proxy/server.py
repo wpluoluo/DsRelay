@@ -143,6 +143,10 @@ from local_proxy.runtime.request_cache import (
     response_tool_calls_are_read_only,
     response_tool_call_names,
 )
+from local_proxy.runtime.route_compat import (
+    apply_deepseek_tool_choice_reasoning_compat,
+    should_skip_reasoning_effort_for_tool_choice,
+)
 from local_proxy.runtime import tool_result_cache as tool_result_cache_runtime
 from local_proxy.storage import ProxyStorage
 from local_proxy.upstream.capabilities import (
@@ -2446,9 +2450,22 @@ def apply_route_policy_to_payload(
     metrics = {}
 
     reasoning_effort = str(route_policy.get("reasoning_effort") or DEFAULT_ROUTE_POLICY["reasoning_effort"])
-    if reasoning_effort and "reasoning_effort" not in payload:
+    skip_reasoning_effort = should_skip_reasoning_effort_for_tool_choice(
+        payload,
+        upstream_url=upstream_url,
+    )
+    if skip_reasoning_effort:
+        metrics["reasoning_disabled_for_tool_choice"] = True
+        metrics["reasoning_compat_provider"] = "deepseek"
+    if reasoning_effort and "reasoning_effort" not in payload and not skip_reasoning_effort:
         payload["reasoning_effort"] = reasoning_effort
         repairs += 1
+    payload, compat_repairs, compat_metrics = apply_deepseek_tool_choice_reasoning_compat(
+        payload,
+        upstream_url=upstream_url,
+    )
+    repairs += compat_repairs
+    metrics.update(compat_metrics)
     max_output_tokens = int(route_policy.get("max_output_tokens") or 0)
     if max_output_tokens > 0:
         repairs += clamp_payload_output_tokens(payload, max_output_tokens)
