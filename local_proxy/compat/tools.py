@@ -775,6 +775,21 @@ def normalize_schema_field_names(value) -> list[str]:
     return list(dict.fromkeys(names))
 
 
+def normalize_schema_type_name(value) -> str:
+    if isinstance(value, str):
+        return value.strip().lower()
+    if isinstance(value, dict):
+        return normalize_schema_type_name(value.get("type"))
+    if isinstance(value, (list, tuple, set)):
+        candidates = [normalize_schema_type_name(item) for item in value]
+        candidates = [item for item in candidates if item and item != "null"]
+        for preferred in ("string", "array", "object", "boolean", "integer", "number"):
+            if preferred in candidates:
+                return preferred
+        return candidates[0] if candidates else ""
+    return ""
+
+
 def is_bash_like_tool_name(tool_name: str | None) -> bool:
     bash_like_canonicals = {
         canonicalize_name(item)
@@ -1253,7 +1268,7 @@ def extract_tool_schemas(request_payload: dict | None) -> dict:
             "properties": normalize_schema_field_names(parameters.get("properties")),
             "additional_properties": parameters.get("additionalProperties"),
             "property_types": {
-                key: (value or {}).get("type")
+                key: normalize_schema_type_name(value)
                 for key, value in (parameters.get("properties") or {}).items()
                 if isinstance(value, dict)
             },
@@ -1837,6 +1852,7 @@ def coerce_payload_values_by_schema(normalized: dict, tool_name: str | None, too
     for field_name, field_type in property_types.items():
         if field_name not in normalized:
             continue
+        field_type = normalize_schema_type_name(field_type)
         current_value = normalized.get(field_name)
         if field_type == "string":
             coerced_value, changed = normalize_string_like_value(field_name, current_value)
@@ -1876,7 +1892,7 @@ def fill_missing_required_fields(tool_name: str | None, normalized: dict, tool_s
             modified = True
             continue
 
-        field_type = property_types.get(field_name)
+        field_type = normalize_schema_type_name(property_types.get(field_name))
         if field_type == "boolean":
             normalized[field_name] = False
             modified = True
@@ -2075,6 +2091,7 @@ def infer_tool_name_from_payload(tool_name: str | None, payload, tool_schemas: d
 
 
 def required_field_has_meaningful_value(field_type: str | None, value) -> bool:
+    field_type = normalize_schema_type_name(field_type)
     if field_type == "boolean":
         return value is not None
     if field_type in {"integer", "number"}:

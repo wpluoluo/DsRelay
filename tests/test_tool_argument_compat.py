@@ -2,6 +2,7 @@ import json
 import unittest
 
 from local_proxy.compat.tools import (
+    fill_missing_required_fields,
     normalize_openai_request_payload,
     normalize_sse_line,
     normalize_tool_arguments_payload,
@@ -732,6 +733,26 @@ class ToolArgumentCompatTests(unittest.TestCase):
         self.assertGreaterEqual(repairs, 0)
         tool_call = event["choices"][0]["delta"]["tool_calls"][0]
         self.assertEqual(tool_call["function"]["name"], "Grep")
+
+    def test_schema_list_type_does_not_break_missing_required_fill(self):
+        malformed_schemas = {
+            "Search": {
+                "required": ["query", "limit", "filters"],
+                "properties": ["query", "limit", "filters"],
+                "property_types": {
+                    "query": ["string", "null"],
+                    "limit": ["integer", "null"],
+                    "filters": ["object", "null"],
+                },
+            }
+        }
+        arguments = {"query": "foo"}
+
+        modified = fill_missing_required_fields("Search", arguments, malformed_schemas)
+
+        self.assertTrue(modified)
+        self.assertEqual(arguments["limit"], 0)
+        self.assertEqual(arguments["filters"], {})
 
 
 if __name__ == "__main__":
