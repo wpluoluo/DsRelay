@@ -754,6 +754,91 @@ class ToolArgumentCompatTests(unittest.TestCase):
         self.assertEqual(arguments["limit"], 0)
         self.assertEqual(arguments["filters"], {})
 
+    def test_normalize_request_removes_assistant_tool_calls_without_tool_result(self):
+        payload = {
+            "model": "demo",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_missing",
+                            "type": "function",
+                            "function": {"name": "Read", "arguments": "{\"path\":\"a.txt\"}"},
+                        }
+                    ],
+                },
+                {"role": "user", "content": "continue"},
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "Read",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"path": {"type": "string"}},
+                            "required": ["path"],
+                        },
+                    },
+                }
+            ],
+        }
+
+        normalized, repairs = normalize_openai_request_payload(payload)
+
+        self.assertGreaterEqual(repairs, 1)
+        non_system_messages = [
+            message for message in normalized["messages"] if message.get("role") != "system"
+        ]
+        self.assertEqual([message["role"] for message in non_system_messages], ["user", "user"])
+        self.assertNotIn("tool_calls", json.dumps(normalized["messages"]))
+
+    def test_normalize_request_keeps_assistant_text_when_tool_result_missing(self):
+        payload = {
+            "model": "demo",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {
+                    "role": "assistant",
+                    "content": "I will inspect that.",
+                    "tool_calls": [
+                        {
+                            "id": "call_missing",
+                            "type": "function",
+                            "function": {"name": "Read", "arguments": "{\"path\":\"a.txt\"}"},
+                        }
+                    ],
+                },
+                {"role": "user", "content": "continue"},
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "Read",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"path": {"type": "string"}},
+                            "required": ["path"],
+                        },
+                    },
+                }
+            ],
+        }
+
+        normalized, repairs = normalize_openai_request_payload(payload)
+
+        self.assertGreaterEqual(repairs, 1)
+        assistant_messages = [
+            message for message in normalized["messages"] if message.get("role") == "assistant"
+        ]
+        self.assertEqual(len(assistant_messages), 1)
+        self.assertEqual(assistant_messages[0]["content"], "I will inspect that.")
+        self.assertNotIn("tool_calls", assistant_messages[0])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2634,6 +2634,101 @@ def normalize_tool_call_list(tool_calls, tool_schemas: dict) -> tuple[list, int]
     return normalized_calls, repaired
 
 
+def tool_call_ids_from_message(message: dict | None) -> list[str]:
+    if not isinstance(message, dict):
+        return []
+    ids = []
+    for tool_call in message.get("tool_calls") or []:
+        if not isinstance(tool_call, dict):
+            continue
+        call_id = str(tool_call.get("id") or "").strip()
+        if call_id:
+            ids.append(call_id)
+    return list(dict.fromkeys(ids))
+
+
+def message_has_meaningful_assistant_content(message: dict | None) -> bool:
+    if not isinstance(message, dict):
+        return False
+    content = message.get("content")
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        return any(tool_payload_has_meaningful_value(item) for item in content)
+    for key in ("reasoning", "reasoning_content", "thinking", "thinking_content"):
+        if tool_payload_has_meaningful_value(message.get(key)):
+            return True
+    return False
+
+
+def normalize_tool_message_chain(messages: list, tool_schemas: dict | None = None) -> tuple[list, int]:
+    if not isinstance(messages, list):
+        return messages, 0
+
+    repaired = 0
+    normalized: list = []
+    pending_ids: list[str] = []
+    pending_assistant_index: int | None = None
+    pending_assistant_ids: set[str] = set()
+
+    def finalize_pending_without_full_tool_results() -> None:
+        nonlocal repaired, pending_assistant_index, pending_ids, pending_assistant_ids
+        if pending_assistant_index is None or not pending_ids:
+            pending_assistant_index = None
+            pending_ids = []
+            pending_assistant_ids = set()
+            return
+        assistant_message = normalized[pending_assistant_index]
+        if isinstance(assistant_message, dict):
+            if message_has_meaningful_assistant_content(assistant_message):
+                assistant_message.pop("tool_calls", None)
+                repaired += 1
+            else:
+                normalized.pop(pending_assistant_index)
+                repaired += 1
+        pending_assistant_index = None
+        pending_ids = []
+        pending_assistant_ids = set()
+
+    for message in messages:
+        if not isinstance(message, dict):
+            finalize_pending_without_full_tool_results()
+            normalized.append(message)
+            continue
+
+        role = message.get("role")
+        if pending_ids:
+            if role == "tool":
+                tool_call_id = str(message.get("tool_call_id") or "").strip()
+                if tool_call_id in pending_assistant_ids:
+                    normalized.append(message)
+                    pending_ids = [item for item in pending_ids if item != tool_call_id]
+                    if not pending_ids:
+                        pending_assistant_index = None
+                        pending_assistant_ids = set()
+                    continue
+                repaired += 1
+                continue
+            finalize_pending_without_full_tool_results()
+
+        if role == "tool":
+            repaired += 1
+            continue
+
+        normalized.append(message)
+        if role == "assistant":
+            call_ids = tool_call_ids_from_message(message)
+            if call_ids:
+                pending_assistant_index = len(normalized) - 1
+                pending_ids = list(call_ids)
+                pending_assistant_ids = set(call_ids)
+
+    if pending_ids:
+        finalize_pending_without_full_tool_results()
+
+    return normalized, repaired
+
+
 def normalize_chat_completion_tool_calls(response_body: dict, tool_schemas: dict) -> int:
     repaired = 0
     for choice in response_body.get("choices") or []:
@@ -2846,6 +2941,9 @@ def normalize_openai_messages(messages, tool_schemas: dict | None = None) -> tup
                 repairs += repaired_count
 
         normalized_messages.append(normalized_message)
+
+    normalized_messages, chain_repairs = normalize_tool_message_chain(normalized_messages, tool_schemas)
+    repairs += chain_repairs
 
     return normalized_messages, repairs
 
