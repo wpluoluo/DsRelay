@@ -45,6 +45,7 @@ def register_http_routes(app, handlers: dict) -> None:
         methods=["GET", "POST", "OPTIONS"],
     )
     app.add_url_rule("/v1", endpoint="v1_root", view_func=_handler(handlers, "v1_root"), methods=["GET", "OPTIONS"])
+    app.add_url_rule("/v1/", endpoint="v1_root_slash", view_func=_handler(handlers, "v1_root"), methods=["GET", "OPTIONS"])
     app.add_url_rule(
         "/v1beta",
         endpoint="gemini_version_root_v1beta",

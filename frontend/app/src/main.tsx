@@ -1,23 +1,24 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClientProvider, useMutation, useQuery } from '@tanstack/react-query';
+import { createHashHistory, createRootRoute, createRoute, createRouter, Link, Outlet, RouterProvider } from '@tanstack/react-router';
 import { Activity, ListChecks, RefreshCw, Server, Settings } from 'lucide-react';
 import { Button, Badge } from './components';
 import { fetchDashboardState, fetchProxyKeys, saveConfig, testPool } from './api';
 import { ConfigView } from './features/config/ConfigView';
 import { PoolModal } from './features/config/PoolModal';
 import { configFromState, normalizePool } from './features/config/model';
-import type { ConfigTab, ViewKey } from './features/config/model';
+import type { ConfigTab } from './features/config/model';
 import { RequestsView } from './features/requests/RequestsView';
 import { LogsView } from './pages/LogsView';
 import { Overview } from './pages/Overview';
+import { DashboardProvider, useDashboard } from './state/dashboardContext';
 import { queryClient } from './state/queryClient';
 import type { Pool, PoolTestResult, RuntimeConfig } from './types';
-import { cn, formatUptime } from './utils';
+import { formatUptime } from './utils';
 import './styles.css';
 
-function App() {
-  const [view, setView] = useState<ViewKey>('overview');
+function DashboardLayout() {
   const [configTab, setConfigTab] = useState<ConfigTab>('routes');
   const [draft, setDraft] = useState<RuntimeConfig>({ pools: [] });
   const [dirty, setDirty] = useState(false);
@@ -85,87 +86,138 @@ function App() {
     setPoolIndex(null);
   }
 
+  const contextValue = {
+    state,
+    stateQuery,
+    keyQuery,
+    draft,
+    pools,
+    configTab,
+    status,
+    saving: saveMutation.isPending,
+    setConfigTab,
+    patchDraft,
+    saveConfig: () => saveMutation.mutate(draft),
+    openPool,
+    deletePool: (index: number) => updatePools(pools.filter((_, i) => i !== index)),
+    movePool: (index: number, direction: number) => {
+      const next = pools.slice();
+      const target = index + direction;
+      if (target < 0 || target >= next.length) return;
+      [next[index], next[target]] = [next[target], next[index]];
+      updatePools(next);
+    },
+  };
+
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark">DR</div>
-          <div><strong>DsRelay</strong><span>本地代理控制台</span></div>
-        </div>
-        <nav>
-          <NavButton active={view === 'overview'} onClick={() => setView('overview')} icon={<Activity size={16} />} label="总览" />
-          <NavButton active={view === 'requests'} onClick={() => setView('requests')} icon={<ListChecks size={16} />} label="请求观测" />
-          <NavButton active={view === 'logs'} onClick={() => setView('logs')} icon={<Server size={16} />} label="运行日志" />
-          <NavButton active={view === 'config'} onClick={() => setView('config')} icon={<Settings size={16} />} label="路由与策略" />
-        </nav>
-        <div className="sidebar-foot">
-          <span>运行中 · {formatUptime(runtime.uptime_seconds)}</span>
-          <small>PID {runtime.pid || '-'} · 端口 {runtime.port || '18765'}</small>
-        </div>
-      </aside>
-
-      <main className="main">
-        <header className="hero">
-          <div>
-            <p>本地代理</p>
-            <h1>运行控制台</h1>
-            <span className="endpoint">http://127.0.0.1:{runtime.port || '18765'}/v1</span>
+    <DashboardProvider value={contextValue}>
+      <div className="app-shell">
+        <aside className="sidebar">
+          <div className="brand">
+            <div className="brand-mark">DR</div>
+            <div><strong>DsRelay</strong><span>本地代理控制台</span></div>
           </div>
-          <div className="hero-actions">
-            <Badge tone={stateQuery.isError ? 'bad' : 'ok'}>{stateQuery.isError ? '连接异常' : '运行中'}</Badge>
-            <Button onClick={() => stateQuery.refetch()}><RefreshCw size={15} />刷新</Button>
-            <a className="btn btn-danger" href="/logout">退出登录</a>
+          <nav>
+            <NavLink to="/" icon={<Activity size={16} />} label="总览" />
+            <NavLink to="/requests" icon={<ListChecks size={16} />} label="请求观测" />
+            <NavLink to="/logs" icon={<Server size={16} />} label="运行日志" />
+            <NavLink to="/config" icon={<Settings size={16} />} label="路由与策略" />
+          </nav>
+          <div className="sidebar-foot">
+            <span>运行中 · {formatUptime(runtime.uptime_seconds)}</span>
+            <small>PID {runtime.pid || '-'} · 端口 {runtime.port || '18765'}</small>
           </div>
-        </header>
+        </aside>
 
-        {view === 'overview' ? <Overview state={state} keys={keyQuery.data} /> : null}
-        {view === 'requests' ? <RequestsView state={state} /> : null}
-        {view === 'logs' ? <LogsView state={state} /> : null}
-        {view === 'config' ? (
-          <ConfigView
-            draft={draft}
-            pools={pools}
-            configTab={configTab}
-            setConfigTab={setConfigTab}
-            status={status}
-            saving={saveMutation.isPending}
-            onPatch={patchDraft}
-            onSave={() => saveMutation.mutate(draft)}
-            onOpenPool={openPool}
-            onDeletePool={(index) => updatePools(pools.filter((_, i) => i !== index))}
-            onMovePool={(index, direction) => {
-              const next = pools.slice();
-              const target = index + direction;
-              if (target < 0 || target >= next.length) return;
-              [next[index], next[target]] = [next[target], next[index]];
-              updatePools(next);
+        <main className="main">
+          <header className="hero">
+            <div>
+              <p>本地代理</p>
+              <h1>运行控制台</h1>
+              <span className="endpoint">http://127.0.0.1:{runtime.port || '18765'}/v1</span>
+            </div>
+            <div className="hero-actions">
+              <Badge tone={stateQuery.isError ? 'bad' : 'ok'}>{stateQuery.isError ? '连接异常' : '运行中'}</Badge>
+              <Button onClick={() => stateQuery.refetch()}><RefreshCw size={15} />刷新</Button>
+              <a className="btn btn-danger" href="/logout">退出登录</a>
+            </div>
+          </header>
+
+          <Outlet />
+        </main>
+
+        {poolDraft ? (
+          <PoolModal
+            pool={poolDraft}
+            title={poolIndex == null ? '新增连接池' : '管理连接池'}
+            testResult={poolTest}
+            onChange={setPoolDraft}
+            onClose={() => { setPoolDraft(null); setPoolIndex(null); }}
+            onSave={savePoolDraft}
+            onTest={async () => {
+              if (poolIndex == null) return setPoolTest({ ok: false, message: '新连接池保存后再测试。' });
+              setPoolTest(await testPool(poolIndex, poolDraft.name));
             }}
-            keyPayload={keyQuery.data}
-            refreshKeys={() => keyQuery.refetch()}
           />
         ) : null}
-      </main>
-
-      {poolDraft ? (
-        <PoolModal
-          pool={poolDraft}
-          title={poolIndex == null ? '新增连接池' : '管理连接池'}
-          testResult={poolTest}
-          onChange={setPoolDraft}
-          onClose={() => { setPoolDraft(null); setPoolIndex(null); }}
-          onSave={savePoolDraft}
-          onTest={async () => {
-            if (poolIndex == null) return setPoolTest({ ok: false, message: '新连接池保存后再测试。' });
-            setPoolTest(await testPool(poolIndex, poolDraft.name));
-          }}
-        />
-      ) : null}
-    </div>
+      </div>
+    </DashboardProvider>
   );
 }
 
-function NavButton({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
-  return <button className={cn(active && 'active')} onClick={onClick}>{icon}<span>{label}</span></button>;
+function NavLink({ to, icon, label }: { to: string; icon: React.ReactNode; label: string }) {
+  return <Link to={to} activeOptions={{ exact: to === '/' }} activeProps={{ className: 'active' }}>{icon}<span>{label}</span></Link>;
 }
 
-createRoot(document.getElementById('root')!).render(<QueryClientProvider client={queryClient}><App /></QueryClientProvider>);
+function OverviewRoute() {
+  const { state, keyQuery } = useDashboard();
+  return <Overview state={state} keys={keyQuery.data} />;
+}
+
+function RequestsRoute() {
+  const { state } = useDashboard();
+  return <RequestsView state={state} />;
+}
+
+function LogsRoute() {
+  const { state } = useDashboard();
+  return <LogsView state={state} />;
+}
+
+function ConfigRoute() {
+  const dashboard = useDashboard();
+  return (
+    <ConfigView
+      draft={dashboard.draft}
+      pools={dashboard.pools}
+      configTab={dashboard.configTab}
+      setConfigTab={dashboard.setConfigTab}
+      status={dashboard.status}
+      saving={dashboard.saving}
+      onPatch={dashboard.patchDraft}
+      onSave={dashboard.saveConfig}
+      onOpenPool={dashboard.openPool}
+      onDeletePool={dashboard.deletePool}
+      onMovePool={dashboard.movePool}
+      keyPayload={dashboard.keyQuery.data}
+      refreshKeys={() => dashboard.keyQuery.refetch()}
+    />
+  );
+}
+
+const rootRoute = createRootRoute({ component: DashboardLayout });
+const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: OverviewRoute });
+const requestsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/requests', component: RequestsRoute });
+const logsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/logs', component: LogsRoute });
+const configRoute = createRoute({ getParentRoute: () => rootRoute, path: '/config', component: ConfigRoute });
+
+const routeTree = rootRoute.addChildren([indexRoute, requestsRoute, logsRoute, configRoute]);
+const router = createRouter({ routeTree, history: createHashHistory() });
+
+declare module '@tanstack/react-router' {
+  interface Register {
+    router: typeof router;
+  }
+}
+
+createRoot(document.getElementById('root')!).render(<QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>);
