@@ -4,6 +4,7 @@ import { RequestsView } from './features/requests/RequestsView';
 import { DashboardLayout } from './layout/DashboardLayout';
 import { LogsView } from './pages/LogsView';
 import { Overview } from './pages/Overview';
+import { ProxyKeysPage } from './pages/ProxyKeysPage';
 import { useDashboard } from './state/dashboardContext';
 
 function OverviewRoute() {
@@ -36,19 +37,22 @@ function ConfigRoute() {
       onOpenPool={dashboard.openPool}
       onDeletePool={dashboard.deletePool}
       onMovePool={dashboard.movePool}
-      keyPayload={dashboard.keyQuery.data}
-      refreshKeys={() => dashboard.keyQuery.refetch()}
     />
   );
+}
+
+function KeysRoute() {
+  return <ProxyKeysPage />;
 }
 
 const rootRoute = createRootRoute({ component: DashboardLayout });
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: OverviewRoute });
 const requestsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/requests', component: RequestsRoute });
 const logsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/logs', component: LogsRoute });
+const keysRoute = createRoute({ getParentRoute: () => rootRoute, path: '/keys', component: KeysRoute });
 const configRoute = createRoute({ getParentRoute: () => rootRoute, path: '/config', component: ConfigRoute });
 
-const routeTree = rootRoute.addChildren([indexRoute, requestsRoute, logsRoute, configRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, requestsRoute, logsRoute, keysRoute, configRoute]);
 
 export const router = createRouter({ routeTree, history: createHashHistory() });
 

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, Outlet } from '@tanstack/react-router';
-import { Activity, ListChecks, RefreshCw, Server, Settings } from 'lucide-react';
+import { Activity, KeyRound, ListChecks, RefreshCw, Server, Settings } from 'lucide-react';
 import { fetchDashboardState, fetchProxyKeys, saveConfig, testPool } from '../api';
 import { Badge, Button } from '../components';
 import { PoolModal } from '../features/config/PoolModal';
@@ -115,6 +115,7 @@ export function DashboardLayout() {
             <NavLink to="/" icon={<Activity size={16} />} label="总览" />
             <NavLink to="/requests" icon={<ListChecks size={16} />} label="请求观测" />
             <NavLink to="/logs" icon={<Server size={16} />} label="运行日志" />
+            <NavLink to="/keys" icon={<KeyRound size={16} />} label="入口 Key" />
             <NavLink to="/config" icon={<Settings size={16} />} label="路由与策略" />
           </nav>
           <div className="sidebar-foot">
