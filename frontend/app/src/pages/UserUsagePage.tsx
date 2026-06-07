@@ -82,7 +82,7 @@ export function UserUsagePage() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'user-usage.tsv';
+    link.download = 'usage-records.tsv';
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -91,14 +91,14 @@ export function UserUsagePage() {
     <section className="grid-page">
       <div className="sub2-page-head">
         <div className="sub2-page-title">
-          <strong>我的用量</strong>
-          <span>按业务用户维度查看最近请求、Token 和消费情况。</span>
+          <strong>使用记录</strong>
+          <span>按用户账户查看请求记录、计费、耗时和异常状态。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>当前账户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '请选择用户'}</small></div>
-          <div className="sub2-inline-summary-item"><span>请求数</span><strong>{formatNumber(summary.requests)}</strong><small>当前筛选结果</small></div>
-          <div className="sub2-inline-summary-item"><span>总 Token</span><strong>{formatTokenCount(summary.tokens)}</strong><small>最近请求累计</small></div>
-          <div className="sub2-inline-summary-item"><span>用户计费</span><strong>{formatUsdCost(summary.actualCost)}</strong><small>标准成本 {formatUsdCost(summary.totalCost)}</small></div>
+          <div className="sub2-inline-summary-item"><span>记录数</span><strong>{formatNumber(summary.requests)}</strong><small>当前筛选结果</small></div>
+          <div className="sub2-inline-summary-item"><span>总 Token</span><strong>{formatTokenCount(summary.tokens)}</strong><small>请求与回复累计</small></div>
+          <div className="sub2-inline-summary-item"><span>实际消费</span><strong>{formatUsdCost(summary.actualCost)}</strong><small>标准成本 {formatUsdCost(summary.totalCost)}</small></div>
           <div className="sub2-inline-summary-item"><span>平均耗时</span><strong>{formatMs(averageDuration)}</strong><small>按当前筛选计算</small></div>
         </div>
       </div>
@@ -177,7 +177,7 @@ export function UserUsagePage() {
                 }) : (
                   <tr>
                     <td colSpan={7}>
-                      <EmptyState title="暂无用量记录" description="当前筛选条件下没有用户侧用量记录。" />
+                      <EmptyState title="暂无使用记录" description="当前筛选条件下没有可显示的请求记录。" />
                     </td>
                   </tr>
                 )}

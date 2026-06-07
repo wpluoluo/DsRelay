@@ -143,7 +143,7 @@ export function DashboardLayout() {
               <NavLink to="/user-orders" icon={<CreditCard size={18} />} label="支付订单" />
               <NavLink to="/user-subscriptions" icon={<Ticket size={18} />} label="我的订阅" />
               <NavLink to="/keys" icon={<KeyRound size={18} />} label="用户 API Key" />
-              <NavLink to="/usage" icon={<BarChart3 size={18} />} label="我的用量" />
+              <NavLink to="/usage" icon={<BarChart3 size={18} />} label="使用记录" />
             </NavGroup>
             <NavGroup
               title="管理后台"
