@@ -89,12 +89,13 @@ class AdminPaymentsMixin(AdminServiceBase):
         channels = {str(item.get("id") or ""): item for item in self.list_payment_channels().get("items", [])}
         items = []
         for row in self.storage.list_admin_payment_orders():
+            storage_account_id = coerce_text(row.get("user_id"))
             payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
             items.append(
                 {
                     **row,
-                    "account_id": coerce_text(row.get("user_id")),
-                    "account_name": coerce_text(accounts.get(str(row.get("user_id") or ""), {}).get("name")) or coerce_text(row.get("user_id")),
+                    "account_id": storage_account_id,
+                    "account_name": coerce_text(accounts.get(storage_account_id, {}).get("name")) or storage_account_id,
                     "plan_name": coerce_text(plans.get(str(row.get("plan_id") or ""), {}).get("name")) or coerce_text(row.get("plan_id")),
                     "channel_name": coerce_text(channels.get(str(row.get("channel_id") or ""), {}).get("name")) or coerce_text(row.get("channel_id")),
                     "rate_multiplier": payload.get("rate_multiplier"),
@@ -139,7 +140,7 @@ class AdminPaymentsMixin(AdminServiceBase):
         }
         item = normalize_admin_payment_order_payload({
             "id": f"order_{uuid.uuid4().hex[:16]}",
-            "user_id": account_id,
+            "account_id": account_id,
             "plan_id": plan_id,
             "subscription_id": "",
             "channel_id": channel_id,

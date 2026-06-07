@@ -398,8 +398,8 @@ class AdminAnalyticsMixin(AdminServiceBase):
                         {
                             "order_id": order_id,
                             "subscription_id": coerce_text(chosen_order.get("subscription_id")),
-                            "account_id": coerce_text(chosen_order.get("user_id")),
-                            "account_name": coerce_text(chosen_order.get("user_name")) or account_name,
+                            "account_id": coerce_text(chosen_order.get("account_id") or chosen_order.get("user_id")),
+                            "account_name": coerce_text(chosen_order.get("account_name") or chosen_order.get("user_name")) or account_name,
                             "plan_id": coerce_text(chosen_order.get("plan_id")) or plan_id,
                             "plan_name": coerce_text(chosen_order.get("plan_name")) or plan_name,
                             "group_id": coerce_text(chosen_order.get("group_id")) or group_id,

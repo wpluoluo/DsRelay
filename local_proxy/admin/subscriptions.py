@@ -55,14 +55,15 @@ class AdminSubscriptionsMixin(AdminServiceBase):
         plans = {str(item.get("id") or ""): item for item in self.storage.list_admin_subscription_plans()}
         normalized = []
         for item in items:
+            storage_account_id = coerce_text(item.get("user_id"))
             group_id = coerce_text(item.get("group_id"))
             group = groups.get(group_id, {})
             plan = plans.get(coerce_text(item.get("plan_id")), {})
             normalized.append(
                 {
                     **item,
-                    "account_id": coerce_text(item.get("user_id")),
-                    "account_name": coerce_text(item.get("user_name")) or coerce_text(item.get("user_id")),
+                    "account_id": storage_account_id,
+                    "account_name": coerce_text(item.get("user_name")) or storage_account_id,
                     "group_name": coerce_text(item.get("group_name")) or coerce_text(group.get("name")),
                     "rate_multiplier": group.get("rate_multiplier"),
                     "daily_limit": safe_int(plan.get("daily_limit")),

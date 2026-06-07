@@ -14,11 +14,12 @@ class AdminApiKeysMixin(AdminServiceBase):
         accounts = {str(item.get("id") or ""): item for item in self.list_accounts(limit=5000).get("items", [])}
         items = []
         for row in self.storage.list_admin_api_keys():
-            account = accounts.get(str(row.get("user_id") or ""), {})
+            storage_account_id = coerce_text(row.get("user_id"))
+            account = accounts.get(storage_account_id, {})
             items.append({
                 **row,
-                "account_id": coerce_text(row.get("user_id")),
-                "account_name": coerce_text(account.get("name")) or coerce_text(row.get("user_id")),
+                "account_id": storage_account_id,
+                "account_name": coerce_text(account.get("name")) or storage_account_id,
                 "account_source_type": account.get("source_type"),
                 "account_enabled": account.get("enabled"),
                 "account_note": account.get("note"),
