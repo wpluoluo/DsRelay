@@ -1,4 +1,20 @@
-import type { DashboardState, PoolTestResult, ProxyKeyPayload, RuntimeConfig } from './types';
+import type {
+  AdminGroup,
+  AdminApiKey,
+  AdminListPayload,
+  AdminOverviewPayload,
+  AdminPaymentChannel,
+  AdminPaymentChannelTemplatePayload,
+  AdminPaymentOrder,
+  AdminSubscriptionPlan,
+  AdminUsageItem,
+  AdminUser,
+  AdminUserSubscription,
+  DashboardState,
+  PoolTestResult,
+  ProxyKeyPayload,
+  RuntimeConfig,
+} from './types';
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -55,5 +71,129 @@ export function testPool(poolIndex: number, poolName?: string): Promise<PoolTest
   return requestJson<PoolTestResult>('/debug/pools/test', {
     method: 'POST',
     body: JSON.stringify({ pool_index: poolIndex, pool_name: poolName || '' }),
+  });
+}
+
+export function fetchAdminOverview(): Promise<AdminOverviewPayload> {
+  return requestJson<AdminOverviewPayload>('/admin/overview');
+}
+
+export function fetchAdminUsers(): Promise<AdminListPayload<AdminUser>> {
+  return requestJson<AdminListPayload<AdminUser>>('/admin/users');
+}
+
+export function saveAdminUser(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminUser }> {
+  return requestJson<{ ok?: boolean; item?: AdminUser }>('/admin/users', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchAdminGroups(): Promise<AdminListPayload<AdminGroup>> {
+  return requestJson<AdminListPayload<AdminGroup>>('/admin/groups');
+}
+
+export function saveAdminGroup(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminGroup }> {
+  return requestJson<{ ok?: boolean; item?: AdminGroup }>('/admin/groups', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchAdminUsage(): Promise<AdminListPayload<AdminUsageItem>> {
+  return requestJson<AdminListPayload<AdminUsageItem>>('/admin/usage');
+}
+
+export function fetchAdminApiKeys(): Promise<AdminListPayload<AdminApiKey>> {
+  return requestJson<AdminListPayload<AdminApiKey>>('/admin/api-keys');
+}
+
+export function createAdminApiKey(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminApiKey; generated_key?: string }> {
+  return requestJson<{ ok?: boolean; item?: AdminApiKey; generated_key?: string }>('/admin/api-keys', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function setAdminApiKeyEnabled(keyId: string, enabled: boolean): Promise<{ ok?: boolean }> {
+  return requestJson<{ ok?: boolean }>(`/admin/api-keys/${keyId}/enabled`, {
+    method: 'POST',
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export function fetchAdminSubscriptionPlans(): Promise<AdminListPayload<AdminSubscriptionPlan>> {
+  return requestJson<AdminListPayload<AdminSubscriptionPlan>>('/admin/subscription-plans');
+}
+
+export function saveAdminSubscriptionPlan(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminSubscriptionPlan }> {
+  return requestJson<{ ok?: boolean; item?: AdminSubscriptionPlan }>('/admin/subscription-plans', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchAdminSubscriptions(): Promise<AdminListPayload<AdminUserSubscription>> {
+  return requestJson<AdminListPayload<AdminUserSubscription>>('/admin/subscriptions');
+}
+
+export function assignAdminSubscription(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminUserSubscription }> {
+  return requestJson<{ ok?: boolean; item?: AdminUserSubscription }>('/admin/subscriptions/assign', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function extendAdminSubscription(subscriptionId: string, days: number): Promise<{ ok?: boolean; item?: AdminUserSubscription }> {
+  return requestJson<{ ok?: boolean; item?: AdminUserSubscription }>(`/admin/subscriptions/${subscriptionId}/extend`, {
+    method: 'POST',
+    body: JSON.stringify({ days }),
+  });
+}
+
+export function revokeAdminSubscription(subscriptionId: string): Promise<{ ok?: boolean; item?: AdminUserSubscription }> {
+  return requestJson<{ ok?: boolean; item?: AdminUserSubscription }>(`/admin/subscriptions/${subscriptionId}`, {
+    method: 'DELETE',
+  });
+}
+
+export function resetAdminSubscriptionQuota(subscriptionId: string, payload: { daily: boolean; weekly: boolean; monthly: boolean }): Promise<{ ok?: boolean; item?: AdminUserSubscription }> {
+  return requestJson<{ ok?: boolean; item?: AdminUserSubscription }>(`/admin/subscriptions/${subscriptionId}/reset-quota`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchAdminPaymentChannels(): Promise<AdminListPayload<AdminPaymentChannel>> {
+  return requestJson<AdminListPayload<AdminPaymentChannel>>('/admin/payment-channels');
+}
+
+export function saveAdminPaymentChannel(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminPaymentChannel }> {
+  return requestJson<{ ok?: boolean; item?: AdminPaymentChannel }>('/admin/payment-channels', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchAdminPaymentChannelTemplate(provider: string): Promise<AdminPaymentChannelTemplatePayload> {
+  const query = new URLSearchParams({ provider }).toString();
+  return requestJson<AdminPaymentChannelTemplatePayload>(`/admin/payment-channels/template?${query}`);
+}
+
+export function fetchAdminPaymentOrders(): Promise<AdminListPayload<AdminPaymentOrder>> {
+  return requestJson<AdminListPayload<AdminPaymentOrder>>('/admin/payment-orders');
+}
+
+export function createAdminPaymentOrder(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminPaymentOrder; provider_payload?: Record<string, unknown> }> {
+  return requestJson<{ ok?: boolean; item?: AdminPaymentOrder; provider_payload?: Record<string, unknown> }>('/admin/payment-orders', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fulfillAdminPaymentOrder(orderId: string, payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminPaymentOrder }> {
+  return requestJson<{ ok?: boolean; item?: AdminPaymentOrder }>(`/payment/webhook/${orderId}`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
   });
 }

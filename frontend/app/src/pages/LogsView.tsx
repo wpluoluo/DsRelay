@@ -1,32 +1,44 @@
-import { Server } from 'lucide-react';
-import { Empty, Panel, PanelHead } from '../components';
+import { AlertTriangle, ListChecks, Server } from 'lucide-react';
+import { EmptyState, TablePageLayout } from '../components/admin';
 import type { DashboardState, RequestEntry } from '../types';
-import { maskEmpty } from '../utils';
+import { formatNumber, maskEmpty } from '../utils';
 
 export function LogsView({ state }: { state: DashboardState }) {
   const lines = [...(state.recent_logs || [])].reverse();
   const recentMap = buildRecentRequestMap(state.recent_requests || []);
+  const errorCount = lines.filter((line) => String(line).includes('[ERROR]')).length;
+  const warningCount = lines.filter((line) => String(line).includes('[WARNING]')).length;
+  const requestLinkedCount = lines.filter((line) => /request_id=([a-zA-Z0-9_-]+)/.test(String(line))).length;
   return (
-    <Panel>
-      <PanelHead title={<><Server size={18} />运行日志</>} />
-      <div className="table-wrap table-scroll table-logs">
-        <table>
-          <colgroup>
-            <col className="col-log-time" />
-            <col className="col-log-level" />
-            <col className="col-log-request" />
-            <col className="col-log-event" />
-            <col className="col-log-route" />
-            <col className="col-log-model" />
-            <col className="col-log-message" />
-          </colgroup>
-          <thead><tr><th>时间</th><th>级别</th><th>请求</th><th>事件</th><th>线路</th><th>模型</th><th>消息</th></tr></thead>
-          <tbody>
-            {lines.length ? lines.map((line, index) => <LogRow key={`${index}-${line}`} line={line} recentMap={recentMap} />) : <tr><td colSpan={7}><Empty>暂无日志。</Empty></td></tr>}
-          </tbody>
-        </table>
+    <section className="grid-page">
+      <div className="key-stat-grid">
+        <div className="key-stat"><div className="key-stat-icon blue"><Server size={18} /></div><div><span>日志总数</span><strong>{formatNumber(lines.length)}</strong><small>最近运行日志</small></div></div>
+        <div className="key-stat"><div className="key-stat-icon green"><ListChecks size={18} /></div><div><span>关联请求</span><strong>{formatNumber(requestLinkedCount)}</strong><small>可回溯 request_id</small></div></div>
+        <div className="key-stat"><div className="key-stat-icon amber"><AlertTriangle size={18} /></div><div><span>告警</span><strong>{formatNumber(warningCount)}</strong><small>WARNING 级别</small></div></div>
+        <div className="key-stat"><div className="key-stat-icon slate"><AlertTriangle size={18} /></div><div><span>错误</span><strong>{formatNumber(errorCount)}</strong><small>ERROR 级别</small></div></div>
       </div>
-    </Panel>
+      <TablePageLayout
+        table={
+          <div className="table-wrap table-scroll table-logs">
+            <table>
+              <colgroup>
+                <col className="col-log-time" />
+                <col className="col-log-level" />
+                <col className="col-log-request" />
+                <col className="col-log-event" />
+                <col className="col-log-route" />
+                <col className="col-log-model" />
+                <col className="col-log-message" />
+              </colgroup>
+              <thead><tr><th>时间</th><th>级别</th><th>请求</th><th>事件</th><th>线路</th><th>模型</th><th>消息</th></tr></thead>
+              <tbody>
+                {lines.length ? lines.map((line, index) => <LogRow key={`${index}-${line}`} line={line} recentMap={recentMap} />) : <tr><td colSpan={7}><EmptyState title="暂无日志" description="当前没有可展示的运行日志。" /></td></tr>}
+              </tbody>
+            </table>
+          </div>
+        }
+      />
+    </section>
   );
 }
 

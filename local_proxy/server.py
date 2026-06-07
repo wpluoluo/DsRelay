@@ -54,6 +54,8 @@ from local_proxy.compat.protocols import (
 )
 from local_proxy.dashboard import load_dashboard_template
 from local_proxy.auth import init_auth, login_page, login_required, logout, is_authenticated
+from local_proxy.admin import register_admin_routes
+from local_proxy.admin.service import AdminAnalyticsService
 from local_proxy.http.headers import (
     apply_sse_response_headers,
     build_response_headers,
@@ -63,6 +65,8 @@ from local_proxy.http.headers import (
 )
 from local_proxy.http.proxy_auth import (
     build_proxy_api_key_failure_diagnostics,
+    extract_proxy_api_key,
+    hash_proxy_api_key,
     make_proxy_api_key_record,
     normalize_proxy_api_key_records,
     parse_proxy_api_keys,
@@ -218,6 +222,8 @@ VAR_DIR = PROJECT_ROOT / "var"
 CACHE_DIR = VAR_DIR / "cache"
 LOG_DIR = VAR_DIR / "logs"
 CONFIG_SOURCE = "defaults"
+
+REQUEST_LOCAL = local()
 
 
 def resolve_project_path(raw_path: str | Path) -> Path:
@@ -3697,6 +3703,7 @@ def build_request_meta(
     request_payload: dict | None = None,
     extra_fields: dict | None = None,
 ) -> dict:
+    consumer_meta = getattr(REQUEST_LOCAL, "proxy_consumer", None)
     request_meta = {
         "request_id": request_id,
         "method": request.method,
@@ -3714,6 +3721,16 @@ def build_request_meta(
         "protocol": protocol,
         "request_repairs": request_repairs,
     }
+    if isinstance(consumer_meta, dict):
+        request_meta.update(
+            {
+                "proxy_consumer_id": str(consumer_meta.get("id") or ""),
+                "proxy_consumer_name": str(consumer_meta.get("name") or ""),
+                "proxy_consumer_type": str(consumer_meta.get("type") or ""),
+                "proxy_consumer_preview": str(consumer_meta.get("preview") or ""),
+                "proxy_consumer_source": str(consumer_meta.get("source") or ""),
+            }
+        )
     if isinstance(execution, dict):
         request_meta.update(build_request_observability_meta(execution, request_payload))
     if isinstance(extra_fields, dict):
@@ -6252,7 +6269,34 @@ def require_proxy_api_key() -> Response | None:
 
     result = verify_proxy_api_key(request, PROXY_API_KEYS, PROXY_API_KEY_RECORDS)
     if result.ok:
+        REQUEST_LOCAL.proxy_consumer = {
+            "id": str(result.key_id or ("env:" + str(result.source or "authorization"))),
+            "name": str(result.key_name or ("环境 Key" if result.key_type == "env" else "托管 Key")),
+            "type": str(result.key_type or "unknown"),
+            "preview": str(result.key_preview or ""),
+            "source": str(result.source or ""),
+        }
         return None
+
+    if storage is not None:
+        try:
+            candidate, source = extract_proxy_api_key(request)
+            candidate_hash = hash_proxy_api_key(candidate) if candidate else ""
+            matched = storage.find_admin_api_key_by_hash(candidate_hash) if candidate_hash else {}
+            if matched and matched.get("enabled") and matched.get("user_enabled", True):
+                REQUEST_LOCAL.proxy_consumer = {
+                    "id": str(matched.get("user_id") or ""),
+                    "name": str(matched.get("user_name") or matched.get("name") or "业务用户"),
+                    "type": "user_api_key",
+                    "preview": str(matched.get("key_preview") or ""),
+                    "source": str(source or "authorization"),
+                }
+                storage.touch_admin_api_key(str(matched.get("id") or ""))
+                return None
+        except Exception as exc:
+            proxy_logger.warning("business_api_key_auth_failed error=%s", str(exc))
+
+    REQUEST_LOCAL.proxy_consumer = None
 
     if result.reason == "proxy_api_key_not_configured":
         proxy_logger.warning(
@@ -9516,6 +9560,13 @@ register_http_routes(
         "proxy": proxy,
         "proxy_gemini_versioned": proxy_gemini_versioned,
     },
+)
+
+admin_analytics_service = AdminAnalyticsService(storage=storage, request_recorder=request_recorder)
+register_admin_routes(
+    app,
+    login_required=login_required,
+    analytics_service=admin_analytics_service,
 )
 
 app.add_url_rule("/", endpoint="dashboard_redirect", view_func=dashboard_redirect)

@@ -29,6 +29,9 @@ class ProxyApiAuthResult:
     reason: str = ""
     source: str = ""
     key_id: str = ""
+    key_name: str = ""
+    key_preview: str = ""
+    key_type: str = ""
 
 
 def parse_proxy_api_keys(raw_value: str | None) -> tuple[str, ...]:
@@ -176,12 +179,24 @@ def verify_proxy_api_key(
 
     for expected in configured_keys:
         if hmac.compare_digest(candidate, expected):
-            return ProxyApiAuthResult(True, source=source)
+            return ProxyApiAuthResult(
+                True,
+                source=source,
+                key_type="env",
+                key_preview=preview_proxy_api_key(candidate),
+            )
 
     candidate_hash = hash_proxy_api_key(candidate)
     for record in enabled_records:
         if hmac.compare_digest(candidate_hash, str(record.get("key_hash") or "")):
-            return ProxyApiAuthResult(True, source=source, key_id=str(record.get("id") or ""))
+            return ProxyApiAuthResult(
+                True,
+                source=source,
+                key_id=str(record.get("id") or ""),
+                key_name=str(record.get("name") or ""),
+                key_preview=str(record.get("key_preview") or ""),
+                key_type="managed",
+            )
 
     return ProxyApiAuthResult(False, "proxy_api_key_invalid", source=source)
 

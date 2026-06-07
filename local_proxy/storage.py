@@ -97,6 +97,160 @@ class ProxyStorage:
                 )
                 cur.execute(
                     """
+                    CREATE TABLE IF NOT EXISTS admin_users (
+                        id VARCHAR(64) PRIMARY KEY,
+                        name VARCHAR(128) NOT NULL,
+                        external_key VARCHAR(128) NOT NULL,
+                        source_type VARCHAR(32) NOT NULL,
+                        enabled TINYINT(1) NOT NULL DEFAULT 1,
+                        note TEXT NULL,
+                        created_at DOUBLE NOT NULL,
+                        updated_at DOUBLE NOT NULL,
+                        UNIQUE KEY uniq_admin_users_external_key (external_key)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS admin_groups (
+                        id VARCHAR(64) PRIMARY KEY,
+                        name VARCHAR(128) NOT NULL,
+                        description_text TEXT NULL,
+                        enabled TINYINT(1) NOT NULL DEFAULT 1,
+                        sort_order INT NOT NULL DEFAULT 0,
+                        created_at DOUBLE NOT NULL,
+                        updated_at DOUBLE NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS admin_user_groups (
+                        user_id VARCHAR(64) NOT NULL,
+                        group_id VARCHAR(64) NOT NULL,
+                        created_at DOUBLE NOT NULL,
+                        PRIMARY KEY (user_id, group_id),
+                        INDEX idx_admin_user_groups_group_id (group_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS admin_api_keys (
+                        id VARCHAR(64) PRIMARY KEY,
+                        user_id VARCHAR(64) NOT NULL,
+                        name VARCHAR(128) NOT NULL,
+                        key_hash VARCHAR(128) NOT NULL,
+                        key_preview VARCHAR(64) NOT NULL,
+                        enabled TINYINT(1) NOT NULL DEFAULT 1,
+                        last_used_at DOUBLE NULL,
+                        created_at DOUBLE NOT NULL,
+                        updated_at DOUBLE NOT NULL,
+                        INDEX idx_admin_api_keys_user_id (user_id),
+                        UNIQUE KEY uniq_admin_api_keys_hash (key_hash)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS admin_subscription_plans (
+                        id VARCHAR(64) PRIMARY KEY,
+                        name VARCHAR(128) NOT NULL,
+                        group_id VARCHAR(64) NULL,
+                        price_cents INT NOT NULL DEFAULT 0,
+                        validity_days INT NOT NULL DEFAULT 30,
+                        daily_limit INT NOT NULL DEFAULT 0,
+                        weekly_limit INT NOT NULL DEFAULT 0,
+                        monthly_limit INT NOT NULL DEFAULT 0,
+                        enabled TINYINT(1) NOT NULL DEFAULT 1,
+                        note TEXT NULL,
+                        created_at DOUBLE NOT NULL,
+                        updated_at DOUBLE NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    """
+                )
+                try:
+                    cur.execute("ALTER TABLE admin_subscription_plans ADD COLUMN price_cents INT NOT NULL DEFAULT 0 AFTER group_id")
+                except Exception:
+                    pass
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS admin_user_subscriptions (
+                        id VARCHAR(64) PRIMARY KEY,
+                        user_id VARCHAR(64) NOT NULL,
+                        plan_id VARCHAR(64) NOT NULL,
+                        group_id VARCHAR(64) NULL,
+                        status VARCHAR(32) NOT NULL,
+                        started_at DOUBLE NOT NULL,
+                        expires_at DOUBLE NULL,
+                        daily_used INT NOT NULL DEFAULT 0,
+                        weekly_used INT NOT NULL DEFAULT 0,
+                        monthly_used INT NOT NULL DEFAULT 0,
+                        created_at DOUBLE NOT NULL,
+                        updated_at DOUBLE NOT NULL,
+                        INDEX idx_admin_user_subscriptions_user_id (user_id),
+                        INDEX idx_admin_user_subscriptions_plan_id (plan_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS admin_payment_channels (
+                        id VARCHAR(64) PRIMARY KEY,
+                        name VARCHAR(128) NOT NULL,
+                        provider VARCHAR(64) NOT NULL,
+                        config_json MEDIUMTEXT NOT NULL,
+                        enabled TINYINT(1) NOT NULL DEFAULT 1,
+                        created_at DOUBLE NOT NULL,
+                        updated_at DOUBLE NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS admin_payment_orders (
+                        id VARCHAR(64) PRIMARY KEY,
+                        user_id VARCHAR(64) NOT NULL,
+                        plan_id VARCHAR(64) NOT NULL,
+                        subscription_id VARCHAR(64) NULL,
+                        channel_id VARCHAR(64) NULL,
+                        amount_cents INT NOT NULL DEFAULT 0,
+                        currency VARCHAR(16) NOT NULL DEFAULT 'CNY',
+                        status VARCHAR(32) NOT NULL,
+                        provider_order_id VARCHAR(128) NULL,
+                        resume_token VARCHAR(128) NULL,
+                        payload_json MEDIUMTEXT NOT NULL,
+                        provider_payload_json MEDIUMTEXT NOT NULL,
+                        paid_at DOUBLE NULL,
+                        created_at DOUBLE NOT NULL,
+                        updated_at DOUBLE NOT NULL,
+                        INDEX idx_admin_payment_orders_user_id (user_id),
+                        INDEX idx_admin_payment_orders_plan_id (plan_id),
+                        INDEX idx_admin_payment_orders_status (status)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    """
+                )
+                try:
+                    cur.execute("ALTER TABLE admin_payment_orders ADD COLUMN provider_payload_json MEDIUMTEXT NOT NULL AFTER payload_json")
+                except Exception:
+                    pass
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS admin_payment_webhook_events (
+                        event_id VARCHAR(128) PRIMARY KEY,
+                        order_id VARCHAR(64) NOT NULL,
+                        provider VARCHAR(64) NOT NULL,
+                        signature VARCHAR(256) NULL,
+                        payload_json MEDIUMTEXT NOT NULL,
+                        processed TINYINT(1) NOT NULL DEFAULT 0,
+                        created_at DOUBLE NOT NULL,
+                        updated_at DOUBLE NOT NULL,
+                        INDEX idx_admin_payment_webhook_events_order_id (order_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    """
+                )
+                cur.execute(
+                    """
                     CREATE TABLE IF NOT EXISTS request_cache (
                         cache_key VARCHAR(512) PRIMARY KEY,
                         protocol VARCHAR(32) NOT NULL,
@@ -403,6 +557,829 @@ class ProxyStorage:
         except json.JSONDecodeError:
             return {}
         return payload if isinstance(payload, dict) else {}
+
+    def list_admin_users(self) -> list[dict]:
+        rows = []
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, name, external_key, source_type, enabled, note, created_at, updated_at
+                    FROM admin_users
+                    ORDER BY updated_at DESC, created_at DESC
+                    """
+                )
+                for row in cur.fetchall():
+                    rows.append(
+                        {
+                            "id": str(row[0] or ""),
+                            "name": str(row[1] or ""),
+                            "external_key": str(row[2] or ""),
+                            "source_type": str(row[3] or ""),
+                            "enabled": bool(row[4]),
+                            "note": str(row[5] or ""),
+                            "created_at": float(row[6] or 0.0),
+                            "updated_at": float(row[7] or 0.0),
+                        }
+                    )
+        finally:
+            conn.close()
+        return rows
+
+    def upsert_admin_user(self, payload: dict) -> dict:
+        now = time.time()
+        item = {
+            "id": str(payload.get("id") or "").strip(),
+            "name": str(payload.get("name") or "").strip(),
+            "external_key": str(payload.get("external_key") or "").strip(),
+            "source_type": str(payload.get("source_type") or "").strip() or "managed",
+            "enabled": payload.get("enabled") is not False,
+            "note": str(payload.get("note") or ""),
+        }
+        if not item["id"] or not item["name"] or not item["external_key"]:
+            raise ValueError("missing required admin user fields")
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT created_at FROM admin_users WHERE id = %s", (item["id"],))
+                row = cur.fetchone()
+                created_at = float(row[0] or now) if row else now
+                cur.execute(
+                    """
+                    REPLACE INTO admin_users
+                    (id, name, external_key, source_type, enabled, note, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        item["id"],
+                        item["name"],
+                        item["external_key"],
+                        item["source_type"],
+                        1 if item["enabled"] else 0,
+                        item["note"],
+                        created_at,
+                        now,
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        item["created_at"] = created_at
+        item["updated_at"] = now
+        return item
+
+    def list_admin_groups(self) -> list[dict]:
+        rows = []
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, name, description_text, enabled, sort_order, created_at, updated_at
+                    FROM admin_groups
+                    ORDER BY sort_order ASC, updated_at DESC, created_at DESC
+                    """
+                )
+                for row in cur.fetchall():
+                    rows.append(
+                        {
+                            "id": str(row[0] or ""),
+                            "name": str(row[1] or ""),
+                            "description": str(row[2] or ""),
+                            "enabled": bool(row[3]),
+                            "sort_order": int(row[4] or 0),
+                            "created_at": float(row[5] or 0.0),
+                            "updated_at": float(row[6] or 0.0),
+                        }
+                    )
+        finally:
+            conn.close()
+        return rows
+
+    def upsert_admin_group(self, payload: dict) -> dict:
+        now = time.time()
+        item = {
+            "id": str(payload.get("id") or "").strip(),
+            "name": str(payload.get("name") or "").strip(),
+            "description": str(payload.get("description") or ""),
+            "enabled": payload.get("enabled") is not False,
+            "sort_order": int(payload.get("sort_order") or 0),
+        }
+        if not item["id"] or not item["name"]:
+            raise ValueError("missing required admin group fields")
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT created_at FROM admin_groups WHERE id = %s", (item["id"],))
+                row = cur.fetchone()
+                created_at = float(row[0] or now) if row else now
+                cur.execute(
+                    """
+                    REPLACE INTO admin_groups
+                    (id, name, description_text, enabled, sort_order, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        item["id"],
+                        item["name"],
+                        item["description"],
+                        1 if item["enabled"] else 0,
+                        item["sort_order"],
+                        created_at,
+                        now,
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        item["created_at"] = created_at
+        item["updated_at"] = now
+        return item
+
+    def replace_admin_user_groups(self, user_id: str, group_ids: list[str]) -> None:
+        normalized_user_id = str(user_id or "").strip()
+        if not normalized_user_id:
+            raise ValueError("missing user_id")
+        normalized_group_ids = sorted({str(group_id or "").strip() for group_id in (group_ids or []) if str(group_id or "").strip()})
+        now = time.time()
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM admin_user_groups WHERE user_id = %s", (normalized_user_id,))
+                if normalized_group_ids:
+                    cur.executemany(
+                        """
+                        INSERT INTO admin_user_groups (user_id, group_id, created_at)
+                        VALUES (%s, %s, %s)
+                        """,
+                        [(normalized_user_id, group_id, now) for group_id in normalized_group_ids],
+                    )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_admin_user_groups(self) -> list[dict]:
+        rows = []
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT user_id, group_id, created_at
+                    FROM admin_user_groups
+                    ORDER BY created_at DESC
+                    """
+                )
+                for row in cur.fetchall():
+                    rows.append(
+                        {
+                            "user_id": str(row[0] or ""),
+                            "group_id": str(row[1] or ""),
+                            "created_at": float(row[2] or 0.0),
+                        }
+                    )
+        finally:
+            conn.close()
+        return rows
+
+    def list_admin_api_keys(self) -> list[dict]:
+        rows = []
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, user_id, name, key_hash, key_preview, enabled, last_used_at, created_at, updated_at
+                    FROM admin_api_keys
+                    ORDER BY updated_at DESC, created_at DESC
+                    """
+                )
+                for row in cur.fetchall():
+                    rows.append(
+                        {
+                            "id": str(row[0] or ""),
+                            "user_id": str(row[1] or ""),
+                            "name": str(row[2] or ""),
+                            "key_hash": str(row[3] or ""),
+                            "key_preview": str(row[4] or ""),
+                            "enabled": bool(row[5]),
+                            "last_used_at": float(row[6] or 0.0) if row[6] is not None else None,
+                            "created_at": float(row[7] or 0.0),
+                            "updated_at": float(row[8] or 0.0),
+                        }
+                    )
+        finally:
+            conn.close()
+        return rows
+
+    def upsert_admin_api_key(self, payload: dict) -> dict:
+        now = time.time()
+        item = {
+            "id": str(payload.get("id") or "").strip(),
+            "user_id": str(payload.get("user_id") or "").strip(),
+            "name": str(payload.get("name") or "").strip(),
+            "key_hash": str(payload.get("key_hash") or "").strip(),
+            "key_preview": str(payload.get("key_preview") or "").strip(),
+            "enabled": payload.get("enabled") is not False,
+            "last_used_at": payload.get("last_used_at"),
+        }
+        if not item["id"] or not item["user_id"] or not item["name"] or not item["key_hash"] or not item["key_preview"]:
+            raise ValueError("missing required admin api key fields")
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT created_at FROM admin_api_keys WHERE id = %s", (item["id"],))
+                row = cur.fetchone()
+                created_at = float(row[0] or now) if row else now
+                cur.execute(
+                    """
+                    REPLACE INTO admin_api_keys
+                    (id, user_id, name, key_hash, key_preview, enabled, last_used_at, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        item["id"],
+                        item["user_id"],
+                        item["name"],
+                        item["key_hash"],
+                        item["key_preview"],
+                        1 if item["enabled"] else 0,
+                        item["last_used_at"],
+                        created_at,
+                        now,
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        item["created_at"] = created_at
+        item["updated_at"] = now
+        return item
+
+    def touch_admin_api_key(self, key_id: str) -> None:
+        now = time.time()
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE admin_api_keys SET last_used_at = %s, updated_at = %s WHERE id = %s",
+                    (now, now, str(key_id or "").strip()),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def set_admin_api_key_enabled(self, key_id: str, enabled: bool) -> None:
+        now = time.time()
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE admin_api_keys SET enabled = %s, updated_at = %s WHERE id = %s",
+                    (1 if enabled else 0, now, str(key_id or "").strip()),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def find_admin_api_key_by_hash(self, key_hash: str) -> dict:
+        normalized = str(key_hash or "").strip()
+        if not normalized:
+            return {}
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT k.id, k.user_id, k.name, k.key_hash, k.key_preview, k.enabled,
+                           u.name, u.source_type, u.enabled, u.note
+                    FROM admin_api_keys k
+                    LEFT JOIN admin_users u ON u.id = k.user_id
+                    WHERE k.key_hash = %s
+                    LIMIT 1
+                    """,
+                    (normalized,),
+                )
+                row = cur.fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return {}
+        return {
+            "id": str(row[0] or ""),
+            "user_id": str(row[1] or ""),
+            "name": str(row[2] or ""),
+            "key_hash": str(row[3] or ""),
+            "key_preview": str(row[4] or ""),
+            "enabled": bool(row[5]),
+            "user_name": str(row[6] or ""),
+            "user_source_type": str(row[7] or ""),
+            "user_enabled": bool(row[8]) if row[8] is not None else True,
+            "user_note": str(row[9] or ""),
+        }
+
+    def list_admin_subscription_plans(self) -> list[dict]:
+        rows = []
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, name, group_id, price_cents, validity_days, daily_limit, weekly_limit, monthly_limit, enabled, note, created_at, updated_at
+                    FROM admin_subscription_plans
+                    ORDER BY updated_at DESC, created_at DESC
+                    """
+                )
+                for row in cur.fetchall():
+                    rows.append(
+                        {
+                            "id": str(row[0] or ""),
+                            "name": str(row[1] or ""),
+                            "group_id": str(row[2] or ""),
+                            "price_cents": int(row[3] or 0),
+                            "validity_days": int(row[4] or 0),
+                            "daily_limit": int(row[5] or 0),
+                            "weekly_limit": int(row[6] or 0),
+                            "monthly_limit": int(row[7] or 0),
+                            "enabled": bool(row[8]),
+                            "note": str(row[9] or ""),
+                            "created_at": float(row[10] or 0.0),
+                            "updated_at": float(row[11] or 0.0),
+                        }
+                    )
+        finally:
+            conn.close()
+        return rows
+
+    def upsert_admin_subscription_plan(self, payload: dict) -> dict:
+        now = time.time()
+        item = {
+            "id": str(payload.get("id") or "").strip(),
+            "name": str(payload.get("name") or "").strip(),
+            "group_id": str(payload.get("group_id") or "").strip(),
+            "price_cents": int(payload.get("price_cents") or 0),
+            "validity_days": int(payload.get("validity_days") or 30),
+            "daily_limit": int(payload.get("daily_limit") or 0),
+            "weekly_limit": int(payload.get("weekly_limit") or 0),
+            "monthly_limit": int(payload.get("monthly_limit") or 0),
+            "enabled": payload.get("enabled") is not False,
+            "note": str(payload.get("note") or ""),
+        }
+        if not item["id"] or not item["name"]:
+            raise ValueError("missing required admin subscription plan fields")
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT created_at FROM admin_subscription_plans WHERE id = %s", (item["id"],))
+                row = cur.fetchone()
+                created_at = float(row[0] or now) if row else now
+                cur.execute(
+                    """
+                    REPLACE INTO admin_subscription_plans
+                    (id, name, group_id, price_cents, validity_days, daily_limit, weekly_limit, monthly_limit, enabled, note, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        item["id"],
+                        item["name"],
+                        item["group_id"] or None,
+                        item["price_cents"],
+                        item["validity_days"],
+                        item["daily_limit"],
+                        item["weekly_limit"],
+                        item["monthly_limit"],
+                        1 if item["enabled"] else 0,
+                        item["note"],
+                        created_at,
+                        now,
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        item["created_at"] = created_at
+        item["updated_at"] = now
+        return item
+
+    def list_admin_user_subscriptions(self) -> list[dict]:
+        rows = []
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT s.id, s.user_id, s.plan_id, s.group_id, s.status, s.started_at, s.expires_at,
+                           s.daily_used, s.weekly_used, s.monthly_used, s.created_at, s.updated_at,
+                           u.name, p.name
+                    FROM admin_user_subscriptions s
+                    LEFT JOIN admin_users u ON u.id = s.user_id
+                    LEFT JOIN admin_subscription_plans p ON p.id = s.plan_id
+                    ORDER BY s.updated_at DESC, s.created_at DESC
+                    """
+                )
+                for row in cur.fetchall():
+                    rows.append(
+                        {
+                            "id": str(row[0] or ""),
+                            "user_id": str(row[1] or ""),
+                            "plan_id": str(row[2] or ""),
+                            "group_id": str(row[3] or ""),
+                            "status": str(row[4] or ""),
+                            "started_at": float(row[5] or 0.0),
+                            "expires_at": float(row[6] or 0.0) if row[6] is not None else None,
+                            "daily_used": int(row[7] or 0),
+                            "weekly_used": int(row[8] or 0),
+                            "monthly_used": int(row[9] or 0),
+                            "created_at": float(row[10] or 0.0),
+                            "updated_at": float(row[11] or 0.0),
+                            "user_name": str(row[12] or ""),
+                            "plan_name": str(row[13] or ""),
+                        }
+                    )
+        finally:
+            conn.close()
+        return rows
+
+    def upsert_admin_user_subscription(self, payload: dict) -> dict:
+        now = time.time()
+        item = {
+            "id": str(payload.get("id") or "").strip(),
+            "user_id": str(payload.get("user_id") or "").strip(),
+            "plan_id": str(payload.get("plan_id") or "").strip(),
+            "group_id": str(payload.get("group_id") or "").strip(),
+            "status": str(payload.get("status") or "active").strip() or "active",
+            "started_at": float(payload.get("started_at") or now),
+            "expires_at": payload.get("expires_at"),
+            "daily_used": int(payload.get("daily_used") or 0),
+            "weekly_used": int(payload.get("weekly_used") or 0),
+            "monthly_used": int(payload.get("monthly_used") or 0),
+        }
+        if not item["id"] or not item["user_id"] or not item["plan_id"]:
+            raise ValueError("missing required admin user subscription fields")
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT created_at FROM admin_user_subscriptions WHERE id = %s", (item["id"],))
+                row = cur.fetchone()
+                created_at = float(row[0] or now) if row else now
+                cur.execute(
+                    """
+                    REPLACE INTO admin_user_subscriptions
+                    (id, user_id, plan_id, group_id, status, started_at, expires_at, daily_used, weekly_used, monthly_used, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        item["id"],
+                        item["user_id"],
+                        item["plan_id"],
+                        item["group_id"] or None,
+                        item["status"],
+                        item["started_at"],
+                        item["expires_at"],
+                        item["daily_used"],
+                        item["weekly_used"],
+                        item["monthly_used"],
+                        created_at,
+                        now,
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        item["created_at"] = created_at
+        item["updated_at"] = now
+        return item
+
+    def list_admin_payment_channels(self) -> list[dict]:
+        rows = []
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, name, provider, config_json, enabled, created_at, updated_at
+                    FROM admin_payment_channels
+                    ORDER BY updated_at DESC, created_at DESC
+                    """
+                )
+                for row in cur.fetchall():
+                    try:
+                        config_payload = json.loads(row[3]) if row[3] else {}
+                    except json.JSONDecodeError:
+                        config_payload = {}
+                    rows.append(
+                        {
+                            "id": str(row[0] or ""),
+                            "name": str(row[1] or ""),
+                            "provider": str(row[2] or ""),
+                            "config": config_payload if isinstance(config_payload, dict) else {},
+                            "enabled": bool(row[4]),
+                            "created_at": float(row[5] or 0.0),
+                            "updated_at": float(row[6] or 0.0),
+                        }
+                    )
+        finally:
+            conn.close()
+        return rows
+
+    def upsert_admin_payment_channel(self, payload: dict) -> dict:
+        now = time.time()
+        item = {
+            "id": str(payload.get("id") or "").strip(),
+            "name": str(payload.get("name") or "").strip(),
+            "provider": str(payload.get("provider") or "").strip(),
+            "config": payload.get("config") if isinstance(payload.get("config"), dict) else {},
+            "enabled": payload.get("enabled") is not False,
+        }
+        if not item["id"] or not item["name"] or not item["provider"]:
+            raise ValueError("missing required payment channel fields")
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT created_at FROM admin_payment_channels WHERE id = %s", (item["id"],))
+                row = cur.fetchone()
+                created_at = float(row[0] or now) if row else now
+                cur.execute(
+                    """
+                    REPLACE INTO admin_payment_channels
+                    (id, name, provider, config_json, enabled, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        item["id"],
+                        item["name"],
+                        item["provider"],
+                        json.dumps(item["config"], ensure_ascii=False, separators=(",", ":")),
+                        1 if item["enabled"] else 0,
+                        created_at,
+                        now,
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        item["created_at"] = created_at
+        item["updated_at"] = now
+        return item
+
+    def list_admin_payment_orders(self) -> list[dict]:
+        rows = []
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, user_id, plan_id, subscription_id, channel_id, amount_cents, currency, status,
+                           provider_order_id, resume_token, payload_json, provider_payload_json, paid_at, created_at, updated_at
+                    FROM admin_payment_orders
+                    ORDER BY updated_at DESC, created_at DESC
+                    """
+                )
+                for row in cur.fetchall():
+                    try:
+                        payload_json = json.loads(row[10]) if row[10] else {}
+                    except json.JSONDecodeError:
+                        payload_json = {}
+                    try:
+                        provider_payload_json = json.loads(row[11]) if row[11] else {}
+                    except json.JSONDecodeError:
+                        provider_payload_json = {}
+                    rows.append(
+                        {
+                            "id": str(row[0] or ""),
+                            "user_id": str(row[1] or ""),
+                            "plan_id": str(row[2] or ""),
+                            "subscription_id": str(row[3] or ""),
+                            "channel_id": str(row[4] or ""),
+                            "amount_cents": int(row[5] or 0),
+                            "currency": str(row[6] or ""),
+                            "status": str(row[7] or ""),
+                            "provider_order_id": str(row[8] or ""),
+                            "resume_token": str(row[9] or ""),
+                            "payload": payload_json if isinstance(payload_json, dict) else {},
+                            "provider_payload": provider_payload_json if isinstance(provider_payload_json, dict) else {},
+                            "paid_at": float(row[12] or 0.0) if row[12] is not None else None,
+                            "created_at": float(row[13] or 0.0),
+                            "updated_at": float(row[14] or 0.0),
+                        }
+                    )
+        finally:
+            conn.close()
+        return rows
+
+    def get_admin_payment_order(self, order_id: str) -> dict:
+        target = str(order_id or "").strip()
+        if not target:
+            return {}
+        for item in self.list_admin_payment_orders():
+            if str(item.get("id") or "") == target:
+                return item
+        return {}
+
+    def upsert_admin_payment_order(self, payload: dict) -> dict:
+        now = time.time()
+        item = {
+            "id": str(payload.get("id") or "").strip(),
+            "user_id": str(payload.get("user_id") or "").strip(),
+            "plan_id": str(payload.get("plan_id") or "").strip(),
+            "subscription_id": str(payload.get("subscription_id") or "").strip(),
+            "channel_id": str(payload.get("channel_id") or "").strip(),
+            "amount_cents": int(payload.get("amount_cents") or 0),
+            "currency": str(payload.get("currency") or "CNY").strip() or "CNY",
+            "status": str(payload.get("status") or "").strip(),
+            "provider_order_id": str(payload.get("provider_order_id") or "").strip(),
+            "resume_token": str(payload.get("resume_token") or "").strip(),
+            "payload": payload.get("payload") if isinstance(payload.get("payload"), dict) else {},
+            "provider_payload": payload.get("provider_payload") if isinstance(payload.get("provider_payload"), dict) else {},
+            "paid_at": payload.get("paid_at"),
+        }
+        if not item["id"] or not item["user_id"] or not item["plan_id"] or not item["status"]:
+            raise ValueError("missing required payment order fields")
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT created_at FROM admin_payment_orders WHERE id = %s", (item["id"],))
+                row = cur.fetchone()
+                created_at = float(row[0] or now) if row else now
+                cur.execute(
+                    """
+                    REPLACE INTO admin_payment_orders
+                    (id, user_id, plan_id, subscription_id, channel_id, amount_cents, currency, status, provider_order_id, resume_token, payload_json, provider_payload_json, paid_at, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        item["id"],
+                        item["user_id"],
+                        item["plan_id"],
+                        item["subscription_id"] or None,
+                        item["channel_id"] or None,
+                        item["amount_cents"],
+                        item["currency"],
+                        item["status"],
+                        item["provider_order_id"] or None,
+                        item["resume_token"] or None,
+                        json.dumps(item["payload"], ensure_ascii=False, separators=(",", ":")),
+                        json.dumps(item["provider_payload"], ensure_ascii=False, separators=(",", ":")),
+                        item["paid_at"],
+                        created_at,
+                        now,
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        item["created_at"] = created_at
+        item["updated_at"] = now
+        return item
+
+    def record_payment_webhook_event(self, payload: dict) -> dict:
+        now = time.time()
+        item = {
+            "event_id": str(payload.get("event_id") or "").strip(),
+            "order_id": str(payload.get("order_id") or "").strip(),
+            "provider": str(payload.get("provider") or "").strip(),
+            "signature": str(payload.get("signature") or "").strip(),
+            "payload": payload.get("payload") if isinstance(payload.get("payload"), dict) else {},
+            "processed": payload.get("processed") is True,
+        }
+        if not item["event_id"] or not item["order_id"] or not item["provider"]:
+            raise ValueError("missing required payment webhook event fields")
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT created_at FROM admin_payment_webhook_events WHERE event_id = %s", (item["event_id"],))
+                row = cur.fetchone()
+                created_at = float(row[0] or now) if row else now
+                cur.execute(
+                    """
+                    REPLACE INTO admin_payment_webhook_events
+                    (event_id, order_id, provider, signature, payload_json, processed, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        item["event_id"],
+                        item["order_id"],
+                        item["provider"],
+                        item["signature"] or None,
+                        json.dumps(item["payload"], ensure_ascii=False, separators=(",", ":")),
+                        1 if item["processed"] else 0,
+                        created_at,
+                        now,
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        item["created_at"] = created_at
+        item["updated_at"] = now
+        return item
+
+    def get_payment_webhook_event(self, event_id: str) -> dict:
+        target = str(event_id or "").strip()
+        if not target:
+            return {}
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT event_id, order_id, provider, signature, payload_json, processed, created_at, updated_at
+                    FROM admin_payment_webhook_events
+                    WHERE event_id = %s
+                    LIMIT 1
+                    """,
+                    (target,),
+                )
+                row = cur.fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return {}
+        try:
+            payload_json = json.loads(row[4]) if row[4] else {}
+        except json.JSONDecodeError:
+            payload_json = {}
+        return {
+            "event_id": str(row[0] or ""),
+            "order_id": str(row[1] or ""),
+            "provider": str(row[2] or ""),
+            "signature": str(row[3] or ""),
+            "payload": payload_json if isinstance(payload_json, dict) else {},
+            "processed": bool(row[5]),
+            "created_at": float(row[6] or 0.0),
+            "updated_at": float(row[7] or 0.0),
+        }
+
+    def get_admin_user_subscription(self, subscription_id: str) -> dict:
+        target = str(subscription_id or "").strip()
+        if not target:
+            return {}
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, user_id, plan_id, group_id, status, started_at, expires_at,
+                           daily_used, weekly_used, monthly_used, created_at, updated_at
+                    FROM admin_user_subscriptions
+                    WHERE id = %s
+                    LIMIT 1
+                    """,
+                    (target,),
+                )
+                row = cur.fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return {}
+        return {
+            "id": str(row[0] or ""),
+            "user_id": str(row[1] or ""),
+            "plan_id": str(row[2] or ""),
+            "group_id": str(row[3] or ""),
+            "status": str(row[4] or ""),
+            "started_at": float(row[5] or 0.0),
+            "expires_at": float(row[6] or 0.0) if row[6] is not None else None,
+            "daily_used": int(row[7] or 0),
+            "weekly_used": int(row[8] or 0),
+            "monthly_used": int(row[9] or 0),
+            "created_at": float(row[10] or 0.0),
+            "updated_at": float(row[11] or 0.0),
+        }
+
+    def extend_admin_user_subscription(self, subscription_id: str, extra_days: int) -> dict:
+        current = self.get_admin_user_subscription(subscription_id)
+        if not current:
+            raise ValueError("subscription not found")
+        now = time.time()
+        current_expires = current.get("expires_at")
+        base = float(current_expires or now)
+        next_expires = base + max(0, int(extra_days)) * 86400
+        current["expires_at"] = next_expires
+        current["updated_at"] = now
+        return self.upsert_admin_user_subscription(current)
+
+    def revoke_admin_user_subscription(self, subscription_id: str) -> dict:
+        current = self.get_admin_user_subscription(subscription_id)
+        if not current:
+            raise ValueError("subscription not found")
+        current["status"] = "revoked"
+        current["updated_at"] = time.time()
+        return self.upsert_admin_user_subscription(current)
+
+    def reset_admin_user_subscription_quota(self, subscription_id: str, *, daily: bool, weekly: bool, monthly: bool) -> dict:
+        current = self.get_admin_user_subscription(subscription_id)
+        if not current:
+            raise ValueError("subscription not found")
+        if daily:
+            current["daily_used"] = 0
+        if weekly:
+            current["weekly_used"] = 0
+        if monthly:
+            current["monthly_used"] = 0
+        current["updated_at"] = time.time()
+        return self.upsert_admin_user_subscription(current)
 
     def save_app_config(self, payload: dict, config_key: str = "runtime_config") -> None:
         if not isinstance(payload, dict):

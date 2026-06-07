@@ -214,3 +214,156 @@ export type PoolTestResult = {
     }>;
   }>;
 };
+
+export type AdminOverviewPayload = {
+  ok?: boolean;
+  user_count?: number;
+  group_count?: number;
+  request_count?: number;
+  total_tokens?: number;
+  input_bytes?: number;
+  output_bytes?: number;
+  error_count?: number;
+  top_users?: AdminUser[];
+  top_groups?: AdminGroup[];
+};
+
+export type AdminUser = {
+  id: string;
+  name: string;
+  type: string;
+  preview?: string;
+  external_key?: string;
+  enabled?: boolean;
+  note?: string;
+  request_count?: number;
+  error_count?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  input_bytes?: number;
+  output_bytes?: number;
+  last_seen_at?: string;
+  group_id?: string;
+  group_name?: string;
+};
+
+export type AdminGroup = {
+  id: string;
+  name: string;
+  type: string;
+  description?: string;
+  enabled?: boolean;
+  sort_order?: number;
+  user_count?: number;
+  request_count?: number;
+  error_count?: number;
+  total_tokens?: number;
+  input_bytes?: number;
+  output_bytes?: number;
+};
+
+export type AdminUsageItem = {
+  request_id: string;
+  started_at?: string;
+  consumer_id?: string;
+  consumer_name?: string;
+  consumer_type?: string;
+  consumer_preview?: string;
+  model?: string;
+  resolved_model?: string;
+  pool_name?: string;
+  route_url?: string;
+  status_code?: number;
+  duration_ms?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  input_bytes?: number;
+  output_bytes?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  local_cache_status?: string;
+  upstream_cache_status?: string;
+  error?: string;
+};
+
+export type AdminListPayload<T> = {
+  ok?: boolean;
+  items?: T[];
+  total?: number;
+};
+
+export type AdminApiKey = {
+  id: string;
+  user_id: string;
+  user_name?: string;
+  name: string;
+  key_preview: string;
+  enabled?: boolean;
+  last_used_at?: number | null;
+  created_at?: number;
+  updated_at?: number;
+};
+
+export type AdminSubscriptionPlan = {
+  id: string;
+  name: string;
+  group_id?: string;
+  price_cents?: number;
+  validity_days?: number;
+  daily_limit?: number;
+  weekly_limit?: number;
+  monthly_limit?: number;
+  enabled?: boolean;
+  note?: string;
+};
+
+export type AdminUserSubscription = {
+  id: string;
+  user_id: string;
+  user_name?: string;
+  plan_id: string;
+  plan_name?: string;
+  group_id?: string;
+  status?: string;
+  started_at?: number;
+  expires_at?: number | null;
+  daily_used?: number;
+  weekly_used?: number;
+  monthly_used?: number;
+};
+
+export type AdminPaymentChannel = {
+  id: string;
+  name: string;
+  provider: string;
+  enabled?: boolean;
+  config?: Record<string, unknown>;
+};
+
+export type AdminPaymentChannelTemplatePayload = {
+  ok?: boolean;
+  provider?: string;
+  config?: Record<string, unknown>;
+};
+
+export type AdminPaymentOrder = {
+  id: string;
+  user_id: string;
+  user_name?: string;
+  plan_id: string;
+  plan_name?: string;
+  channel_id?: string;
+  channel_name?: string;
+  provider?: string;
+  subscription_id?: string;
+  amount_cents?: number;
+  currency?: string;
+  status?: string;
+  provider_order_id?: string;
+  resume_token?: string;
+  paid_at?: number | null;
+  payload?: Record<string, unknown>;
+  provider_payload?: Record<string, unknown>;
+};

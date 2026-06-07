@@ -1,19 +1,23 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Check, Clipboard, Copy, Edit3, Eye, KeyRound, Plus, RefreshCw, Terminal, Trash2 } from 'lucide-react';
+import { Check, Clipboard, Copy, Edit3, Eye, KeyRound, MoreHorizontal, Plus, RefreshCw, Terminal, Trash2 } from 'lucide-react';
 import { mutateProxyKey } from '../../api';
 import { Badge, Button, Empty, Field, Modal, Select, TextInput } from '../../components';
+import { ActionButton, EmptyState, FilterToolbar, Pager, SearchField, TablePageLayout, ToolbarButtonRow } from '../../components/admin';
 import { queryClient } from '../../state/queryClient';
 import type { ProxyKey, ProxyKeyPayload } from '../../types';
-import { formatNumber, maskEmpty } from '../../utils';
+import { formatNumber, maskEmpty, readStorageJSON, writeStorageJSON } from '../../utils';
 
 type KeyFilter = {
   search: string;
   status: 'all' | 'enabled' | 'disabled';
 };
 
+const STORAGE_KEY = 'proxy-keys-view-state';
+
 export function ProxyKeys({ payload, refresh }: { payload?: ProxyKeyPayload; refresh: () => void }) {
-  const [filter, setFilter] = useState<KeyFilter>({ search: '', status: 'all' });
+  const savedState = readStorageJSON<{ search: string; status: KeyFilter['status']; pageSize: number }>(STORAGE_KEY, { search: '', status: 'all', pageSize: 20 });
+  const [filter, setFilter] = useState<KeyFilter>({ search: savedState.search, status: savedState.status });
   const [createOpen, setCreateOpen] = useState(false);
   const [editKey, setEditKey] = useState<ProxyKey | null>(null);
   const [useKey, setUseKey] = useState<ProxyKey | null>(null);
@@ -21,6 +25,9 @@ export function ProxyKeys({ payload, refresh }: { payload?: ProxyKeyPayload; ref
   const [generated, setGenerated] = useState('');
   const [status, setStatus] = useState('');
   const [copied, setCopied] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
+  const [showTools, setShowTools] = useState(false);
 
   const keys = payload?.keys || [];
   const enabledCount = payload?.managed_enabled_count ?? keys.filter((key) => key.enabled !== false).length;
@@ -28,6 +35,11 @@ export function ProxyKeys({ payload, refresh }: { payload?: ProxyKeyPayload; ref
   const envCount = payload?.env_key_count ?? 0;
   const endpoint = `${window.location.origin.replace(/\/+$/, '')}/v1`;
   const filteredKeys = useMemo(() => filterKeys(keys, filter), [keys, filter]);
+  const totalPages = Math.max(1, Math.ceil(filteredKeys.length / pageSize));
+  const pagedKeys = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredKeys.slice(start, start + pageSize);
+  }, [filteredKeys, page, pageSize]);
 
   const mutation = useMutation({
     mutationFn: mutateProxyKey,
@@ -44,6 +56,10 @@ export function ProxyKeys({ payload, refresh }: { payload?: ProxyKeyPayload; ref
     },
     onError: (error) => setStatus(error instanceof Error ? error.message : 'API Key 操作失败'),
   });
+
+  useEffect(() => {
+    writeStorageJSON(STORAGE_KEY, { search: filter.search, status: filter.status, pageSize });
+  }, [filter.search, filter.status, pageSize]);
 
   async function copyText(text: string, message: string, id: string) {
     if (!text) return;
@@ -82,27 +98,50 @@ export function ProxyKeys({ payload, refresh }: { payload?: ProxyKeyPayload; ref
         <KeyStat label="环境变量" value={envCount} sub="PROXY_API_KEYS" tone="slate" />
       </div>
 
-      <div className="table-page-layout sub2-key-layout">
-        <div className="layout-section-fixed">
-          <div className="key-toolbar">
-            <div className="key-filters">
-              <TextInput value={filter.search} onChange={(event) => setFilter((current) => ({ ...current, search: event.target.value }))} placeholder="搜索名称、预览、ID" />
-              <Select value={filter.status} onChange={(event) => setFilter((current) => ({ ...current, status: event.target.value as KeyFilter['status'] }))}>
-                <option value="all">全部状态</option>
-                <option value="enabled">启用中</option>
-                <option value="disabled">已停用</option>
-              </Select>
-            </div>
-            <div className="key-toolbar-actions">
-              <Button onClick={refresh} disabled={mutation.isPending}><RefreshCw size={15} />刷新</Button>
-              <Button tone="primary" onClick={openCreate}><Plus size={15} />创建 API Key</Button>
-            </div>
-          </div>
-        </div>
-
-        <EndpointStrip endpoint={endpoint} copied={copied} onCopy={copyText} />
-
-        <div className="layout-section-scrollable">
+      <TablePageLayout
+        actions={<EndpointStrip endpoint={endpoint} copied={copied} onCopy={copyText} />}
+        filters={
+          <FilterToolbar
+            right={
+              <ToolbarButtonRow>
+                <ActionButton onClick={refresh} disabled={mutation.isPending}><RefreshCw size={15} />刷新</ActionButton>
+                <details className="sub2-menu" open={showTools} onToggle={(event) => setShowTools((event.target as HTMLDetailsElement).open)}>
+                  <summary>
+                    <MoreHorizontal size={14} />
+                    <span>更多工具</span>
+                  </summary>
+                  <div className="sub2-menu-panel">
+                    <button type="button" onClick={() => { setFilter({ search: '', status: 'all' }); setPage(1); setShowTools(false); }}>
+                      <span>清空筛选</span>
+                    </button>
+                    <button type="button" onClick={() => { setPageSize(50); setPage(1); setShowTools(false); }}>
+                      <span>切换 50 / 页</span>
+                    </button>
+                    <button type="button" onClick={() => { setUseKey(null); setGenerated(''); setShowTools(false); }}>
+                      <span>收起使用面板</span>
+                    </button>
+                  </div>
+                </details>
+                <Button tone="primary" onClick={openCreate}><Plus size={15} />创建 API Key</Button>
+              </ToolbarButtonRow>
+            }
+          >
+            <SearchField
+              value={filter.search}
+              placeholder="搜索名称、预览、ID"
+              onChange={(value) => { setFilter((current) => ({ ...current, search: value })); setPage(1); }}
+            />
+            <Select
+              value={filter.status}
+              onChange={(event) => { setFilter((current) => ({ ...current, status: event.target.value as KeyFilter['status'] })); setPage(1); }}
+            >
+              <option value="all">全部状态</option>
+              <option value="enabled">启用中</option>
+              <option value="disabled">已停用</option>
+            </Select>
+          </FilterToolbar>
+        }
+        table={
           <div className="table-wrap table-scroll table-keys">
             <table>
               <colgroup>
@@ -117,11 +156,11 @@ export function ProxyKeys({ payload, refresh }: { payload?: ProxyKeyPayload; ref
                 <tr><th>名称</th><th>API Key</th><th>状态</th><th>创建时间</th><th>更新时间</th><th>操作</th></tr>
               </thead>
               <tbody>
-                {filteredKeys.length ? filteredKeys.map((key) => (
+                {pagedKeys.length ? pagedKeys.map((key) => (
                   <tr key={key.id || key.preview}>
                     <td>
-                      <div className="key-table-name">
-                        <span><KeyRound size={15} />{key.name || 'NEWAPI'}</span>
+                      <div className="sub2-cell-stack">
+                        <strong>{key.name || 'NEWAPI'}</strong>
                         <small className="request-mono">{key.id || '-'}</small>
                       </div>
                     </td>
@@ -134,8 +173,8 @@ export function ProxyKeys({ payload, refresh }: { payload?: ProxyKeyPayload; ref
                       </div>
                     </td>
                     <td><span className={`badge ${key.enabled === false ? 'badge-warn' : 'badge-ok'}`}>{key.enabled === false ? '已停用' : '启用中'}</span></td>
-                    <td><span className="table-muted">{key.created_at || '-'}</span></td>
-                    <td><span className="table-muted">{key.updated_at || '-'}</span></td>
+                    <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{key.created_at || '-'}</strong><small>创建时间</small></div></td>
+                    <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{key.updated_at || '-'}</strong><small>最近变更</small></div></td>
                     <td>
                       <div className="key-table-actions">
                         <button type="button" onClick={() => setUseKey(key)} title="使用方式"><Terminal size={15} /><span>使用</span></button>
@@ -145,12 +184,23 @@ export function ProxyKeys({ payload, refresh }: { payload?: ProxyKeyPayload; ref
                       </div>
                     </td>
                   </tr>
-                )) : <tr><td colSpan={6}><Empty>暂无 API Key。点击右上角创建一个。</Empty></td></tr>}
+                )) : <tr><td colSpan={6}><EmptyState title="暂无 API Key" description="当前没有可展示的入口 Key，先创建一个。" action={<Button tone="primary" onClick={openCreate}>创建 API Key</Button>} /></td></tr>}
               </tbody>
             </table>
           </div>
-        </div>
-      </div>
+        }
+        pagination={
+          filteredKeys.length ? (
+            <Pager
+              page={Math.min(page, totalPages)}
+              pageSize={pageSize}
+              total={filteredKeys.length}
+              onPageChange={(next) => setPage(Math.min(Math.max(1, next), totalPages))}
+              onPageSizeChange={(next) => { setPageSize(next); setPage(1); }}
+            />
+          ) : null
+        }
+      />
 
       {generated ? (
         <div className="generated-key-box generated-key-floating">

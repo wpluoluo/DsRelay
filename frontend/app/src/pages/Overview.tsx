@@ -24,9 +24,45 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
   const modelStats = summarizeModels(recent);
   const trend = summarizeTokenTrend(recent);
   const stats = (runtime.model_routing?.cache_stats || {}) as Record<string, number>;
+  const runtimeAlerts = buildRuntimeAlerts({
+    activeCount: active.length,
+    state,
+    stats,
+    recentCount: recent.length,
+  });
 
   return (
     <section className="dashboard-page">
+      <div className="overview-command-strip">
+        <div className="overview-command-main">
+          <strong>代理运行面板</strong>
+          <span>围绕线路、缓存、模型和入口状态的实时概览</span>
+        </div>
+        <div className="overview-command-actions">
+          <Link to="/config" className="btn">线路与策略</Link>
+          <Link to="/keys" className="btn">API Key</Link>
+          <Link to="/requests" className="btn btn-primary">使用记录</Link>
+        </div>
+      </div>
+
+      <div className="overview-ops-strip">
+        <OpsStripItem label="配置来源" value={maskEmpty(config.config_source || runtime.config_source)} sub={maskEmpty(config.config_path || runtime.config_path)} />
+        <OpsStripItem label="数据库" value={maskEmpty(runtime.model_routing?.db_label || config.db_label)} sub="当前运行时存储来源" />
+        <OpsStripItem label="能力数" value={`${formatNumber(runtime.model_capability_count || config.model_capability_count || 0)} 条`} sub={`${formatNumber((runtime.capabilities || []).length)} 项运行能力`} />
+        <OpsStripItem label="线路规模" value={`${formatNumber(state.pools_enabled_count ?? config.pools_enabled_count ?? 0)} / ${formatNumber(state.pools_count ?? config.pools_count ?? 0)}`} sub={`${formatNumber(state.upstream_url_count ?? runtime.upstream_url_count ?? 0)} 条上游链路`} />
+      </div>
+
+      {runtimeAlerts.length ? (
+        <div className="overview-alert-list">
+          {runtimeAlerts.map((item) => (
+            <div key={item.title} className={`overview-alert ${item.tone}`}>
+              <strong>{item.title}</strong>
+              <span>{item.message}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       <div className="dashboard-stats-grid">
         <DashboardStat icon={<KeyRound size={19} />} tone="blue" label="API Key" value={formatNumber(keys?.managed_key_count ?? runtime.proxy_api_key_managed_count ?? 0)} sub={`${formatNumber(keys?.managed_enabled_count ?? runtime.proxy_api_key_managed_enabled_count ?? 0)} 个启用`} />
         <DashboardStat icon={<Activity size={19} />} tone="green" label="今日请求" value={formatNumber(todayRows.length)} sub={`总记录 ${formatNumber(recent.length)} · 活跃 ${formatNumber(active.length)}`} />
@@ -41,6 +77,7 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
       <div className="dashboard-charts-grid">
         <Panel className="dashboard-card">
           <PanelHead title={<><Network size={18} />渠道状态</>} action={<span className="subtle">{channelStats.length} 个渠道</span>} />
+          <div className="overview-panel-tip">优先关注近期有流量或出现错误的线路，缓存命中按当前观测窗口折算。</div>
           <div className="channel-grid">
             {channelStats.length ? channelStats.slice(0, 8).map((item) => <ChannelCard key={item.name} item={item} />) : <Empty>暂无渠道状态。</Empty>}
           </div>
@@ -48,6 +85,7 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
 
         <Panel className="dashboard-card">
           <PanelHead title={<><Activity size={18} />模型分布</>} action={<span className="subtle">最近请求</span>} />
+          <div className="overview-panel-tip">按逻辑模型聚合最近请求，帮助判断主流量落点和异常模型漂移。</div>
           <ModelDistribution rows={modelStats} />
         </Panel>
       </div>
@@ -55,6 +93,7 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
       <div className="dashboard-charts-grid dashboard-charts-grid-bottom">
         <Panel className="dashboard-card">
           <PanelHead title={<><Database size={18} />Token 趋势</>} action={<span className="subtle">最近 7 天</span>} />
+          <div className="overview-panel-tip">趋势图按日聚合总 Token，便于快速识别负载抬升和回落。</div>
           <TrendChart rows={trend} />
         </Panel>
 
@@ -71,6 +110,7 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
       <div className="dashboard-main-grid">
         <Panel className="dashboard-card">
           <PanelHead title={<><Activity size={18} />最近使用记录</>} action={<Link to="/requests" className="panel-link">全部记录 <ArrowRight size={14} /></Link>} />
+          <div className="overview-panel-tip">这里保留最近 6 条请求，用于快速判断模型、线路和状态是否一致。</div>
           <div className="recent-usage-list">
             {recent.slice(0, 6).map((row, index) => <RecentUsageItem key={`${row.request_id || index}-${index}`} row={row} />)}
             {!recent.length ? <Empty>暂无请求记录。</Empty> : null}
@@ -79,7 +119,52 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
 
         <Panel className="dashboard-card">
           <PanelHead title={<><Network size={18} />线路级缓存与粘滞</>} action={<span className="subtle">线路 {(state.route_observability || []).length}</span>} />
+          <div className="overview-panel-tip">这里只看当前前 8 条线路观测结果，完整详情进入线路页继续排查。</div>
           <RouteTable rows={(state.route_observability || []).slice(0, 8)} />
+        </Panel>
+      </div>
+
+      <div className="dashboard-charts-grid dashboard-charts-grid-bottom">
+        <Panel className="dashboard-card">
+          <PanelHead title={<><Database size={18} />运行总览</>} action={<span className="subtle">按当前采样窗口统计</span>} />
+          <div className="overview-summary-grid">
+            <div className="overview-summary-item">
+              <span>总请求</span>
+              <strong>{formatNumber(recent.length)}</strong>
+              <small>活跃 {formatNumber(active.length)}</small>
+            </div>
+            <div className="overview-summary-item">
+              <span>请求 Token</span>
+              <strong>{formatTokenCount(totalPrompt)}</strong>
+              <small>回复 {formatTokenCount(totalCompletion)}</small>
+            </div>
+            <div className="overview-summary-item">
+              <span>今日 Token</span>
+              <strong>{formatTokenCount(todayPrompt + todayCompletion)}</strong>
+              <small>请求 {formatTokenCount(todayPrompt)}</small>
+            </div>
+            <div className="overview-summary-item">
+              <span>启用线路</span>
+              <strong>{formatNumber(state.pools_enabled_count ?? config.pools_enabled_count ?? 0)}</strong>
+              <small>总计 {formatNumber(state.pools_count ?? config.pools_count ?? 0)}</small>
+            </div>
+          </div>
+        </Panel>
+
+        <Panel className="dashboard-card">
+          <PanelHead title={<><ShieldCheck size={18} />缓存概况</>} action={<span className="subtle">当前统计</span>} />
+          <div className="overview-summary-grid overview-summary-grid-compact">
+            <div className="overview-summary-item">
+              <span>命中</span>
+              <strong>{formatNumber(stats.prompt_cache_hits)}</strong>
+              <small>上游缓存命中次数</small>
+            </div>
+            <div className="overview-summary-item">
+              <span>写入</span>
+              <strong>{formatNumber(stats.prompt_cache_writes)}</strong>
+              <small>上游缓存写入次数</small>
+            </div>
+          </div>
         </Panel>
       </div>
 
@@ -94,6 +179,16 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
         <div className="cap-grid dashboard-cap-grid">{(runtime.capabilities || []).map((cap) => <span key={cap}>{cap}</span>)}</div>
       </Panel>
     </section>
+  );
+}
+
+function OpsStripItem({ label, value, sub }: { label: string; value: string; sub: string }) {
+  return (
+    <div className="overview-ops-item">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{sub}</small>
+    </div>
   );
 }
 
@@ -281,4 +376,30 @@ function summarizeTokenTrend(rows: RequestEntry[]) {
     if (target) target.tokens += Number(row.total_tokens || 0) || Number(row.prompt_tokens || 0) + Number(row.completion_tokens || 0);
   }
   return days;
+}
+
+function buildRuntimeAlerts({
+  activeCount,
+  state,
+  stats,
+  recentCount,
+}: {
+  activeCount: number;
+  state: DashboardState;
+  stats: Record<string, number>;
+  recentCount: number;
+}) {
+  const alerts: Array<{ title: string; message: string; tone: 'info' | 'warn' | 'bad' }> = [];
+  const enabledPools = Number(state.pools_enabled_count ?? state.config?.pools_enabled_count ?? 0);
+  const totalPools = Number(state.pools_count ?? state.config?.pools_count ?? 0);
+  if (activeCount > 0) {
+    alerts.push({ title: '存在活跃请求', message: `当前有 ${formatNumber(activeCount)} 条请求正在处理中，可结合使用记录页查看首包和上游耗时。`, tone: 'info' });
+  }
+  if (enabledPools === 0 && totalPools > 0) {
+    alerts.push({ title: '线路未启用', message: `当前共有 ${formatNumber(totalPools)} 条线路，但启用数为 0。`, tone: 'bad' });
+  }
+  if (recentCount > 0 && Number(stats.prompt_cache_hits || 0) === 0) {
+    alerts.push({ title: '缓存尚未命中', message: '当前采样窗口内未观察到缓存命中，建议继续核对模型路由和上游缓存条件。', tone: 'warn' });
+  }
+  return alerts;
 }

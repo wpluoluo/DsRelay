@@ -75,3 +75,19 @@ export function summarizeLocalCacheStatus(status: unknown, hit: unknown): string
   if (normalized === 'miss') return '未命中';
   return status ? String(status) : '未命中';
 }
+
+export function readStorageJSON<T>(key: string, fallback: T): T {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+export function writeStorageJSON(key: string, value: unknown) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+}

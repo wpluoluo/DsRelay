@@ -1,0 +1,508 @@
+import { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { Activity, Ban, Download, Layers3, MoreHorizontal, Pencil, Plus, RefreshCw, ShieldCheck, UserCheck, Users } from 'lucide-react';
+import { fetchAdminGroups, fetchAdminUsers, saveAdminUser } from '../api';
+import { Button, Field, Modal, Select, TextArea, TextInput } from '../components';
+import { ActionButton, ColumnMenu, EmptyState, FilterToolbar, Pager, SearchField, TablePageLayout, ToolbarButtonRow } from '../components/admin';
+import { queryClient } from '../state/queryClient';
+import type { AdminUser } from '../types';
+import { cn, formatByteCount, formatNumber, formatTokenCount, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
+
+type UserDraft = {
+  id?: string;
+  name: string;
+  external_key: string;
+  source_type: string;
+  enabled: boolean;
+  note: string;
+  group_ids: string[];
+};
+
+type UserColumnKey =
+  | 'name'
+  | 'external_key'
+  | 'group'
+  | 'requests'
+  | 'tokens'
+  | 'input'
+  | 'output'
+  | 'last_seen'
+  | 'status';
+
+type UserSourceFilter = '' | 'managed' | 'env' | 'anonymous';
+type UserSortKey = 'name_asc' | 'requests_desc' | 'tokens_desc' | 'last_seen_desc';
+
+const EMPTY_DRAFT: UserDraft = {
+  name: '',
+  external_key: '',
+  source_type: 'managed',
+  enabled: true,
+  note: '',
+  group_ids: [],
+};
+
+const PAGE_SIZE = 20;
+const DEFAULT_VISIBLE_COLUMNS: UserColumnKey[] = ['external_key', 'group', 'requests', 'tokens', 'last_seen', 'status'];
+const STORAGE_KEY = 'admin-users-view-state';
+const USER_SORT_OPTIONS: Array<{ value: UserSortKey; label: string }> = [
+  { value: 'name_asc', label: '名称排序' },
+  { value: 'requests_desc', label: '请求数从高到低' },
+  { value: 'tokens_desc', label: 'Token 从高到低' },
+  { value: 'last_seen_desc', label: '最近请求优先' },
+];
+const USER_SORT_SET = new Set<UserSortKey>(USER_SORT_OPTIONS.map((item) => item.value));
+
+export function AdminUsersPage() {
+  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, refetchInterval: 10000 });
+  const groupsQuery = useQuery({ queryKey: ['admin-groups'], queryFn: fetchAdminGroups, refetchInterval: 10000 });
+  const [draft, setDraft] = useState<UserDraft | null>(null);
+  const savedState = readStorageJSON(STORAGE_KEY, {
+    search: '',
+    statusFilter: '',
+    groupFilter: '',
+    sourceFilter: '',
+    sortBy: 'name_asc',
+    pageSize: PAGE_SIZE,
+    visibleColumns: DEFAULT_VISIBLE_COLUMNS,
+  });
+  const [search, setSearch] = useState(savedState.search);
+  const [statusFilter, setStatusFilter] = useState(savedState.statusFilter);
+  const [groupFilter, setGroupFilter] = useState(savedState.groupFilter);
+  const [sourceFilter, setSourceFilter] = useState<UserSourceFilter>(isUserSourceFilter(savedState.sourceFilter) ? savedState.sourceFilter : '');
+  const [sortBy, setSortBy] = useState<UserSortKey>(isUserSortKey(savedState.sortBy) ? savedState.sortBy : 'name_asc');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(savedState.pageSize || PAGE_SIZE);
+  const [visibleColumns, setVisibleColumns] = useState<Set<UserColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
+  const [showTools, setShowTools] = useState(false);
+
+  const saveMutation = useMutation({
+    mutationFn: saveAdminUser,
+    onSuccess: async () => {
+      setDraft(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin-groups'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin-overview'] }),
+      ]);
+    },
+  });
+
+  const items = usersQuery.data?.items || [];
+  const groups = groupsQuery.data?.items || [];
+
+  const filteredItems = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
+    const scopedItems = items.filter((item) => {
+      if (keyword) {
+        const haystack = [item.name, item.preview, item.id, item.external_key, item.group_name].map((value) => String(value || '').toLowerCase()).join(' ');
+        if (!haystack.includes(keyword)) return false;
+      }
+      if (statusFilter) {
+        const enabledValue = statusFilter === 'enabled';
+        if ((item.enabled !== false) !== enabledValue) return false;
+      }
+      if (groupFilter && item.group_id !== groupFilter) return false;
+      if (sourceFilter && (item.type || 'managed') !== sourceFilter) return false;
+      return true;
+    });
+    return [...scopedItems].sort((left, right) => compareUsers(left, right, sortBy));
+  }, [groupFilter, items, search, sortBy, sourceFilter, statusFilter]);
+
+  const pagedItems = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredItems.slice(start, start + pageSize);
+  }, [filteredItems, page, pageSize]);
+
+  const groupOptions = useMemo(() => groups.map((item) => ({ value: item.id, label: item.name })), [groups]);
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+  const enabledCount = items.filter((item) => item.enabled !== false).length;
+  const requestTotal = items.reduce((sum, item) => sum + Number(item.request_count || 0), 0);
+  const tokenTotal = items.reduce((sum, item) => sum + Number(item.total_tokens || 0), 0);
+  const managedCount = items.filter((item) => (item.type || 'managed') === 'managed').length;
+  const anonymousCount = items.filter((item) => (item.type || 'managed') === 'anonymous').length;
+  const latestSeenAt = filteredItems.reduce<number | null>((latest, item) => {
+    const current = parseMaybeDate(item.last_seen_at);
+    if (current === null) return latest;
+    if (latest === null || current > latest) return current;
+    return latest;
+  }, null);
+
+  useEffect(() => {
+    writeStorageJSON(STORAGE_KEY, {
+      search,
+      statusFilter,
+      groupFilter,
+      sourceFilter,
+      sortBy,
+      pageSize,
+      visibleColumns: Array.from(visibleColumns),
+    });
+  }, [groupFilter, pageSize, search, sortBy, sourceFilter, statusFilter, visibleColumns]);
+
+  function openCreate() {
+    setDraft({ ...EMPTY_DRAFT });
+  }
+
+  function openEdit(item: AdminUser) {
+    setDraft({
+      id: item.id,
+      name: item.name || '',
+      external_key: item.external_key || item.id || '',
+      source_type: item.type || 'managed',
+      enabled: item.enabled !== false,
+      note: item.note || '',
+      group_ids: item.group_id ? [item.group_id] : [],
+    });
+  }
+
+  function toggleEnabled(item: AdminUser) {
+    saveMutation.mutate({
+      id: item.id,
+      name: item.name || '',
+      external_key: item.external_key || item.id || '',
+      source_type: item.type || 'managed',
+      enabled: item.enabled === false,
+      note: item.note || '',
+      group_ids: item.group_id ? [item.group_id] : [],
+    });
+  }
+
+  function toggleColumn(key: UserColumnKey) {
+    setVisibleColumns((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function resetPage(nextPageSize?: number) {
+    setPage(1);
+    if (typeof nextPageSize === 'number') setPageSize(nextPageSize);
+  }
+
+  function exportCurrentView() {
+    const lines = [
+      ['用户', '来源键', '来源类型', '分组', '请求数', '总Token', '请求字节', '响应字节', '最后请求', '状态'].join('\t'),
+      ...filteredItems.map((item) => [
+        item.name || '-',
+        item.external_key || item.id || '-',
+        item.type || 'managed',
+        item.group_name || item.group_id || '未分组',
+        String(item.request_count || 0),
+        String(item.total_tokens || 0),
+        String(item.input_bytes || 0),
+        String(item.output_bytes || 0),
+        String(item.last_seen_at || '-'),
+        item.enabled === false ? '停用' : '启用',
+      ].join('\t')),
+    ].join('\n');
+    const blob = new Blob([lines], { type: 'text/tab-separated-values;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'admin-users.tsv';
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <section className="grid-page">
+      <div className="key-stat-grid">
+        <div className="key-stat">
+          <div className="key-stat-icon blue"><Users size={18} /></div>
+          <div><span>用户总数</span><strong>{formatNumber(items.length)}</strong><small>筛选前全量</small></div>
+        </div>
+        <div className="key-stat">
+          <div className="key-stat-icon green"><UserCheck size={18} /></div>
+          <div><span>启用用户</span><strong>{formatNumber(enabledCount)}</strong><small>停用 {formatNumber(items.length - enabledCount)}</small></div>
+        </div>
+        <div className="key-stat">
+          <div className="key-stat-icon amber"><Layers3 size={18} /></div>
+          <div><span>已绑定分组</span><strong>{formatNumber(new Set(items.map((item) => item.group_id).filter(Boolean)).size)}</strong><small>当前用户覆盖分组</small></div>
+        </div>
+        <div className="key-stat">
+          <div className="key-stat-icon slate"><Activity size={18} /></div>
+          <div><span>累计请求</span><strong>{formatNumber(requestTotal)}</strong><small>{formatTokenCount(tokenTotal)}</small></div>
+        </div>
+      </div>
+      <div className="key-stat-grid">
+        <div className="key-stat">
+          <div className="key-stat-icon blue"><Users size={18} /></div>
+          <div><span>托管来源</span><strong>{formatNumber(managedCount)}</strong><small>系统主流归因类型</small></div>
+        </div>
+        <div className="key-stat">
+          <div className="key-stat-icon amber"><Layers3 size={18} /></div>
+          <div><span>匿名来源</span><strong>{formatNumber(anonymousCount)}</strong><small>未绑定明确环境变量</small></div>
+        </div>
+        <div className="key-stat">
+          <div className="key-stat-icon green"><UserCheck size={18} /></div>
+          <div><span>当前排序</span><strong>{USER_SORT_OPTIONS.find((item) => item.value === sortBy)?.label || '名称排序'}</strong><small>与 SUB2 用户运营视角对齐</small></div>
+        </div>
+        <div className="key-stat">
+          <div className="key-stat-icon slate"><Activity size={18} /></div>
+          <div><span>最近请求</span><strong>{latestSeenAt ? formatDateTime(latestSeenAt) : '-'}</strong><small>筛选结果内最新时间</small></div>
+        </div>
+      </div>
+      <div className="admin-ops-strip">
+        <div className="admin-ops-item">
+          <span>当前筛选</span>
+          <strong>{statusFilter === 'enabled' ? '仅启用' : statusFilter === 'disabled' ? '仅停用' : '全部用户'}</strong>
+          <small>{search ? `关键词：${search}` : '未设置关键词'}{groupFilter ? ` · 分组：${groupFilter}` : ''}{sourceFilter ? ` · 来源：${sourceFilter}` : ''}</small>
+        </div>
+        <div className="admin-ops-item">
+          <span>来源类型</span>
+          <strong>{sourceFilter || '全部来源'}</strong>
+          <small>统一承接来源键、分组与用量统计</small>
+        </div>
+        <div className="admin-ops-item">
+          <span>列视图</span>
+          <strong>{formatNumber(visibleColumns.size)} 列</strong>
+          <small>按排障或运营需要切换字段</small>
+        </div>
+        <div className="admin-ops-item">
+          <span>列表容量</span>
+          <strong>{formatNumber(pageSize)} 条 / 页</strong>
+          <small>匹配结果 {formatNumber(filteredItems.length)} 条</small>
+        </div>
+      </div>
+      <TablePageLayout
+        filters={
+          <FilterToolbar
+            right={
+              <ToolbarButtonRow>
+                <ActionButton onClick={() => usersQuery.refetch()}><RefreshCw size={15} />刷新</ActionButton>
+                <ColumnMenu
+                  label="列设置"
+                  items={[
+                    { key: 'external_key', label: '来源键', checked: visibleColumns.has('external_key'), onToggle: () => toggleColumn('external_key') },
+                    { key: 'group', label: '分组', checked: visibleColumns.has('group'), onToggle: () => toggleColumn('group') },
+                    { key: 'requests', label: '请求数', checked: visibleColumns.has('requests'), onToggle: () => toggleColumn('requests') },
+                    { key: 'tokens', label: '总 Token', checked: visibleColumns.has('tokens'), onToggle: () => toggleColumn('tokens') },
+                    { key: 'input', label: '请求字节', checked: visibleColumns.has('input'), onToggle: () => toggleColumn('input') },
+                    { key: 'output', label: '响应字节', checked: visibleColumns.has('output'), onToggle: () => toggleColumn('output') },
+                    { key: 'last_seen', label: '最后请求', checked: visibleColumns.has('last_seen'), onToggle: () => toggleColumn('last_seen') },
+                    { key: 'status', label: '状态', checked: visibleColumns.has('status'), onToggle: () => toggleColumn('status') },
+                  ]}
+                />
+                <details className="sub2-menu" open={showTools} onToggle={(event) => setShowTools((event.target as HTMLDetailsElement).open)}>
+                  <summary>
+                    <MoreHorizontal size={14} />
+                    <span>更多工具</span>
+                  </summary>
+                  <div className="sub2-menu-panel">
+                    <button type="button" onClick={() => { setSearch(''); setStatusFilter(''); setGroupFilter(''); setSourceFilter(''); setSortBy('name_asc'); resetPage(); setShowTools(false); }}>
+                      <span>清空筛选</span>
+                    </button>
+                    <button type="button" onClick={() => { setSortBy('tokens_desc'); resetPage(); setShowTools(false); }}>
+                      <span>切到高耗用户排行</span>
+                    </button>
+                    <button type="button" onClick={() => { resetPage(50); setShowTools(false); }}>
+                      <span>切换 50 / 页</span>
+                    </button>
+                    <button type="button" onClick={() => { exportCurrentView(); setShowTools(false); }}>
+                      <span>导出当前视图</span>
+                      <Download size={14} />
+                    </button>
+                  </div>
+                </details>
+                <Button tone="primary" onClick={openCreate}><Plus size={15} />新增用户</Button>
+              </ToolbarButtonRow>
+            }
+          >
+            <SearchField value={search} placeholder="搜索用户 / 来源键 / 分组" onChange={(value) => { setSearch(value); resetPage(); }} />
+            <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); resetPage(); }}>
+              <option value="">全部状态</option>
+              <option value="enabled">启用</option>
+              <option value="disabled">停用</option>
+            </Select>
+            <Select value={groupFilter} onChange={(event) => { setGroupFilter(event.target.value); resetPage(); }}>
+              <option value="">全部分组</option>
+              {groupOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+            </Select>
+            <Select value={sourceFilter} onChange={(event) => { setSourceFilter(event.target.value as UserSourceFilter); resetPage(); }}>
+              <option value="">全部来源</option>
+              <option value="managed">托管 Key</option>
+              <option value="env">环境 Key</option>
+              <option value="anonymous">匿名</option>
+            </Select>
+            <Select value={sortBy} onChange={(event) => { setSortBy(event.target.value as UserSortKey); resetPage(); }}>
+              {USER_SORT_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+            </Select>
+          </FilterToolbar>
+        }
+        table={
+          <div className="table-wrap table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>用户</th>
+                  {visibleColumns.has('external_key') ? <th>来源键</th> : null}
+                  {visibleColumns.has('group') ? <th>分组</th> : null}
+                  {visibleColumns.has('requests') ? <th>请求数</th> : null}
+                  {visibleColumns.has('tokens') ? <th>总 Token</th> : null}
+                  {visibleColumns.has('input') ? <th>请求字节</th> : null}
+                  {visibleColumns.has('output') ? <th>响应字节</th> : null}
+                  {visibleColumns.has('last_seen') ? <th>最后请求</th> : null}
+                  {visibleColumns.has('status') ? <th>状态</th> : null}
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pagedItems.length ? pagedItems.map((item) => (
+                  <tr key={item.id}>
+                    <td>
+                      <div className="sub2-cell-stack">
+                        <strong>{item.name}</strong>
+                        <small>{item.preview || item.id}</small>
+                      </div>
+                    </td>
+                    {visibleColumns.has('external_key') ? (
+                      <td>
+                        <div className="sub2-cell-stack sub2-cell-stack-tight">
+                          <strong>{maskEmpty(item.external_key)}</strong>
+                          <small>{item.type || 'managed'}</small>
+                        </div>
+                      </td>
+                    ) : null}
+                    {visibleColumns.has('group') ? (
+                      <td>
+                        <div className="sub2-cell-stack sub2-cell-stack-tight">
+                          <strong>{maskEmpty(item.group_name)}</strong>
+                          <small>{item.group_id || '未分组'}</small>
+                        </div>
+                      </td>
+                    ) : null}
+                    {visibleColumns.has('requests') ? <td><strong className="sub2-number-cell">{formatNumber(item.request_count || 0)}</strong></td> : null}
+                    {visibleColumns.has('tokens') ? <td><strong className="sub2-number-cell">{formatTokenCount(item.total_tokens || 0)}</strong></td> : null}
+                    {visibleColumns.has('input') ? <td><strong className="sub2-number-cell">{formatByteCount(item.input_bytes || 0)}</strong></td> : null}
+                    {visibleColumns.has('output') ? <td><strong className="sub2-number-cell">{formatByteCount(item.output_bytes || 0)}</strong></td> : null}
+                    {visibleColumns.has('last_seen') ? (
+                      <td>
+                        <div className="sub2-cell-stack sub2-cell-stack-tight">
+                          <strong>{maskEmpty(item.last_seen_at)}</strong>
+                          <small>最近请求时间</small>
+                        </div>
+                      </td>
+                    ) : null}
+                    {visibleColumns.has('status') ? <td><span className={cn('badge', item.enabled === false ? 'badge-warn' : 'badge-ok')}>{item.enabled === false ? '停用' : '启用'}</span></td> : null}
+                    <td>
+                      <div className="sub2-action-stack">
+                        <button type="button" className="sub2-icon-action" onClick={() => openEdit(item)}>
+                          <Pencil size={14} />
+                          <span>编辑</span>
+                        </button>
+                        <button type="button" className={cn('sub2-icon-action', item.enabled === false ? '' : 'warn')} onClick={() => toggleEnabled(item)}>
+                          {item.enabled === false ? <ShieldCheck size={14} /> : <Ban size={14} />}
+                          <span>{item.enabled === false ? '启用' : '停用'}</span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )) : (
+                  <tr>
+                    <td colSpan={visibleColumns.size + 2}>
+                      <EmptyState title="暂无用户归因数据" description="当前没有可展示的业务用户记录。" action={<Button tone="primary" onClick={openCreate}>新增用户</Button>} />
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        }
+        pagination={
+          filteredItems.length ? (
+            <Pager
+              page={Math.min(page, totalPages)}
+              pageSize={pageSize}
+              total={filteredItems.length}
+              onPageChange={(next) => setPage(Math.min(Math.max(1, next), totalPages))}
+              onPageSizeChange={(next) => resetPage(next)}
+            />
+          ) : null
+        }
+      />
+
+      {draft ? (
+        <Modal
+          title={draft.id ? '编辑用户' : '新增用户'}
+          onClose={() => setDraft(null)}
+          footer={
+            <>
+              <Button onClick={() => setDraft(null)}>取消</Button>
+              <Button
+                tone="primary"
+                onClick={() => saveMutation.mutate(draft)}
+                disabled={saveMutation.isPending || !draft.name.trim() || !draft.external_key.trim()}
+              >
+                保存
+              </Button>
+            </>
+          }
+        >
+          <div className="form-grid modal-grid">
+            <Field label="用户名称"><TextInput value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
+            <Field label="来源键"><TextInput value={draft.external_key} onChange={(e) => setDraft({ ...draft, external_key: e.target.value })} /></Field>
+            <Field label="来源类型">
+              <Select value={draft.source_type} onChange={(e) => setDraft({ ...draft, source_type: e.target.value })}>
+                <option value="managed">托管 Key</option>
+                <option value="env">环境 Key</option>
+                <option value="anonymous">匿名</option>
+              </Select>
+            </Field>
+            <Field label="分组">
+              <Select value={draft.group_ids[0] || ''} onChange={(e) => setDraft({ ...draft, group_ids: e.target.value ? [e.target.value] : [] })}>
+                <option value="">未分配</option>
+                {groupOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+              </Select>
+            </Field>
+            <Field label="启用状态">
+              <Select value={draft.enabled ? '1' : '0'} onChange={(e) => setDraft({ ...draft, enabled: e.target.value === '1' })}>
+                <option value="1">启用</option>
+                <option value="0">停用</option>
+              </Select>
+            </Field>
+            <Field label="备注" full><TextArea rows={4} value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></Field>
+          </div>
+        </Modal>
+      ) : null}
+    </section>
+  );
+}
+
+function compareUsers(left: AdminUser, right: AdminUser, sortBy: UserSortKey) {
+  if (sortBy === 'requests_desc') {
+    return compareNumbers(Number(right.request_count || 0), Number(left.request_count || 0));
+  }
+  if (sortBy === 'tokens_desc') {
+    return compareNumbers(Number(right.total_tokens || 0), Number(left.total_tokens || 0));
+  }
+  if (sortBy === 'last_seen_desc') {
+    return compareNumbers(parseMaybeDate(right.last_seen_at), parseMaybeDate(left.last_seen_at));
+  }
+  return String(left.name || '').localeCompare(String(right.name || ''), 'zh-CN');
+}
+
+function compareNumbers(left: number | null, right: number | null) {
+  const normalizedLeft = left ?? -1;
+  const normalizedRight = right ?? -1;
+  return normalizedLeft - normalizedRight;
+}
+
+function parseMaybeDate(value?: string) {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function formatDateTime(timestamp: number) {
+  return new Date(timestamp).toLocaleString('zh-CN', { hour12: false });
+}
+
+function isUserSourceFilter(value: unknown): value is UserSourceFilter {
+  return value === '' || value === 'managed' || value === 'env' || value === 'anonymous';
+}
+
+function isUserSortKey(value: unknown): value is UserSortKey {
+  return typeof value === 'string' && USER_SORT_SET.has(value as UserSortKey);
+}
