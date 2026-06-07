@@ -9,9 +9,9 @@ import { useUserCenter } from '../state/userCenterContext';
 import { formatNumber, maskEmpty } from '../utils';
 
 export function UserApiKeysPage() {
-  const { selectedUserId, selectedUser, users } = useUserCenter();
+  const { selectedAccountId, selectedAccount, accounts } = useUserCenter();
   const keysQuery = useQuery({ queryKey: ['admin-api-keys'], queryFn: fetchAdminApiKeys, refetchInterval: 10000 });
-  const [draft, setDraft] = useState<{ user_id: string; name: string } | null>(null);
+  const [draft, setDraft] = useState<{ account_id: string; name: string } | null>(null);
   const [generatedKey, setGeneratedKey] = useState('');
   const [copiedKeyId, setCopiedKeyId] = useState('');
   const [copiedGuideValue, setCopiedGuideValue] = useState('');
@@ -44,13 +44,13 @@ export function UserApiKeysPage() {
     const items = keysQuery.data?.items || [];
     const keyword = search.trim().toLowerCase();
     return items.filter((item) => {
-      if (selectedUserId && item.user_id !== selectedUserId) return false;
+      if (selectedAccountId && item.account_id !== selectedAccountId) return false;
       if (statusFilter && String(item.enabled !== false ? 'enabled' : 'disabled') !== statusFilter) return false;
       if (!keyword) return true;
       const hay = `${item.name || ''} ${item.key_preview || ''} ${item.active_plan_name || ''}`.toLowerCase();
       return hay.includes(keyword);
     });
-  }, [keysQuery.data?.items, search, selectedUserId, statusFilter]);
+  }, [keysQuery.data?.items, search, selectedAccountId, statusFilter]);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   const pagedRows = rows.slice((page - 1) * pageSize, page * pageSize);
@@ -75,10 +75,10 @@ export function UserApiKeysPage() {
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>我的 API Key</strong>
-          <span>管理当前账户自己的业务 Key，重点操作保持在列表和行内动作上。</span>
+          <span>管理当前业务账户的调用 Key。这里的归属对象是业务账户，不是后台登录用户。</span>
         </div>
         <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>当前账户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '请选择用户'}</small></div>
+          <div className="sub2-inline-summary-item"><span>当前账户</span><strong>{selectedAccount?.name || '未选择账户'}</strong><small>{selectedAccount?.group_name || selectedAccount?.source_type || '请选择账户'}</small></div>
           <div className="sub2-inline-summary-item"><span>Key 数量</span><strong>{formatNumber(rows.length)}</strong><small>启用 {formatNumber(activeRows.length)}</small></div>
           <div className="sub2-inline-summary-item"><span>订阅覆盖</span><strong>{formatNumber(coveredRows.length)}</strong><small>未覆盖 {formatNumber(rows.length - coveredRows.length)}</small></div>
           <div className="sub2-inline-summary-item"><span>最近生成</span><strong>{generatedKey ? '已生成' : '无'}</strong><small>{generatedKey ? '原始 Key 待复制' : '暂无新 Key'}</small></div>
@@ -105,7 +105,7 @@ export function UserApiKeysPage() {
                     </button>
                   </div>
                 </details>
-                <Button tone="primary" onClick={() => setDraft({ user_id: selectedUserId || users[0]?.id || '', name: '' })}><Plus size={15} />生成 Key</Button>
+                <Button tone="primary" onClick={() => setDraft({ account_id: selectedAccountId || accounts[0]?.id || '', name: '' })}><Plus size={15} />生成 Key</Button>
               </ToolbarButtonRow>
             }
           >
@@ -123,7 +123,7 @@ export function UserApiKeysPage() {
               <thead>
                 <tr>
                   <th>名称</th>
-                  <th>用户</th>
+                  <th>账户</th>
                   <th>订阅</th>
                   <th>Key 预览</th>
                   <th>状态</th>
@@ -134,7 +134,7 @@ export function UserApiKeysPage() {
                 {pagedRows.length ? pagedRows.map((item) => (
                   <tr key={item.id}>
                     <td><div className="sub2-cell-stack"><strong>{item.name}</strong><small>{item.id}</small></div></td>
-                    <td><div className="sub2-cell-stack"><strong>{maskEmpty(item.user_name || item.user_id)}</strong><small>{item.user_id}</small></div></td>
+                    <td><div className="sub2-cell-stack"><strong>{maskEmpty(item.account_name || item.account_id)}</strong><small>{item.account_id}</small></div></td>
                     <td><div className="sub2-cell-stack"><strong>{item.subscription_active ? (item.active_plan_name || '订阅有效') : '无可用订阅'}</strong><small>{item.active_group_name || item.active_group_id || item.active_subscription_status || '-'}</small></div></td>
                     <td>
                       <div className="key-value-cell">
@@ -156,7 +156,7 @@ export function UserApiKeysPage() {
                 )) : (
                   <tr>
                     <td colSpan={6}>
-                      <EmptyState title="暂无 API Key" description="当前用户还没有业务 API Key。" />
+                      <EmptyState title="暂无 API Key" description="当前账户还没有可用的业务 API Key。" />
                     </td>
                   </tr>
                 )}
@@ -195,14 +195,14 @@ export function UserApiKeysPage() {
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
-                <span>绑定用户</span>
-                <strong>{selectedUser?.name || '当前用户'}</strong>
-                <small>{selectedUser?.group_name || selectedUser?.source_type || '业务用户'}</small>
+                <span>绑定账户</span>
+                <strong>{selectedAccount?.name || '当前账户'}</strong>
+                <small>{selectedAccount?.group_name || selectedAccount?.source_type || '业务账户'}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>订阅校验</span>
                 <strong>已接入</strong>
-                <small>请求会校验当前用户订阅</small>
+                <small>请求会校验当前账户订阅</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>建议动作</span>
@@ -223,13 +223,13 @@ export function UserApiKeysPage() {
 
       {draft ? (
         <Modal
-          title="生成用户 API Key"
+          title="生成账户 API Key"
           size="md"
           onClose={() => setDraft(null)}
           footer={
             <ModalActions>
               <Button onClick={() => setDraft(null)}>取消</Button>
-              <Button tone="primary" disabled={createMutation.isPending || !draft.user_id || !draft.name.trim()} onClick={() => createMutation.mutate(draft)}>
+              <Button tone="primary" disabled={createMutation.isPending || !draft.account_id || !draft.name.trim()} onClick={() => createMutation.mutate(draft)}>
                 生成
               </Button>
             </ModalActions>
@@ -237,14 +237,14 @@ export function UserApiKeysPage() {
         >
             <div className="admin-dialog">
               <div className="admin-dialog-intro">
-                <strong>生成当前用户业务 Key</strong>
+                <strong>生成当前业务账户 Key</strong>
                 <span>生成后立即展示原始值，后续只保留预览。</span>
               </div>
             <div className="admin-dialog-grid modal-grid">
-              <Field label="归属用户">
-                <Select value={draft.user_id} onChange={(e) => setDraft({ ...draft, user_id: e.target.value })}>
-                  <option value="">请选择用户</option>
-                  {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+              <Field label="归属账户">
+                <Select value={draft.account_id} onChange={(e) => setDraft({ ...draft, account_id: e.target.value })}>
+                  <option value="">请选择账户</option>
+                  {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
                 </Select>
               </Field>
               <Field label="Key 名称">
@@ -264,9 +264,9 @@ export function UserApiKeysPage() {
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
-                <span>当前用户</span>
-                <strong>{selectedUser?.name || '未选择用户'}</strong>
-                <small>{selectedUser?.group_name || selectedUser?.source_type || '业务用户'}</small>
+                <span>当前账户</span>
+                <strong>{selectedAccount?.name || '未选择账户'}</strong>
+                <small>{selectedAccount?.group_name || selectedAccount?.source_type || '业务账户'}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>Base URL</span>
@@ -284,7 +284,7 @@ export function UserApiKeysPage() {
               <code>{generatedKey || rows[0]?.key_preview || '先生成或选择一个 Key'}</code>
             </div>
             <div className="user-guide-note">
-              推荐环境变量：`OPENAI_API_KEY` 使用业务 Key，`OPENAI_BASE_URL` 指向 `{window.location.origin}/v1`。
+              推荐环境变量：`OPENAI_API_KEY` 使用当前业务账户 Key，`OPENAI_BASE_URL` 指向 `{window.location.origin}/v1`。
             </div>
             <CodeBlock
               title="macOS / Linux"
@@ -324,13 +324,13 @@ export function UserApiKeysPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{inspectKey.name}</strong>
-              <span>这里可以直接核对当前用户业务 Key 的订阅覆盖和启用状态。</span>
+              <span>这里可以直接核对当前账户业务 Key 的订阅覆盖和启用状态。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
-                <span>用户</span>
-                <strong>{maskEmpty(inspectKey.user_name || inspectKey.user_id)}</strong>
-                <small>{inspectKey.user_id}</small>
+                <span>账户</span>
+                <strong>{maskEmpty(inspectKey.account_name || inspectKey.account_id)}</strong>
+                <small>{inspectKey.account_id}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>订阅</span>

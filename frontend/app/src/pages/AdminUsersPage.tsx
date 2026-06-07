@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Ban, Coins, Download, Pencil, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
-import { fetchAdminGroups, fetchAdminUsers, saveAdminUser, setAdminUserBalance, setAdminUserConcurrency } from '../api';
+import { fetchAdminAccounts, fetchAdminGroups, saveAdminAccount, setAdminAccountBalance, setAdminAccountConcurrency } from '../api';
 import { Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
 import { ActionButton, ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { queryClient } from '../state/queryClient';
-import type { AdminUser } from '../types';
+import type { AdminAccount } from '../types';
 import { cn, formatByteCount, formatCost, formatNumber, formatTokenCount, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
 
 type UserDraft = {
@@ -66,7 +66,7 @@ const USER_SORT_OPTIONS: Array<{ value: UserSortKey; label: string }> = [
 const USER_SORT_SET = new Set<UserSortKey>(USER_SORT_OPTIONS.map((item) => item.value));
 
 export function AdminUsersPage() {
-  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, refetchInterval: 10000 });
+  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
   const groupsQuery = useQuery({ queryKey: ['admin-groups'], queryFn: fetchAdminGroups, refetchInterval: 10000 });
   const [draft, setDraft] = useState<UserDraft | null>(null);
   const [quotaDraft, setQuotaDraft] = useState<{ id: string; name: string; balance_cents: number; concurrency_limit: number } | null>(null);
@@ -89,7 +89,7 @@ export function AdminUsersPage() {
   const [visibleColumns, setVisibleColumns] = useState<Set<UserColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
 
   const saveMutation = useMutation({
-    mutationFn: saveAdminUser,
+    mutationFn: saveAdminAccount,
     onSuccess: async () => {
       setDraft(null);
       await Promise.all([
@@ -102,8 +102,8 @@ export function AdminUsersPage() {
   const quotaMutation = useMutation({
     mutationFn: async (payload: { id: string; balance_cents: number; concurrency_limit: number }) => {
       await Promise.all([
-        setAdminUserBalance(payload.id, payload.balance_cents),
-        setAdminUserConcurrency(payload.id, payload.concurrency_limit),
+        setAdminAccountBalance(payload.id, payload.balance_cents),
+        setAdminAccountConcurrency(payload.id, payload.concurrency_limit),
       ]);
     },
     onSuccess: async () => {
@@ -169,7 +169,7 @@ export function AdminUsersPage() {
     setDraft({ ...EMPTY_DRAFT });
   }
 
-  function openEdit(item: AdminUser) {
+  function openEdit(item: AdminAccount) {
     setDraft({
       id: item.id,
       name: item.name || '',
@@ -186,7 +186,7 @@ export function AdminUsersPage() {
     });
   }
 
-  function openQuota(item: AdminUser) {
+  function openQuota(item: AdminAccount) {
     setQuotaDraft({
       id: item.id,
       name: item.name || item.id,
@@ -195,7 +195,7 @@ export function AdminUsersPage() {
     });
   }
 
-  function toggleEnabled(item: AdminUser) {
+  function toggleEnabled(item: AdminAccount) {
     saveMutation.mutate({
       id: item.id,
       name: item.name || '',
@@ -257,11 +257,11 @@ export function AdminUsersPage() {
     <section className="grid-page">
       <div className="sub2-page-head">
         <div className="sub2-page-title">
-          <strong>用户管理</strong>
-          <span>按用户管理账户、订阅、分组和用量，保持和 SUB2 一致的运营表格视图。</span>
+          <strong>账户管理</strong>
+          <span>按业务账户管理订阅、分组和用量，保持和 SUB2 一致的运营表格视图。</span>
         </div>
         <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>用户总数</span><strong>{formatNumber(items.length)}</strong><small>当前业务账户</small></div>
+          <div className="sub2-inline-summary-item"><span>账户总数</span><strong>{formatNumber(items.length)}</strong><small>当前业务账户</small></div>
           <div className="sub2-inline-summary-item"><span>启用状态</span><strong>{formatNumber(enabledCount)}</strong><small>停用 {formatNumber(disabledCount)}</small></div>
           <div className="sub2-inline-summary-item"><span>有效订阅</span><strong>{formatNumber(activeSubscriptionCount)}</strong><small>未覆盖 {formatNumber(uncoveredCount)}</small></div>
           <div className="sub2-inline-summary-item"><span>累计请求</span><strong>{formatNumber(requestTotal)}</strong><small>{formatTokenCount(tokenTotal)}</small></div>
@@ -323,11 +323,11 @@ export function AdminUsersPage() {
                       <Download size={14} />
                     </button>
                 </ToolsMenu>
-                <Button tone="primary" onClick={openCreate}><Plus size={15} />新增用户</Button>
+                <Button tone="primary" onClick={openCreate}><Plus size={15} />新增账户</Button>
               </ToolbarButtonRow>
             }
           >
-            <SearchField value={search} placeholder="搜索用户 / 来源键 / 分组" onChange={(value) => { setSearch(value); resetPage(); }} />
+            <SearchField value={search} placeholder="搜索账户 / 来源键 / 分组" onChange={(value) => { setSearch(value); resetPage(); }} />
             <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); resetPage(); }}>
               <option value="">全部状态</option>
               <option value="enabled">启用</option>
@@ -344,7 +344,7 @@ export function AdminUsersPage() {
             <table>
               <thead>
                 <tr>
-                  <th>用户</th>
+                  <th>账户</th>
                   {visibleColumns.has('external_key') ? <th>来源键</th> : null}
                   {visibleColumns.has('role') ? <th>角色 / 状态</th> : null}
                   {visibleColumns.has('subscription') ? <th>订阅</th> : null}
@@ -436,9 +436,9 @@ export function AdminUsersPage() {
                 )) : (
                   <ListEmptyRow
                     colSpan={visibleColumns.size + 2}
-                    title="暂无用户归因数据"
-                    description="当前没有可展示的业务用户记录。"
-                    action={<Button tone="primary" onClick={openCreate}>新增用户</Button>}
+                    title="暂无账户归因数据"
+                    description="当前没有可展示的业务账户记录。"
+                    action={<Button tone="primary" onClick={openCreate}>新增账户</Button>}
                   />
                 )}
               </tbody>
@@ -460,7 +460,7 @@ export function AdminUsersPage() {
 
       {draft ? (
         <Modal
-          title={draft.id ? '编辑用户' : '新增用户'}
+          title={draft.id ? '编辑账户' : '新增账户'}
           onClose={() => setDraft(null)}
           footer={
             <ModalActions>
@@ -477,12 +477,12 @@ export function AdminUsersPage() {
         >
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
-              <strong>{draft.id ? '编辑用户' : '新增用户'}</strong>
-              <span>这里维护业务用户归属、来源键、订阅覆盖和额度边界，属于管理员日常操作主流程。</span>
+              <strong>{draft.id ? '编辑账户' : '新增账户'}</strong>
+              <span>这里维护业务账户归属、来源键、订阅覆盖和额度边界，属于管理员日常操作主流程。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
-                <span>用户总数</span>
+                <span>账户总数</span>
                 <strong>{formatNumber(items.length)}</strong>
                 <small>当前业务账户</small>
               </div>
@@ -493,7 +493,7 @@ export function AdminUsersPage() {
               </div>
               <div className="admin-dialog-summary-card">
                 <span>当前草稿</span>
-                <strong>{draft.name?.trim() || '待填写用户名'}</strong>
+                <strong>{draft.name?.trim() || '待填写账户名'}</strong>
                 <small>{draft.external_key?.trim() || '待填写来源键'}</small>
               </div>
             </div>
@@ -503,7 +503,7 @@ export function AdminUsersPage() {
                 <span>用户名、来源、角色和状态</span>
               </div>
               <div className="admin-dialog-grid modal-grid">
-                <Field label="用户名称"><TextInput value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
+                <Field label="账户名称"><TextInput value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
                 <Field label="来源键"><TextInput value={draft.external_key} onChange={(e) => setDraft({ ...draft, external_key: e.target.value })} /></Field>
                 <Field label="来源类型">
                   <Select value={draft.source_type} onChange={(e) => setDraft({ ...draft, source_type: e.target.value })}>
@@ -595,8 +595,8 @@ export function AdminUsersPage() {
               </div>
               <div className="admin-dialog-summary-card">
                 <span>作用范围</span>
-                <strong>用户级</strong>
-                <small>只改当前用户</small>
+                <strong>账户级</strong>
+                <small>只改当前账户</small>
               </div>
             </div>
             <div className="admin-dialog-section">
@@ -628,7 +628,7 @@ export function AdminUsersPage() {
   );
 }
 
-function compareUsers(left: AdminUser, right: AdminUser, sortBy: UserSortKey) {
+function compareUsers(left: AdminAccount, right: AdminAccount, sortBy: UserSortKey) {
   if (sortBy === 'requests_desc') {
     return compareNumbers(Number(right.request_count || 0), Number(left.request_count || 0));
   }

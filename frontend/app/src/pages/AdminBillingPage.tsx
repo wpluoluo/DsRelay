@@ -4,7 +4,7 @@ import { Download, Eye, MoreHorizontal, RefreshCw, Settings2 } from 'lucide-reac
 import { fetchAdminBilling, fetchAdminOverview, fetchAdminUsage } from '../api';
 import { Button, Field, Modal, ModalActions, TextArea, TextInput } from '../components';
 import { ActionButton, ColumnMenu, EmptyState, FilterToolbar, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow } from '../components/admin';
-import type { AdminBillingGroupItem, AdminBillingOrderItem, AdminBillingPlanItem, AdminBillingSubscriptionItem, AdminBillingUserItem, AdminUsageItem } from '../types';
+import type { AdminBillingAccountItem, AdminBillingGroupItem, AdminBillingOrderItem, AdminBillingPlanItem, AdminBillingSubscriptionItem, AdminUsageItem } from '../types';
 import { formatByteCount, formatCost, formatNumber, formatTokenCount, formatUsdCost, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
 
 const STORAGE_KEY = 'admin-billing-view-state';
@@ -12,7 +12,7 @@ const STORAGE_KEY = 'admin-billing-view-state';
 type BillingColumnKey = 'route' | 'tokens' | 'input' | 'output' | 'status';
 type TimePresetKey = 'all' | '1h' | '6h' | '24h' | '7d';
 type BillingSortKey = 'started_at_desc' | 'started_at_asc' | 'tokens_desc' | 'tokens_asc' | 'duration_desc';
-type BillingScopeKey = 'usage' | 'user' | 'group' | 'plan' | 'subscription' | 'order';
+type BillingScopeKey = 'usage' | 'account' | 'group' | 'plan' | 'subscription' | 'order';
 
 const DEFAULT_VISIBLE_COLUMNS: BillingColumnKey[] = ['route', 'tokens', 'input', 'output', 'status'];
 const TIME_PRESET_OPTIONS: Array<{ value: TimePresetKey; label: string }> = [
@@ -60,7 +60,7 @@ export function AdminBillingPage() {
   const [scope, setScope] = useState<BillingScopeKey>(isBillingScopeKey(savedState.scope) ? savedState.scope : 'usage');
   const [showTools, setShowTools] = useState(false);
   const [inspectUsage, setInspectUsage] = useState<AdminUsageItem | null>(null);
-  const [inspectAggregate, setInspectAggregate] = useState<{ scope: BillingScopeKey; row: AdminBillingUserItem | AdminBillingGroupItem | AdminBillingPlanItem | AdminBillingSubscriptionItem | AdminBillingOrderItem } | null>(null);
+  const [inspectAggregate, setInspectAggregate] = useState<{ scope: BillingScopeKey; row: AdminBillingAccountItem | AdminBillingGroupItem | AdminBillingPlanItem | AdminBillingSubscriptionItem | AdminBillingOrderItem } | null>(null);
   const startedAfter = useMemo(() => resolveStartedAfter(timePreset, dateFrom), [dateFrom, timePreset]);
   const startedBefore = useMemo(() => resolveStartedBefore(timePreset, dateTo), [dateTo, timePreset]);
   const usageQuery = useQuery({
@@ -132,20 +132,20 @@ export function AdminBillingPage() {
   }, [dateFrom, dateTo, pageSize, scope, search, sortBy, statusFilter, timePreset, visibleColumns]);
 
   const billingSummary = billing?.summary || {};
-  const billingUsers = billing?.by_user || [];
+  const billingAccounts = billing?.by_account || [];
   const billingGroups = billing?.by_group || [];
   const billingPlans = billing?.by_plan || [];
   const billingSubscriptions = billing?.by_subscription || [];
   const billingOrders = billing?.by_order || [];
 
   const aggregateRows = useMemo(() => {
-    if (scope === 'user') return billingUsers;
+    if (scope === 'account') return billingAccounts;
     if (scope === 'group') return billingGroups;
     if (scope === 'plan') return billingPlans;
     if (scope === 'subscription') return billingSubscriptions;
     if (scope === 'order') return billingOrders;
     return [];
-  }, [billingGroups, billingOrders, billingPlans, billingSubscriptions, billingUsers, scope]);
+  }, [billingAccounts, billingGroups, billingOrders, billingPlans, billingSubscriptions, scope]);
 
   const filteredAggregateRows = useMemo(() => {
     if (scope === 'usage') return [];
@@ -255,9 +255,9 @@ export function AdminBillingPage() {
           <div className="sub2-inline-summary-item"><span>请求总数</span><strong>{formatNumber(summaryRequestCount)}</strong><small>当前页 {formatNumber(filteredRowsForPager.length)}</small></div>
           <div className="sub2-inline-summary-item"><span>成功 / 异常</span><strong>{formatNumber(Math.max(0, summaryRequestCount - summaryErrorCount))} / {formatNumber(summaryErrorCount)}</strong><small>{TIME_PRESET_OPTIONS.find((option) => option.value === timePreset)?.label || '全部时间'}</small></div>
           <div className="sub2-inline-summary-item"><span>总 Token</span><strong>{formatTokenCount(summaryTotalTokens)}</strong><small>当前筛选 {formatTokenCount(totalTokens)}</small></div>
-          <div className="sub2-inline-summary-item"><span>标准成本</span><strong>{formatUsdCost(billingSummary.total_cost || 0)}</strong><small>用户计费 {formatUsdCost(billingSummary.actual_cost || 0)}</small></div>
+          <div className="sub2-inline-summary-item"><span>标准成本</span><strong>{formatUsdCost(billingSummary.total_cost || 0)}</strong><small>实际计费 {formatUsdCost(billingSummary.actual_cost || 0)}</small></div>
           <div className="sub2-inline-summary-item"><span>账户计费</span><strong>{formatUsdCost(billingSummary.account_cost || 0)}</strong><small>覆盖请求 {formatNumber(summaryCoveredRequests)}</small></div>
-          <div className="sub2-inline-summary-item"><span>活跃订阅</span><strong>{formatNumber(summaryActiveSubscriptions)}</strong><small>总用户 {formatNumber(overview.user_count || 0)}</small></div>
+          <div className="sub2-inline-summary-item"><span>活跃订阅</span><strong>{formatNumber(summaryActiveSubscriptions)}</strong><small>总账户 {formatNumber(overview.account_count || 0)}</small></div>
         </div>
       </div>
 
@@ -309,7 +309,7 @@ export function AdminBillingPage() {
               </ToolbarButtonRow>
             }
           >
-            <SearchField value={search} placeholder="搜索用户 / 模型 / 线路 / 请求 ID" onChange={(value) => { setSearch(value); setPage(1); }} />
+            <SearchField value={search} placeholder="搜索账户 / 模型 / 线路 / 请求 ID" onChange={(value) => { setSearch(value); setPage(1); }} />
             <select className="select" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}>
               <option value="">全部状态</option>
               <option value="ok">成功</option>
@@ -322,7 +322,7 @@ export function AdminBillingPage() {
             <input className="input" type="datetime-local" value={dateTo} onChange={(event) => { setDateTo(event.target.value); setTimePreset('all'); setPage(1); }} />
             <select className="select" value={scope} onChange={(event) => { setScope(event.target.value as BillingScopeKey); setPage(1); }}>
               <option value="usage">请求明细</option>
-              <option value="user">按用户</option>
+              <option value="account">按账户</option>
               <option value="group">按分组</option>
               <option value="plan">按计划</option>
               <option value="subscription">按订阅</option>
@@ -414,7 +414,7 @@ export function AdminBillingPage() {
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
-                <span>用户</span>
+                <span>账户</span>
                 <strong>{inspectUsage.consumer_name || inspectUsage.consumer_id || '-'}</strong>
                 <small>{inspectUsage.consumer_preview || inspectUsage.consumer_type || '-'}</small>
               </div>
@@ -484,8 +484,8 @@ function AggregateBillingTable({
   onInspect,
 }: {
   scope: BillingScopeKey;
-  rows: Array<AdminBillingUserItem | AdminBillingGroupItem | AdminBillingPlanItem | AdminBillingSubscriptionItem | AdminBillingOrderItem>;
-  onInspect: (row: AdminBillingUserItem | AdminBillingGroupItem | AdminBillingPlanItem | AdminBillingSubscriptionItem | AdminBillingOrderItem) => void;
+  rows: Array<AdminBillingAccountItem | AdminBillingGroupItem | AdminBillingPlanItem | AdminBillingSubscriptionItem | AdminBillingOrderItem>;
+  onInspect: (row: AdminBillingAccountItem | AdminBillingGroupItem | AdminBillingPlanItem | AdminBillingSubscriptionItem | AdminBillingOrderItem) => void;
 }) {
   if (!rows.length) {
     return <EmptyState title="暂无聚合账单" description="当前筛选条件下没有聚合结果。" />;
@@ -494,14 +494,14 @@ function AggregateBillingTable({
     <table>
       <thead>
         <tr>
-          <th>{scope === 'user' ? '用户' : scope === 'group' ? '分组' : scope === 'plan' ? '计划' : scope === 'subscription' ? '订阅' : '订单'}</th>
+          <th>{scope === 'account' ? '账户' : scope === 'group' ? '分组' : scope === 'plan' ? '计划' : scope === 'subscription' ? '订阅' : '订单'}</th>
           <th>归属</th>
           <th>请求</th>
           <th>Token</th>
           <th>请求字节</th>
           <th>响应字节</th>
           <th>标准成本</th>
-          <th>用户计费</th>
+          <th>实际计费</th>
           <th>账户计费</th>
           <th>异常</th>
           <th>操作</th>
@@ -537,14 +537,14 @@ function AggregateBillingTable({
 
 function resolveAggregateMeta(
   scope: BillingScopeKey,
-  row: AdminBillingUserItem | AdminBillingGroupItem | AdminBillingPlanItem | AdminBillingSubscriptionItem | AdminBillingOrderItem,
+  row: AdminBillingAccountItem | AdminBillingGroupItem | AdminBillingPlanItem | AdminBillingSubscriptionItem | AdminBillingOrderItem,
 ) {
-  if (scope === 'user') {
-    const item = row as AdminBillingUserItem;
+  if (scope === 'account') {
+    const item = row as AdminBillingAccountItem;
     return {
-      key: item.user_id,
-      title: item.user_name || item.user_id,
-      subtitle: item.user_id,
+      key: item.account_id,
+      title: item.account_name || item.account_id,
+      subtitle: item.account_id,
       owner: (item.group_names || []).join(' / ') || '-',
       ownerExtra: (item.plan_names || []).join(' / ') || '-',
     };
@@ -555,7 +555,7 @@ function resolveAggregateMeta(
       key: item.group_id || item.group_name || 'group',
       title: item.group_name || item.group_id || '未分组',
       subtitle: item.group_id || '-',
-      owner: `${formatNumber(item.user_ids?.length || 0)} 用户`,
+      owner: `${formatNumber(item.account_ids?.length || 0)} 账户`,
       ownerExtra: `${formatNumber(item.subscription_ids?.length || 0)} 订阅`,
     };
   }
@@ -575,7 +575,7 @@ function resolveAggregateMeta(
       key: item.subscription_id,
       title: item.plan_name || item.subscription_id,
       subtitle: item.subscription_id,
-      owner: item.user_name || item.user_id || '-',
+      owner: item.account_name || item.account_id || '-',
       ownerExtra: `${item.group_name || item.group_id || '-'} · ${item.status || '-'}`,
     };
   }
@@ -584,7 +584,7 @@ function resolveAggregateMeta(
     key: item.order_id,
     title: item.order_id,
     subtitle: item.channel_name || item.channel_id || '-',
-    owner: item.user_name || item.user_id || '-',
+    owner: item.account_name || item.account_id || '-',
     ownerExtra: `${item.plan_name || item.plan_id || '-'} · ${item.status || '-'}`,
   };
 }
@@ -594,7 +594,7 @@ function AggregateBillingDetail({
   row,
 }: {
   scope: BillingScopeKey;
-  row: AdminBillingUserItem | AdminBillingGroupItem | AdminBillingPlanItem | AdminBillingSubscriptionItem | AdminBillingOrderItem;
+  row: AdminBillingAccountItem | AdminBillingGroupItem | AdminBillingPlanItem | AdminBillingSubscriptionItem | AdminBillingOrderItem;
 }) {
   const meta = resolveAggregateMeta(scope, row);
   return (
@@ -629,7 +629,7 @@ function AggregateBillingDetail({
           <Field label="请求字节"><TextInput readOnly value={String(Number((row as any).input_bytes || 0))} /></Field>
           <Field label="响应字节"><TextInput readOnly value={String(Number((row as any).output_bytes || 0))} /></Field>
           <Field label="标准成本"><TextInput readOnly value={String(Number((row as any).total_cost || 0))} /></Field>
-          <Field label="用户计费"><TextInput readOnly value={String(Number((row as any).actual_cost || 0))} /></Field>
+          <Field label="实际计费"><TextInput readOnly value={String(Number((row as any).actual_cost || 0))} /></Field>
           <Field label="账户计费"><TextInput readOnly value={String(Number((row as any).account_cost || 0))} /></Field>
           <Field label="补充标识"><TextInput readOnly value={meta.subtitle || '-'} /></Field>
         </div>
@@ -691,7 +691,7 @@ function isBillingSortKey(value: unknown): value is BillingSortKey {
 }
 
 function isBillingScopeKey(value: unknown): value is BillingScopeKey {
-  return typeof value === 'string' && ['usage', 'user', 'group', 'plan', 'subscription', 'order'].includes(value);
+  return typeof value === 'string' && ['usage', 'account', 'group', 'plan', 'subscription', 'order'].includes(value);
 }
 
 function toDateTimeLocal(date: Date) {

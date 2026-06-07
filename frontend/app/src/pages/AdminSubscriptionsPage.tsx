@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Ban, Calendar, Eye, Plus, RefreshCw, RotateCcw } from 'lucide-react';
-import { assignAdminSubscription, extendAdminSubscription, fetchAdminSubscriptionPlans, fetchAdminSubscriptions, fetchAdminUsers, resetAdminSubscriptionQuota, revokeAdminSubscription } from '../api';
+import { assignAdminAccountSubscription, extendAdminAccountSubscription, fetchAdminAccounts, fetchAdminSubscriptionPlans, fetchAdminAccountSubscriptions, resetAdminAccountSubscriptionQuota, revokeAdminAccountSubscription } from '../api';
 import { Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
 import { ActionButton, ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { queryClient } from '../state/queryClient';
@@ -13,8 +13,8 @@ const DEFAULT_VISIBLE_COLUMNS: SubscriptionColumnKey[] = ['status', 'daily', 'we
 const STORAGE_KEY = 'admin-subscriptions-view-state';
 
 export function AdminSubscriptionsPage() {
-  const subsQuery = useQuery({ queryKey: ['admin-subscriptions'], queryFn: fetchAdminSubscriptions, refetchInterval: 10000 });
-  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, refetchInterval: 10000 });
+  const subsQuery = useQuery({ queryKey: ['admin-subscriptions'], queryFn: fetchAdminAccountSubscriptions, refetchInterval: 10000 });
+  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
   const plansQuery = useQuery({ queryKey: ['admin-subscription-plans'], queryFn: fetchAdminSubscriptionPlans, refetchInterval: 10000 });
   const [draft, setDraft] = useState<any | null>(null);
   const [inspectSubscription, setInspectSubscription] = useState<any | null>(null);
@@ -35,26 +35,26 @@ export function AdminSubscriptionsPage() {
   const [visibleColumns, setVisibleColumns] = useState<Set<SubscriptionColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
 
   const assignMutation = useMutation({
-    mutationFn: assignAdminSubscription,
+    mutationFn: assignAdminAccountSubscription,
     onSuccess: async () => {
       setDraft(null);
       await queryClient.invalidateQueries({ queryKey: ['admin-subscriptions'] });
     },
   });
   const extendMutation = useMutation({
-    mutationFn: ({ id, days }: { id: string; days: number }) => extendAdminSubscription(id, days),
+    mutationFn: ({ id, days }: { id: string; days: number }) => extendAdminAccountSubscription(id, days),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['admin-subscriptions'] });
     },
   });
   const revokeMutation = useMutation({
-    mutationFn: (id: string) => revokeAdminSubscription(id),
+    mutationFn: (id: string) => revokeAdminAccountSubscription(id),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['admin-subscriptions'] });
     },
   });
   const resetQuotaMutation = useMutation({
-    mutationFn: (id: string) => resetAdminSubscriptionQuota(id, { daily: true, weekly: true, monthly: true }),
+    mutationFn: (id: string) => resetAdminAccountSubscriptionQuota(id, { daily: true, weekly: true, monthly: true }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['admin-subscriptions'] });
     },
@@ -65,7 +65,7 @@ export function AdminSubscriptionsPage() {
   const plans = plansQuery.data?.items || [];
   const planMap = useMemo(() => new Map(plans.map((plan) => [plan.id, plan])), [plans]);
   const selectedPlan = draft?.plan_id ? planMap.get(draft.plan_id) : undefined;
-  const selectedUser = draft?.user_id ? users.find((user) => user.id === draft.user_id) : undefined;
+  const selectedAccount = draft?.account_id ? users.find((user) => user.id === draft.account_id) : undefined;
   const groupOptions = useMemo(
     () =>
       Array.from(new Map(plans.filter((plan) => plan.group_id).map((plan) => [plan.group_id, plan.group_name || plan.group_id])).entries()).sort((left, right) =>
@@ -78,7 +78,7 @@ export function AdminSubscriptionsPage() {
     const keyword = search.trim().toLowerCase();
     return items.filter((item) => {
       if (keyword) {
-        const haystack = [item.user_name, item.user_id, item.plan_name, item.plan_id, item.id].map((value) => String(value || '').toLowerCase()).join(' ');
+        const haystack = [item.account_name, item.account_id, item.plan_name, item.plan_id, item.id].map((value) => String(value || '').toLowerCase()).join(' ');
         if (!haystack.includes(keyword)) return false;
       }
       if (statusFilter && item.status !== statusFilter) return false;
@@ -124,7 +124,7 @@ export function AdminSubscriptionsPage() {
     <section className="grid-page">
       <div className="sub2-page-head">
         <div className="sub2-page-title">
-          <strong>用户订阅</strong>
+          <strong>账户订阅</strong>
           <span>按订阅处理分配、延期、重置与撤销，保持和 SUB2 一致的列表工作流。</span>
         </div>
         <div className="sub2-inline-summary">
@@ -161,7 +161,7 @@ export function AdminSubscriptionsPage() {
                     <span>切换 50 / 页</span>
                   </button>
                 </ToolsMenu>
-                <Button tone="primary" onClick={() => setDraft({ user_id: '', plan_id: '', status: 'active' })}><Plus size={15} />分配订阅</Button>
+                <Button tone="primary" onClick={() => setDraft({ account_id: '', plan_id: '', status: 'active' })}><Plus size={15} />分配订阅</Button>
               </ToolbarButtonRow>
             }
           >
@@ -185,7 +185,7 @@ export function AdminSubscriptionsPage() {
             <table>
               <thead>
                 <tr>
-                  <th>用户</th>
+                  <th>账户</th>
                   <th>计划</th>
                   <th>分组 / 价格</th>
                   {visibleColumns.has('status') ? <th>状态</th> : null}
@@ -201,7 +201,7 @@ export function AdminSubscriptionsPage() {
                   <tr key={item.id}>
                     <td>
                       <div className="sub2-cell-stack">
-                        <strong>{item.user_name || item.user_id}</strong>
+                        <strong>{item.account_name || item.account_id}</strong>
                         <small>{item.id}</small>
                       </div>
                     </td>
@@ -225,18 +225,18 @@ export function AdminSubscriptionsPage() {
                     <td>
                       <RowActions>
                         <RowAction icon={Eye} label="详情" onClick={() => setInspectSubscription(item)} />
-                        <RowAction icon={Calendar} label="延期" onClick={() => setExtendTarget({ id: item.id, name: item.user_name || item.user_id || item.id, days: 30 })} />
-                        <RowAction icon={RotateCcw} label="重置" onClick={() => setActionTarget({ id: item.id, name: item.user_name || item.user_id || item.id, action: 'reset' })} />
-                        <RowAction icon={Ban} label="撤销" tone="danger" onClick={() => setActionTarget({ id: item.id, name: item.user_name || item.user_id || item.id, action: 'revoke' })} />
+                        <RowAction icon={Calendar} label="延期" onClick={() => setExtendTarget({ id: item.id, name: item.account_name || item.account_id || item.id, days: 30 })} />
+                        <RowAction icon={RotateCcw} label="重置" onClick={() => setActionTarget({ id: item.id, name: item.account_name || item.account_id || item.id, action: 'reset' })} />
+                        <RowAction icon={Ban} label="撤销" tone="danger" onClick={() => setActionTarget({ id: item.id, name: item.account_name || item.account_id || item.id, action: 'revoke' })} />
                       </RowActions>
                     </td>
                   </tr>
                 )) : (
                   <ListEmptyRow
                     colSpan={visibleColumns.size + 4}
-                    title="暂无用户订阅"
+                    title="暂无账户订阅"
                     description="当前没有可展示的订阅记录。"
-                    action={<Button tone="primary" onClick={() => setDraft({ user_id: '', plan_id: '', status: 'active' })}>分配订阅</Button>}
+                    action={<Button tone="primary" onClick={() => setDraft({ account_id: '', plan_id: '', status: 'active' })}>分配订阅</Button>}
                   />
                 )}
               </tbody>
@@ -264,13 +264,13 @@ export function AdminSubscriptionsPage() {
           footer={
             <ModalActions>
               <Button onClick={() => setDraft(null)}>取消</Button>
-              <Button tone="primary" disabled={assignMutation.isPending || !draft.user_id || !draft.plan_id} onClick={() => assignMutation.mutate(draft)}>分配</Button>
+              <Button tone="primary" disabled={assignMutation.isPending || !draft.account_id || !draft.plan_id} onClick={() => assignMutation.mutate(draft)}>分配</Button>
             </ModalActions>
           }
         >
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
-              <strong>向用户分配新的订阅</strong>
+              <strong>向账户分配新的订阅</strong>
               <span>订阅会直接参与请求鉴权、额度校验和消费归因。这里的操作需要和计划、分组、支付记录保持一致。</span>
             </div>
             <div className="admin-dialog-summary">
@@ -292,9 +292,9 @@ export function AdminSubscriptionsPage() {
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
-                <span>目标用户</span>
-                <strong>{selectedUser?.name || '待选择用户'}</strong>
-                <small>{selectedUser?.group_name || selectedUser?.group_id || '未分组'}</small>
+                <span>目标账户</span>
+                <strong>{selectedAccount?.name || '待选择账户'}</strong>
+                <small>{selectedAccount?.group_name || selectedAccount?.group_id || '未分组'}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>计划价格</span>
@@ -310,12 +310,12 @@ export function AdminSubscriptionsPage() {
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
                 <strong>订阅信息</strong>
-                <span>用户与计划确认后即可直接落订阅记录</span>
+                <span>账户与计划确认后即可直接落订阅记录</span>
               </div>
               <div className="admin-dialog-grid modal-grid">
-                <Field label="用户">
-                  <Select value={draft.user_id} onChange={(e) => setDraft({ ...draft, user_id: e.target.value })}>
-                    <option value="">请选择用户</option>
+                <Field label="账户">
+                  <Select value={draft.account_id} onChange={(e) => setDraft({ ...draft, account_id: e.target.value })}>
+                    <option value="">请选择账户</option>
                     {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
                   </Select>
                 </Field>
@@ -335,7 +335,7 @@ export function AdminSubscriptionsPage() {
               </div>
             </div>
             <div className="admin-dialog-note">
-              分配完成后，用户在 API Key 校验和使用记录中会立即看到新的订阅归属。
+              分配完成后，账户在 API Key 校验和使用记录中会立即看到新的订阅归属。
             </div>
           </div>
         </Modal>
@@ -350,7 +350,7 @@ export function AdminSubscriptionsPage() {
         >
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
-              <strong>{inspectSubscription.user_name || inspectSubscription.user_id}</strong>
+              <strong>{inspectSubscription.account_name || inspectSubscription.account_id}</strong>
               <span>查看订阅归属、用量和到期信息，便于管理员快速核验。</span>
             </div>
             <div className="admin-dialog-summary">

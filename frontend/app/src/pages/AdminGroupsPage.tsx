@@ -96,7 +96,7 @@ export function AdminGroupsPage() {
   const enabledCount = items.filter((item) => item.enabled !== false).length;
   const requestTotal = items.reduce((sum, item) => sum + Number(item.request_count || 0), 0);
   const errorTotal = items.reduce((sum, item) => sum + Number(item.error_count || 0), 0);
-  const userTotal = items.reduce((sum, item) => sum + Number(item.user_count || 0), 0);
+  const accountTotal = items.reduce((sum, item) => sum + Number(item.account_count || 0), 0);
   const exclusiveCount = items.filter((item) => item.is_exclusive).length;
   const platformOptions = useMemo(
     () => Array.from(new Set(items.map((item) => item.platform).filter((value): value is string => Boolean(value)))).sort((left, right) => left.localeCompare(right, 'zh-CN')),
@@ -154,7 +154,7 @@ export function AdminGroupsPage() {
           <div className="sub2-inline-summary-item"><span>分组总数</span><strong>{formatNumber(items.length)}</strong><small>当前可管理分组</small></div>
           <div className="sub2-inline-summary-item"><span>启用分组</span><strong>{formatNumber(enabledCount)}</strong><small>停用 {formatNumber(items.length - enabledCount)}</small></div>
           <div className="sub2-inline-summary-item"><span>专属分组</span><strong>{formatNumber(exclusiveCount)}</strong><small>共享 {formatNumber(Math.max(0, items.length - exclusiveCount))}</small></div>
-          <div className="sub2-inline-summary-item"><span>用户覆盖</span><strong>{formatNumber(userTotal)}</strong><small>分组下用户累计</small></div>
+          <div className="sub2-inline-summary-item"><span>账户覆盖</span><strong>{formatNumber(accountTotal)}</strong><small>分组下账户累计</small></div>
           <div className="sub2-inline-summary-item"><span>请求 / 错误</span><strong>{formatNumber(requestTotal)} / {formatNumber(errorTotal)}</strong><small>筛选前全量</small></div>
         </div>
       </div>
@@ -167,7 +167,7 @@ export function AdminGroupsPage() {
                 <ColumnMenu
                   label="列设置"
                   items={[
-                    { key: 'users', label: '用户数', checked: visibleColumns.has('users'), onToggle: () => toggleColumn('users') },
+                    { key: 'users', label: '账户数', checked: visibleColumns.has('users'), onToggle: () => toggleColumn('users') },
                     { key: 'platform', label: '平台 / 倍率', checked: visibleColumns.has('platform'), onToggle: () => toggleColumn('platform') },
                     { key: 'requests', label: '请求数', checked: visibleColumns.has('requests'), onToggle: () => toggleColumn('requests') },
                     { key: 'errors', label: '错误数', checked: visibleColumns.has('errors'), onToggle: () => toggleColumn('errors') },
@@ -211,7 +211,7 @@ export function AdminGroupsPage() {
                 <tr>
                   <th>分组</th>
                   {visibleColumns.has('platform') ? <th>平台 / 倍率</th> : null}
-                  {visibleColumns.has('users') ? <th>用户数</th> : null}
+                  {visibleColumns.has('users') ? <th>账户数</th> : null}
                   {visibleColumns.has('requests') ? <th>请求数</th> : null}
                   {visibleColumns.has('errors') ? <th>错误数</th> : null}
                   {visibleColumns.has('tokens') ? <th>总 Token</th> : null}
@@ -238,7 +238,7 @@ export function AdminGroupsPage() {
                         </div>
                       </td>
                     ) : null}
-                    {visibleColumns.has('users') ? <td><strong className="sub2-number-cell">{formatNumber(item.user_count || 0)}</strong></td> : null}
+                    {visibleColumns.has('users') ? <td><strong className="sub2-number-cell">{formatNumber(item.account_count || 0)}</strong></td> : null}
                     {visibleColumns.has('requests') ? <td><strong className="sub2-number-cell">{formatNumber(item.request_count || 0)}</strong></td> : null}
                     {visibleColumns.has('errors') ? <td><strong className="sub2-number-cell sub2-number-warn">{formatNumber(item.error_count || 0)}</strong></td> : null}
                     {visibleColumns.has('tokens') ? <td><strong className="sub2-number-cell">{formatTokenCount(item.total_tokens || 0)}</strong></td> : null}
@@ -295,7 +295,7 @@ export function AdminGroupsPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{draft.id ? '编辑分组' : '新增分组'}</strong>
-              <span>分组用于承接平台归属、用户覆盖和计费倍率，会直接影响用户、订阅和线路归因的管理视图。</span>
+              <span>分组用于承接平台归属、账户覆盖和计费倍率，会直接影响账户、订阅和线路归因的管理视图。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
@@ -353,7 +353,7 @@ export function AdminGroupsPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{inspectGroup.name}</strong>
-              <span>查看分组的平台归属、倍率、状态和覆盖情况，便于核对用户与订阅的下挂关系。</span>
+              <span>查看分组的平台归属、倍率、状态和覆盖情况，便于核对账户与订阅的下挂关系。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
@@ -362,8 +362,8 @@ export function AdminGroupsPage() {
                 <small>{inspectGroup.id}</small>
               </div>
               <div className="admin-dialog-summary-card">
-                <span>覆盖用户</span>
-                <strong>{formatNumber(inspectGroup.user_count || 0)}</strong>
+                <span>覆盖账户</span>
+                <strong>{formatNumber(inspectGroup.account_count || 0)}</strong>
                 <small>请求 {formatNumber(inspectGroup.request_count || 0)}</small>
               </div>
               <div className="admin-dialog-summary-card">
@@ -423,7 +423,7 @@ export function AdminGroupsPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{toggleTarget.name}</strong>
-              <span>{toggleTarget.enabled === false ? '启用后该分组会重新参与用户、订阅和线路配置的可见范围。' : '停用后不会删除历史数据，但会让该分组退出当前业务配置。'}</span>
+              <span>{toggleTarget.enabled === false ? '启用后该分组会重新参与账户、订阅和线路配置的可见范围。' : '停用后不会删除历史数据，但会让该分组退出当前业务配置。'}</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">

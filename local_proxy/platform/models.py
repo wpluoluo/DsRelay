@@ -5,18 +5,18 @@ from enum import StrEnum
 from typing import Any
 
 
-class UserSourceType(StrEnum):
+class AccountSourceType(StrEnum):
     MANAGED = "managed"
     ENV = "env"
     ANONYMOUS = "anonymous"
 
 
-class UserRole(StrEnum):
+class AccountRole(StrEnum):
     USER = "user"
     ADMIN = "admin"
 
 
-class UserStatus(StrEnum):
+class AccountStatus(StrEnum):
     ACTIVE = "active"
     DISABLED = "disabled"
 
@@ -29,13 +29,13 @@ class PaymentStatus(StrEnum):
 
 
 @dataclass(slots=True)
-class AdminUserRecord:
+class AdminAccountRecord:
     id: str
     name: str
     external_key: str
-    source_type: str = UserSourceType.MANAGED
-    role: str = UserRole.USER
-    status: str = UserStatus.ACTIVE
+    source_type: str = AccountSourceType.MANAGED
+    role: str = AccountRole.USER
+    status: str = AccountStatus.ACTIVE
     balance_cents: int = 0
     concurrency_limit: int = 0
     allowed_group_ids: list[str] = field(default_factory=list)

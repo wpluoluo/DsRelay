@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Copy, Eye, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
-import { createAdminApiKey, fetchAdminApiKeys, fetchAdminUsers, setAdminApiKeyEnabled } from '../api';
+import { createAdminApiKey, fetchAdminAccounts, fetchAdminApiKeys, setAdminApiKeyEnabled } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
 import { ActionButton, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { queryClient } from '../state/queryClient';
@@ -12,8 +12,8 @@ const STORAGE_KEY = 'admin-api-keys-view-state';
 
 export function AdminApiKeysPage() {
   const keysQuery = useQuery({ queryKey: ['admin-api-keys'], queryFn: fetchAdminApiKeys, refetchInterval: 10000 });
-  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, refetchInterval: 10000 });
-  const [draft, setDraft] = useState<{ user_id: string; name: string } | null>(null);
+  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
+  const [draft, setDraft] = useState<{ account_id: string; name: string } | null>(null);
   const [generatedKey, setGeneratedKey] = useState('');
   const [copiedKeyId, setCopiedKeyId] = useState('');
   const [inspectKey, setInspectKey] = useState<AdminApiKey | null>(null);
@@ -52,7 +52,7 @@ export function AdminApiKeysPage() {
     const keyword = search.trim().toLowerCase();
     return items.filter((item) => {
       if (keyword) {
-        const haystack = [item.name, item.user_name, item.user_id, item.key_preview].map((value) => String(value || '').toLowerCase()).join(' ');
+        const haystack = [item.name, item.account_name, item.account_id, item.key_preview].map((value) => String(value || '').toLowerCase()).join(' ');
         if (!haystack.includes(keyword)) return false;
       }
       if (statusFilter) {
@@ -72,7 +72,7 @@ export function AdminApiKeysPage() {
   }, [filteredItems, page, pageSize]);
   const enabledCount = items.filter((item) => item.enabled !== false).length;
   const disabledCount = Math.max(0, items.length - enabledCount);
-  const boundUsers = new Set(items.map((item) => item.user_id).filter(Boolean)).size;
+  const boundUsers = new Set(items.map((item) => item.account_id).filter(Boolean)).size;
   const unboundCount = Math.max(0, items.length - boundUsers);
   const activeSubscriptionCount = items.filter((item) => item.subscription_active).length;
   const inactiveSubscriptionCount = Math.max(0, items.length - activeSubscriptionCount);
@@ -95,13 +95,13 @@ export function AdminApiKeysPage() {
     <section className="grid-page">
       <div className="sub2-page-head">
         <div className="sub2-page-title">
-          <strong>用户 API Key</strong>
-          <span>按用户维护业务 Key、订阅归属和启停状态，保持和 SUB2 一致的列表工作流。</span>
+          <strong>业务 API Key</strong>
+          <span>按业务账户维护调用 Key、订阅归属和启停状态，保持和 SUB2 一致的列表工作流。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>业务 Key 总数</span><strong>{formatNumber(items.length)}</strong><small>当前列表全量</small></div>
           <div className="sub2-inline-summary-item"><span>启用 Key</span><strong>{formatNumber(enabledCount)}</strong><small>停用 {formatNumber(disabledCount)}</small></div>
-          <div className="sub2-inline-summary-item"><span>绑定用户</span><strong>{formatNumber(boundUsers)}</strong><small>未覆盖 {formatNumber(unboundCount)} 个 Key</small></div>
+          <div className="sub2-inline-summary-item"><span>绑定账户</span><strong>{formatNumber(boundUsers)}</strong><small>未覆盖 {formatNumber(unboundCount)} 个 Key</small></div>
           <div className="sub2-inline-summary-item"><span>有效订阅</span><strong>{formatNumber(activeSubscriptionCount)}</strong><small>无效 {formatNumber(inactiveSubscriptionCount)}</small></div>
         </div>
       </div>
@@ -123,14 +123,14 @@ export function AdminApiKeysPage() {
                       <span>切换 50 / 页</span>
                     </button>
                     <button type="button" onClick={() => { void keysQuery.refetch(); void usersQuery.refetch(); }}>
-                      <span>同步用户与 Key</span>
+                      <span>同步账户与 Key</span>
                     </button>
                 </ToolsMenu>
-                <Button tone="primary" onClick={() => setDraft({ user_id: '', name: '' })}><Plus size={15} />生成 Key</Button>
+                <Button tone="primary" onClick={() => setDraft({ account_id: '', name: '' })}><Plus size={15} />生成 Key</Button>
               </ToolbarButtonRow>
             }
           >
-            <SearchField value={search} placeholder="搜索名称 / 用户 / Key 预览" onChange={(value) => { setSearch(value); setPage(1); }} />
+            <SearchField value={search} placeholder="搜索名称 / 账户 / Key 预览" onChange={(value) => { setSearch(value); setPage(1); }} />
             <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}>
               <option value="">全部状态</option>
               <option value="enabled">启用</option>
@@ -149,7 +149,7 @@ export function AdminApiKeysPage() {
               <thead>
                 <tr>
                   <th className="col-key-name">名称</th>
-                  <th>用户</th>
+                  <th>账户</th>
                   <th>订阅</th>
                   <th className="col-key-value">Key 预览</th>
                   <th className="col-key-status">状态</th>
@@ -169,8 +169,8 @@ export function AdminApiKeysPage() {
                     </td>
                     <td>
                       <div className="sub2-cell-stack">
-                        <strong>{maskEmpty(item.user_name || item.user_id)}</strong>
-                        <small>{item.user_id || '未绑定用户 ID'}</small>
+                        <strong>{maskEmpty(item.account_name || item.account_id)}</strong>
+                        <small>{item.account_id || '未绑定账户 ID'}</small>
                       </div>
                     </td>
                     <td>
@@ -220,8 +220,8 @@ export function AdminApiKeysPage() {
                   <ListEmptyRow
                     colSpan={8}
                     title="暂无业务 API Key"
-                    description="当前还没有创建任何用户业务 Key。"
-                    action={<Button tone="primary" onClick={() => setDraft({ user_id: '', name: '' })}>生成 Key</Button>}
+                    description="当前还没有创建任何业务账户 Key。"
+                    action={<Button tone="primary" onClick={() => setDraft({ account_id: '', name: '' })}>生成 Key</Button>}
                   />
                 )}
               </tbody>
@@ -266,7 +266,7 @@ export function AdminApiKeysPage() {
               </div>
               <div className="admin-dialog-summary-card">
                 <span>绑定能力</span>
-                <strong>业务用户调用</strong>
+                <strong>业务账户调用</strong>
                 <small>参与订阅校验</small>
               </div>
               <div className="admin-dialog-summary-card">
@@ -288,13 +288,13 @@ export function AdminApiKeysPage() {
 
       {draft ? (
         <Modal
-          title="生成用户 API Key"
+          title="生成业务 API Key"
           size="md"
           onClose={() => setDraft(null)}
           footer={
             <ModalActions>
               <Button onClick={() => setDraft(null)}>取消</Button>
-              <Button tone="primary" disabled={createMutation.isPending || !draft.user_id || !draft.name.trim()} onClick={() => createMutation.mutate(draft)}>
+              <Button tone="primary" disabled={createMutation.isPending || !draft.account_id || !draft.name.trim()} onClick={() => createMutation.mutate(draft)}>
                 生成
               </Button>
             </ModalActions>
@@ -302,8 +302,8 @@ export function AdminApiKeysPage() {
         >
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
-              <strong>为指定用户生成新的业务 Key</strong>
-              <span>生成后会直接建立用户归属，后续请求会按这个 Key 做订阅可用性校验和消费归因。</span>
+              <strong>为指定账户生成新的业务 Key</strong>
+              <span>生成后会直接建立账户归属，后续请求会按这个 Key 做订阅可用性校验和消费归因。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
@@ -318,19 +318,19 @@ export function AdminApiKeysPage() {
               </div>
               <div className="admin-dialog-summary-card">
                 <span>当前草稿</span>
-                <strong>{draft.user_id ? '已选用户' : '待选用户'}</strong>
+                <strong>{draft.account_id ? '已选账户' : '待选账户'}</strong>
                 <small>{draft.name?.trim() || '待填写名称'}</small>
               </div>
             </div>
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
                 <strong>基础信息</strong>
-                <span>先归属用户，再命名，再生成</span>
+                <span>先归属账户，再命名，再生成</span>
               </div>
               <div className="admin-dialog-grid modal-grid">
-                <Field label="归属用户">
-                  <Select value={draft.user_id} onChange={(e) => setDraft({ ...draft, user_id: e.target.value })}>
-                    <option value="">请选择用户</option>
+                <Field label="归属账户">
+                  <Select value={draft.account_id} onChange={(e) => setDraft({ ...draft, account_id: e.target.value })}>
+                    <option value="">请选择账户</option>
                     {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
                   </Select>
                 </Field>
@@ -356,13 +356,13 @@ export function AdminApiKeysPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{inspectKey.name}</strong>
-              <span>查看业务 Key 的用户归属、订阅覆盖和时间信息，方便快速核验问题。</span>
+              <span>查看业务 Key 的账户归属、订阅覆盖和时间信息，方便快速核验问题。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
-                <span>用户</span>
-                <strong>{maskEmpty(inspectKey.user_name || inspectKey.user_id)}</strong>
-                <small>{inspectKey.user_source_type || 'unknown'}</small>
+                <span>账户</span>
+                <strong>{maskEmpty(inspectKey.account_name || inspectKey.account_id)}</strong>
+                <small>{inspectKey.account_source_type || 'unknown'}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>订阅</span>
@@ -378,11 +378,11 @@ export function AdminApiKeysPage() {
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
                 <strong>归属信息</strong>
-                <span>用户与订阅关系</span>
+                <span>账户与订阅关系</span>
               </div>
               <div className="admin-dialog-grid">
-                <Field label="用户 ID"><TextInput value={inspectKey.user_id || ''} readOnly /></Field>
-                <Field label="用户名称"><TextInput value={inspectKey.user_name || ''} readOnly /></Field>
+                <Field label="账户 ID"><TextInput value={inspectKey.account_id || ''} readOnly /></Field>
+                <Field label="账户名称"><TextInput value={inspectKey.account_name || ''} readOnly /></Field>
                 <Field label="计划"><TextInput value={inspectKey.active_plan_name || inspectKey.active_plan_id || ''} readOnly /></Field>
                 <Field label="分组"><TextInput value={inspectKey.active_group_name || inspectKey.active_group_id || ''} readOnly /></Field>
               </div>

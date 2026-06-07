@@ -49,7 +49,7 @@ class AdminServiceBase:
             rows = list(snapshot.get("recent_requests") or [])
         return [row for row in rows if isinstance(row, dict)]
 
-    def _managed_users(self) -> dict[str, dict]:
+    def _managed_accounts(self) -> dict[str, dict]:
         if self.storage is None:
             return {}
         items = self.storage.list_admin_users()
@@ -98,13 +98,13 @@ class AdminServiceBase:
         if len(exclusive_ids) > 1:
             raise ValueError("exclusive groups cannot be assigned together")
 
-    def _validate_user_allowed_groups(self, user: dict, target_group_ids: list[str]) -> None:
-        allowed = self._normalize_group_ids(user.get("allowed_group_ids") if isinstance(user.get("allowed_group_ids"), list) else [])
+    def _validate_account_allowed_groups(self, account: dict, target_group_ids: list[str]) -> None:
+        allowed = self._normalize_group_ids(account.get("allowed_group_ids") if isinstance(account.get("allowed_group_ids"), list) else [])
         if not allowed:
             return
         denied = [group_id for group_id in self._normalize_group_ids(target_group_ids) if group_id not in allowed]
         if denied:
-            raise ValueError(f"user is not allowed to access groups: {', '.join(denied)}")
+            raise ValueError(f"account is not allowed to access groups: {', '.join(denied)}")
 
     def _resolve_plan_group_id(self, plan: dict, payload: dict | None = None) -> str:
         payload = payload if isinstance(payload, dict) else {}
@@ -116,25 +116,25 @@ class AdminServiceBase:
             return {}
         return self._group_policy_map().get(target, {})
 
-    def _require_user(self, user_id: str) -> dict:
+    def _require_account(self, account_id: str) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
-        user = self.storage.get_admin_user(user_id)
-        if not user:
-            raise ValueError("user not found")
-        return user
+        account = self.storage.get_admin_user(account_id)
+        if not account:
+            raise ValueError("account not found")
+        return account
 
-    def _get_active_subscription_context(self, user_id: str) -> dict:
+    def _get_active_subscription_context(self, account_id: str) -> dict:
         if self.storage is None:
             return {}
         try:
-            item = self.storage.get_active_subscription_context_for_user(user_id)
+            item = self.storage.get_active_subscription_context_for_user(account_id)
         except Exception:
             item = {}
         return item if isinstance(item, dict) else {}
 
-    def _get_user_subscription_status(self, user_id: str) -> dict:
-        context = self._get_active_subscription_context(user_id)
+    def _get_account_subscription_status(self, account_id: str) -> dict:
+        context = self._get_active_subscription_context(account_id)
         subscription_id = coerce_text(context.get("id"))
         status = coerce_text(context.get("status")) or ("active" if subscription_id else "inactive")
         return {
@@ -149,12 +149,12 @@ class AdminServiceBase:
             "active_subscription_price_cents": safe_int(context.get("price_cents")),
         }
 
-    def _validate_user_active(self, user: dict) -> None:
-        if user.get("enabled") is False:
-            raise ValueError("user is disabled")
-        status = coerce_text(user.get("status")) or "active"
+    def _validate_account_active(self, account: dict) -> None:
+        if account.get("enabled") is False:
+            raise ValueError("account is disabled")
+        status = coerce_text(account.get("status")) or "active"
         if status != "active":
-            raise ValueError(f"user status is not active: {status}")
+            raise ValueError(f"account status is not active: {status}")
 
     def _payment_channel_policy(self, channel: dict) -> dict:
         config = channel.get("config") if isinstance(channel.get("config"), dict) else {}
@@ -196,10 +196,10 @@ class AdminServiceBase:
             consumer_name = "未归属"
         return consumer_id, consumer_name, consumer_type, preview
 
-    def _resolve_user_metadata(self, consumer_id: str, consumer_name: str, consumer_type: str, preview: str) -> dict:
-        managed_users = self._managed_users()
+    def _resolve_account_metadata(self, consumer_id: str, consumer_name: str, consumer_type: str, preview: str) -> dict:
+        managed_accounts = self._managed_accounts()
         external_key = consumer_id if consumer_id != "anonymous" else ""
-        stored = managed_users.get(external_key, {})
+        stored = managed_accounts.get(external_key, {})
         return {
             "id": coerce_text(stored.get("id")) or consumer_id,
             "name": coerce_text(stored.get("name")) or consumer_name,

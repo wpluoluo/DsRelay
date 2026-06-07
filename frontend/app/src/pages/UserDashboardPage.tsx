@@ -8,13 +8,13 @@ import { useUserCenter } from '../state/userCenterContext';
 import { formatNumber, formatTokenCount, formatUsdCost } from '../utils';
 
 export function UserDashboardPage() {
-  const { selectedUser, selectedUserId, orders, subscriptions, visiblePlans, visibleChannels } = useUserCenter();
+  const { selectedAccount, selectedAccountId, orders, subscriptions, visiblePlans, visibleChannels } = useUserCenter();
   const usageQuery = useQuery({ queryKey: ['admin-usage'], queryFn: () => fetchAdminUsage(), refetchInterval: 10000 });
   const keysQuery = useQuery({ queryKey: ['admin-api-keys'], queryFn: fetchAdminApiKeys, refetchInterval: 10000 });
-  const currentOrders = orders.filter((item) => !selectedUserId || item.user_id === selectedUserId);
-  const currentSubscriptions = subscriptions.filter((item) => !selectedUserId || item.user_id === selectedUserId);
-  const currentUsage = (usageQuery.data?.items || []).filter((item) => !selectedUserId || item.consumer_id === selectedUserId);
-  const currentKeys = (keysQuery.data?.items || []).filter((item) => !selectedUserId || item.user_id === selectedUserId);
+  const currentOrders = orders.filter((item) => !selectedAccountId || item.account_id === selectedAccountId);
+  const currentSubscriptions = subscriptions.filter((item) => !selectedAccountId || item.account_id === selectedAccountId);
+  const currentUsage = (usageQuery.data?.items || []).filter((item) => !selectedAccountId || item.consumer_id === selectedAccountId);
+  const currentKeys = (keysQuery.data?.items || []).filter((item) => !selectedAccountId || item.account_id === selectedAccountId);
   const paidOrders = currentOrders.filter((item) => item.status === 'paid');
   const activeSubscriptions = currentSubscriptions.filter((item) => item.status === 'active');
   const recentUsage = currentUsage.slice(0, 5);
@@ -25,17 +25,17 @@ export function UserDashboardPage() {
   const todayTokens = todayUsage.reduce((sum, item) => sum + Number(item.total_tokens || 0), 0);
   const todayActualCost = todayUsage.reduce((sum, item) => sum + Number(item.actual_cost || item.total_cost || 0), 0);
   const activeKeys = currentKeys.filter((item) => item.enabled !== false);
-  const balance = Number(selectedUser?.balance_cents || 0) / 100;
+  const balance = Number(selectedAccount?.balance_cents || 0) / 100;
 
   return (
     <section className="grid-page">
       <div className="sub2-page-head">
         <div className="sub2-page-title">
-          <strong>用户控制台</strong>
-          <span>按用户首页主结构展示账户状态、最近记录和快捷操作。</span>
+          <strong>账户控制台</strong>
+          <span>按业务账户首页主结构展示状态、最近记录和快捷操作。</span>
         </div>
         <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>当前账户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '请先选择用户'}</small></div>
+          <div className="sub2-inline-summary-item"><span>当前账户</span><strong>{selectedAccount?.name || '未选择账户'}</strong><small>{selectedAccount?.group_name || selectedAccount?.source_type || '请先选择账户'}</small></div>
           <div className="sub2-inline-summary-item"><span>有效订阅</span><strong>{formatNumber(activeSubscriptions.length)}</strong><small>总订阅 {formatNumber(currentSubscriptions.length)}</small></div>
           <div className="sub2-inline-summary-item"><span>API Key</span><strong>{formatNumber(currentKeys.length)}</strong><small>启用 {formatNumber(activeKeys.length)}</small></div>
           <div className="sub2-inline-summary-item"><span>可购计划</span><strong>{formatNumber(visiblePlans.length)}</strong><small>可用通道 {formatNumber(visibleChannels.length)}</small></div>
@@ -81,7 +81,7 @@ export function UserDashboardPage() {
         <Panel className="dashboard-card">
           <PanelHead title="快捷操作" />
           <div className="quick-actions">
-            <QuickAction to="/keys" icon={<KeyRound size={20} />} title="创建 API Key" desc="查看和管理当前用户业务 Key" tone="blue" />
+            <QuickAction to="/keys" icon={<KeyRound size={20} />} title="创建 API Key" desc="查看和管理当前账户 Key" tone="blue" />
             <QuickAction to="/usage" icon={<ListChecks size={20} />} title="查看使用记录" desc="检查详细请求记录和缓存情况" tone="green" />
             <QuickAction to="/purchase" icon={<CreditCard size={20} />} title="购买订阅" desc="创建订单并选择计划、通道" tone="amber" />
             <QuickAction to="/user-orders" icon={<Gift size={20} />} title="查看订单" desc="跟踪支付状态和履约结果" tone="violet" />
@@ -99,12 +99,12 @@ export function UserDashboardPage() {
                 <span className={item.status === 'active' ? 'status-dot ok' : 'status-dot warn'}>{item.status || '-'}</span>
               </div>
               <div className="channel-card-body">
-                <MetricLine label="用户" value={item.user_name || item.user_id} />
+                <MetricLine label="账户" value={item.account_name || item.account_id} />
                 <MetricLine label="分组" value={item.group_name || item.group_id || '-'} />
                 <MetricLine label="到期" value={formatDateTime(item.expires_at)} />
               </div>
             </div>
-          )) : <Empty>当前用户暂无订阅。</Empty>}
+          )) : <Empty>当前账户暂无订阅。</Empty>}
         </div>
       </Panel>
     </section>

@@ -13,15 +13,15 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
   const overview = overviewQuery.data || {};
   const billing = billingQuery.data || {};
   const summary = billing.summary || {};
-  const topUsers = overview.top_users || [];
+  const topAccounts = overview.top_accounts || [];
   const topGroups = overview.top_groups || [];
 
   const operationCards = useMemo(() => ([
     {
       to: '/users',
       icon: <Users size={20} />,
-      title: '用户管理',
-      desc: '管理用户状态、角色、余额和订阅关系',
+      title: '账户管理',
+      desc: '管理账户状态、角色、余额和订阅关系',
       tone: 'blue',
     },
     {
@@ -42,7 +42,7 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
       to: '/billing',
       icon: <Coins size={20} />,
       title: '计费分析',
-      desc: '按用户、分组、计划和订单核账',
+      desc: '按账户、分组、计划和订单核账',
       tone: 'green',
     },
   ]), []);
@@ -52,10 +52,10 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>仪表盘</strong>
-          <span>对齐 SUB2 的管理员总览口径，聚焦用户、分组、请求和计费核心数据。</span>
+          <span>对齐 SUB2 的管理员总览口径，聚焦账户、分组、请求和计费核心数据。</span>
         </div>
         <div className="overview-command-actions">
-          <Link to="/users" className="btn">用户管理</Link>
+          <Link to="/users" className="btn">账户管理</Link>
           <Link to="/groups" className="btn">分组管理</Link>
           <Link to="/billing" className="btn btn-primary">计费管理</Link>
         </div>
@@ -63,7 +63,7 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
 
       <div className="dashboard-stats-grid">
         <DashboardStat icon={<KeyRound size={18} />} label="API Key" value={formatNumber(keys?.managed_key_count ?? 0)} sub={`${formatNumber(keys?.managed_enabled_count ?? 0)} 个启用`} tone="blue" />
-        <DashboardStat icon={<Users size={18} />} label="用户" value={formatNumber(overview.user_count ?? 0)} sub={`Top ${formatNumber(topUsers.length)} 已加载`} tone="green" />
+        <DashboardStat icon={<Users size={18} />} label="账户" value={formatNumber(overview.account_count ?? 0)} sub={`Top ${formatNumber(topAccounts.length)} 已加载`} tone="green" />
         <DashboardStat icon={<FolderTree size={18} />} label="分组" value={formatNumber(overview.group_count ?? 0)} sub={`Top ${formatNumber(topGroups.length)} 已加载`} tone="amber" />
         <DashboardStat icon={<ListChecks size={18} />} label="请求" value={formatNumber(summary.request_count ?? overview.request_count ?? 0)} sub={`错误 ${formatNumber(summary.error_count ?? overview.error_count ?? 0)}`} tone="violet" />
       </div>
@@ -98,9 +98,9 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
 
       <div className="dashboard-charts-grid">
         <Panel className="dashboard-card">
-          <PanelHead title="重点用户" action={<Link to="/users" className="panel-link">查看全部 <ArrowRight size={14} /></Link>} />
+          <PanelHead title="重点账户" action={<Link to="/users" className="panel-link">查看全部 <ArrowRight size={14} /></Link>} />
           <div className="recent-usage-list">
-            {topUsers.length ? topUsers.map((item) => (
+            {topAccounts.length ? topAccounts.map((item) => (
               <div className="recent-usage-item" key={item.id}>
                 <div className="recent-usage-icon"><Users size={17} /></div>
                 <div className="recent-usage-main">
@@ -114,7 +114,7 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
                   </span>
                 </div>
               </div>
-            )) : <Empty>暂无用户数据。</Empty>}
+            )) : <Empty>暂无账户数据。</Empty>}
           </div>
         </Panel>
 

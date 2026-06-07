@@ -6,12 +6,12 @@ import { useUserCenter } from '../state/userCenterContext';
 import { formatNumber, formatUsdCost } from '../utils';
 
 export function UserSubscriptionsPage() {
-  const { selectedUser, selectedUserId, subscriptions } = useUserCenter();
+  const { selectedAccount, selectedAccountId, subscriptions } = useUserCenter();
   const [statusFilter, setStatusFilter] = useState('');
   const [inspectSubscription, setInspectSubscription] = useState<any | null>(null);
   const rows = useMemo(
-    () => subscriptions.filter((item) => (!selectedUserId || item.user_id === selectedUserId) && (!statusFilter || item.status === statusFilter)),
-    [selectedUserId, statusFilter, subscriptions],
+    () => subscriptions.filter((item) => (!selectedAccountId || item.account_id === selectedAccountId) && (!statusFilter || item.status === statusFilter)),
+    [selectedAccountId, statusFilter, subscriptions],
   );
   const activeRows = rows.filter((item) => item.status === 'active');
 
@@ -20,10 +20,10 @@ export function UserSubscriptionsPage() {
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>我的订阅</strong>
-          <span>参考 SUB2 订阅页，把当前用户的分组、有效期和状态集中展示。</span>
+          <span>参考 SUB2 订阅页，把当前业务账户的分组、有效期和状态集中展示。</span>
         </div>
         <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>当前账户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '请选择用户'}</small></div>
+          <div className="sub2-inline-summary-item"><span>当前账户</span><strong>{selectedAccount?.name || '未选择账户'}</strong><small>{selectedAccount?.group_name || selectedAccount?.source_type || '请选择账户'}</small></div>
           <div className="sub2-inline-summary-item"><span>订阅总数</span><strong>{formatNumber(rows.length)}</strong><small>有效 {formatNumber(activeRows.length)}</small></div>
           <div className="sub2-inline-summary-item"><span>套餐金额</span><strong>{formatUsdCost(rows.reduce((sum, item) => sum + Number(item.price_cents || 0), 0) / 100, 2)}</strong><small>按订阅价格累计</small></div>
           <div className="sub2-inline-summary-item"><span>待续费</span><strong>{formatNumber(rows.filter((item) => item.status !== 'active').length)}</strong><small>过期或停用订阅</small></div>
@@ -65,7 +65,7 @@ export function UserSubscriptionsPage() {
               <UsageMeter label="月用量" used={Number(item.monthly_used || 0)} limit={Number(item.monthly_limit || 0)} />
             </div>
           </Panel>
-        )) : <Empty>当前用户暂无订阅。</Empty>}
+        )) : <Empty>当前账户暂无订阅。</Empty>}
       </div>
 
       {inspectSubscription ? (
@@ -89,7 +89,7 @@ export function UserSubscriptionsPage() {
               <div className="admin-dialog-summary-card">
                 <span>分组</span>
                 <strong>{inspectSubscription.group_name || inspectSubscription.group_id || '-'}</strong>
-                <small>{inspectSubscription.user_name || inspectSubscription.user_id || '-'}</small>
+                <small>{inspectSubscription.account_name || inspectSubscription.account_id || '-'}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>价格</span>

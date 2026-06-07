@@ -85,7 +85,7 @@ class AdminPaymentsMixin(AdminServiceBase):
         if self.storage is None:
             return {"ok": True, "items": [], "total": 0}
         plans = {str(item.get("id") or ""): item for item in self.list_subscription_plans().get("items", [])}
-        users = {str(item.get("id") or ""): item for item in self.list_users(limit=5000).get("items", [])}
+        accounts = {str(item.get("id") or ""): item for item in self.list_accounts(limit=5000).get("items", [])}
         channels = {str(item.get("id") or ""): item for item in self.list_payment_channels().get("items", [])}
         items = []
         for row in self.storage.list_admin_payment_orders():
@@ -93,7 +93,8 @@ class AdminPaymentsMixin(AdminServiceBase):
             items.append(
                 {
                     **row,
-                    "user_name": coerce_text(users.get(str(row.get("user_id") or ""), {}).get("name")) or coerce_text(row.get("user_id")),
+                    "account_id": coerce_text(row.get("user_id")),
+                    "account_name": coerce_text(accounts.get(str(row.get("user_id") or ""), {}).get("name")) or coerce_text(row.get("user_id")),
                     "plan_name": coerce_text(plans.get(str(row.get("plan_id") or ""), {}).get("name")) or coerce_text(row.get("plan_id")),
                     "channel_name": coerce_text(channels.get(str(row.get("channel_id") or ""), {}).get("name")) or coerce_text(row.get("channel_id")),
                     "rate_multiplier": payload.get("rate_multiplier"),
@@ -107,16 +108,16 @@ class AdminPaymentsMixin(AdminServiceBase):
     def create_payment_order(self, payload: dict) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
-        user_id = coerce_text(payload.get("user_id"))
+        account_id = coerce_text(payload.get("account_id")) or coerce_text(payload.get("user_id"))
         plan_id = coerce_text(payload.get("plan_id"))
         channel_id = coerce_text(payload.get("channel_id"))
         amount_cents = safe_int(payload.get("amount_cents"))
-        if not user_id or not plan_id:
-            raise ValueError("user_id and plan_id are required")
-        user = self.storage.get_admin_user(user_id)
-        if not user:
-            raise ValueError("user not found")
-        self._validate_user_active(user)
+        if not account_id or not plan_id:
+            raise ValueError("account_id and plan_id are required")
+        account = self.storage.get_admin_user(account_id)
+        if not account:
+            raise ValueError("account not found")
+        self._validate_account_active(account)
         plan = next((item for item in self.storage.list_admin_subscription_plans() if coerce_text(item.get("id")) == plan_id), None)
         if not plan:
             raise ValueError("subscription plan not found")
@@ -124,7 +125,7 @@ class AdminPaymentsMixin(AdminServiceBase):
         group = self._group_record(resolved_group_id)
         if resolved_group_id:
             self._validate_group_set([resolved_group_id])
-            self._validate_user_allowed_groups(user, [resolved_group_id])
+            self._validate_account_allowed_groups(account, [resolved_group_id])
         resolved_amount_cents, applied_multiplier = self._resolve_plan_amount_cents(plan, resolved_group_id)
         if amount_cents <= 0:
             amount_cents = resolved_amount_cents
@@ -138,7 +139,7 @@ class AdminPaymentsMixin(AdminServiceBase):
         }
         item = normalize_admin_payment_order_payload({
             "id": f"order_{uuid.uuid4().hex[:16]}",
-            "user_id": user_id,
+            "user_id": account_id,
             "plan_id": plan_id,
             "subscription_id": "",
             "channel_id": channel_id,
@@ -228,13 +229,13 @@ class AdminPaymentsMixin(AdminServiceBase):
         plan = next((item for item in self.list_subscription_plans().get("items", []) if coerce_text(item.get("id")) == plan_id), None)
         if not plan:
             raise ValueError("subscription plan not found")
-        user = self.storage.get_admin_user(coerce_text(current.get("user_id")))
-        if not user:
-            raise ValueError("user not found")
+        account = self.storage.get_admin_user(coerce_text(current.get("user_id")))
+        if not account:
+            raise ValueError("account not found")
         resolved_group_id = self._resolve_plan_group_id(plan, current)
         if resolved_group_id:
             self._validate_group_set([resolved_group_id])
-            self._validate_user_allowed_groups(user, [resolved_group_id])
+            self._validate_account_allowed_groups(account, [resolved_group_id])
 
         now = payload.get("paid_at") or time.time()
         expires_at = float(now) + max(1, safe_int(plan.get("validity_days") or 30)) * 86400

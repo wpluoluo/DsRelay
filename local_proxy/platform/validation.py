@@ -4,14 +4,14 @@ from dataclasses import asdict
 from typing import Any
 
 from .models import (
+    AccountRole,
+    AccountSourceType,
+    AccountStatus,
+    AdminAccountRecord,
     AdminGroupRecord,
     AdminPaymentChannelRecord,
     AdminPaymentOrderRecord,
-    AdminUserRecord,
     PaymentStatus,
-    UserRole,
-    UserSourceType,
-    UserStatus,
 )
 
 
@@ -33,19 +33,19 @@ def _float(value: Any, *, default: float = 0.0) -> float:
         return default
 
 
-def normalize_admin_user_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    source_type = _text(payload.get("source_type"), default=UserSourceType.MANAGED)
-    if source_type not in {item.value for item in UserSourceType}:
-        source_type = UserSourceType.MANAGED
-    role = _text(payload.get("role"), default=UserRole.USER)
-    if role not in {item.value for item in UserRole}:
-        role = UserRole.USER
-    status = _text(payload.get("status"), default=UserStatus.ACTIVE)
-    if status not in {item.value for item in UserStatus}:
-        status = UserStatus.ACTIVE
+def normalize_admin_account_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    source_type = _text(payload.get("source_type"), default=AccountSourceType.MANAGED)
+    if source_type not in {item.value for item in AccountSourceType}:
+        source_type = AccountSourceType.MANAGED
+    role = _text(payload.get("role"), default=AccountRole.USER)
+    if role not in {item.value for item in AccountRole}:
+        role = AccountRole.USER
+    status = _text(payload.get("status"), default=AccountStatus.ACTIVE)
+    if status not in {item.value for item in AccountStatus}:
+        status = AccountStatus.ACTIVE
     allowed_group_ids = payload.get("allowed_group_ids") if isinstance(payload.get("allowed_group_ids"), list) else []
     extra = payload.get("extra") if isinstance(payload.get("extra"), dict) else {}
-    record = AdminUserRecord(
+    record = AdminAccountRecord(
         id=_text(payload.get("id")),
         name=_text(payload.get("name")),
         external_key=_text(payload.get("external_key")),

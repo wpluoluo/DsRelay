@@ -64,18 +64,18 @@ class AdminAnalyticsMixin(AdminServiceBase):
             filtered.append(row)
         return filtered
 
-    def list_users(self, limit: int = 200) -> dict:
+    def list_accounts(self, limit: int = 200) -> dict:
         rows = self._load_recent_requests()
         groups, memberships = self._group_map()
-        users: dict[str, dict] = {}
+        accounts: dict[str, dict] = {}
         for row in rows:
             consumer_id, consumer_name, consumer_type, preview = self._consumer_key(row)
-            resolved = self._resolve_user_metadata(consumer_id, consumer_name, consumer_type, preview)
-            user_id = resolved["id"]
-            group_ids = memberships.get(user_id, [])
+            resolved = self._resolve_account_metadata(consumer_id, consumer_name, consumer_type, preview)
+            account_id = resolved["id"]
+            group_ids = memberships.get(account_id, [])
             primary_group = groups.get(group_ids[0], {}) if group_ids else {}
-            entry = users.setdefault(
-                user_id,
+            entry = accounts.setdefault(
+                account_id,
                 {
                     **resolved,
                     "request_count": 0,
@@ -103,16 +103,16 @@ class AdminAnalyticsMixin(AdminServiceBase):
             if started_at and started_at > coerce_text(entry.get("last_seen_at")):
                 entry["last_seen_at"] = started_at
 
-        stored_users = self._managed_users()
-        for external_key, stored in stored_users.items():
-            user_id = coerce_text(stored.get("id"))
-            if not user_id or user_id in users:
+        stored_accounts = self._managed_accounts()
+        for external_key, stored in stored_accounts.items():
+            account_id = coerce_text(stored.get("id"))
+            if not account_id or account_id in accounts:
                 continue
-            group_ids = memberships.get(user_id, [])
+            group_ids = memberships.get(account_id, [])
             primary_group = groups.get(group_ids[0], {}) if group_ids else {}
-            users[user_id] = {
-                "id": user_id,
-                "name": coerce_text(stored.get("name")) or "未命名用户",
+            accounts[account_id] = {
+                "id": account_id,
+                "name": coerce_text(stored.get("name")) or "未命名账户",
                 "source_type": coerce_text(stored.get("source_type")) or "managed",
                 "preview": "",
                 "external_key": external_key,
@@ -135,15 +135,15 @@ class AdminAnalyticsMixin(AdminServiceBase):
                 "group_ids": group_ids,
                 "group_id": coerce_text(primary_group.get("id")) or "",
                 "group_name": coerce_text(primary_group.get("name")) or "",
-                **self._get_user_subscription_status(user_id),
+                **self._get_account_subscription_status(account_id),
             }
 
-        for item in users.values():
+        for item in accounts.values():
             if "subscription_active" not in item:
-                item.update(self._get_user_subscription_status(coerce_text(item.get("id"))))
+                item.update(self._get_account_subscription_status(coerce_text(item.get("id"))))
 
         items = sorted(
-            users.values(),
+            accounts.values(),
             key=lambda item: (
                 -safe_int(item.get("request_count")),
                 -safe_int(item.get("total_tokens")),
@@ -177,9 +177,9 @@ class AdminAnalyticsMixin(AdminServiceBase):
 
         for row in rows:
             consumer_id, consumer_name, consumer_type, preview = self._consumer_key(row)
-            resolved = self._resolve_user_metadata(consumer_id, consumer_name, consumer_type, preview)
-            user_id = resolved["id"]
-            target_group_ids = memberships.get(user_id) or []
+            resolved = self._resolve_account_metadata(consumer_id, consumer_name, consumer_type, preview)
+            account_id = resolved["id"]
+            target_group_ids = memberships.get(account_id) or []
             if not target_group_ids:
                 target_group_ids = [f"default:{resolved['source_type']}"]
                 stored_groups.setdefault(
@@ -215,7 +215,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
                         "output_bytes": 0,
                     },
                 )
-                entry["user_ids"].add(user_id)
+                entry["user_ids"].add(account_id)
                 entry["request_count"] += 1
                 if row.get("error") or safe_int(row.get("status_code")) >= 400:
                     entry["error_count"] += 1
@@ -225,7 +225,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
 
         items = []
         for entry in stored_groups.values():
-            items.append({**entry, "user_count": len(entry.get("user_ids") or [])})
+            items.append({**entry, "account_count": len(entry.get("user_ids") or [])})
             items[-1].pop("user_ids", None)
         items.sort(key=lambda item: (safe_int(item.get("sort_order")), -safe_int(item.get("request_count")), coerce_text(item.get("name"))))
         return {"ok": True, "items": items, "total": len(items)}
@@ -250,7 +250,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
         items = []
         for row in rows[:limit]:
             consumer_id, consumer_name, consumer_type, preview = self._consumer_key(row)
-            resolved = self._resolve_user_metadata(consumer_id, consumer_name, consumer_type, preview)
+            resolved = self._resolve_account_metadata(consumer_id, consumer_name, consumer_type, preview)
             prompt_tokens = safe_int(row.get("prompt_tokens"))
             completion_tokens = safe_int(row.get("completion_tokens"))
             total_tokens = safe_int(row.get("total_tokens")) or (prompt_tokens + completion_tokens)
@@ -341,7 +341,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
             "active_subscription_count": 0,
             "covered_request_count": 0,
         }
-        by_user: dict[str, dict] = {}
+        by_account: dict[str, dict] = {}
         by_group: dict[str, dict] = {}
         by_plan: dict[str, dict] = {}
         by_subscription: dict[str, dict] = {}
@@ -370,8 +370,8 @@ class AdminAnalyticsMixin(AdminServiceBase):
             subscription_id = coerce_text(item.get("subscription_id"))
             plan_id = coerce_text(item.get("plan_id"))
             group_id = coerce_text(item.get("group_id"))
-            user_id = coerce_text(item.get("consumer_id"))
-            user_name = coerce_text(item.get("consumer_name")) or "未命名用户"
+            account_id = coerce_text(item.get("consumer_id"))
+            account_name = coerce_text(item.get("consumer_name")) or "未命名账户"
             plan_name = coerce_text(item.get("plan_name")) or "未关联计划"
             group_name = coerce_text(item.get("group_name")) or "未分组"
             plan_price_cents = max(0, safe_int(item.get("plan_price_cents")))
@@ -380,8 +380,8 @@ class AdminAnalyticsMixin(AdminServiceBase):
             related_orders = []
             if subscription_id:
                 related_orders = orders_by_subscription.get(subscription_id, [])
-            elif user_id and plan_id:
-                related_orders = orders_by_user_plan.get((user_id, plan_id), [])
+            elif account_id and plan_id:
+                related_orders = orders_by_user_plan.get((account_id, plan_id), [])
             if related_orders:
                 paid_orders = [order for order in related_orders if coerce_text(order.get("status")) == "paid"]
                 chosen_order = (paid_orders or related_orders)[-1]
@@ -398,8 +398,8 @@ class AdminAnalyticsMixin(AdminServiceBase):
                         {
                             "order_id": order_id,
                             "subscription_id": coerce_text(chosen_order.get("subscription_id")),
-                            "user_id": coerce_text(chosen_order.get("user_id")),
-                            "user_name": coerce_text(chosen_order.get("user_name")) or user_name,
+                            "account_id": coerce_text(chosen_order.get("user_id")),
+                            "account_name": coerce_text(chosen_order.get("user_name")) or account_name,
                             "plan_id": coerce_text(chosen_order.get("plan_id")) or plan_id,
                             "plan_name": coerce_text(chosen_order.get("plan_name")) or plan_name,
                             "group_id": coerce_text(chosen_order.get("group_id")) or group_id,
@@ -450,11 +450,11 @@ class AdminAnalyticsMixin(AdminServiceBase):
             if subscription_id:
                 summary["covered_request_count"] += 1
 
-            user_entry = by_user.setdefault(
-                user_id or "anonymous",
+            account_entry = by_account.setdefault(
+                account_id or "anonymous",
                 {
-                    "user_id": user_id or "anonymous",
-                    "user_name": user_name,
+                    "account_id": account_id or "anonymous",
+                    "account_name": account_name,
                     "consumer_type": coerce_text(item.get("consumer_type")),
                     "group_ids": set(),
                     "group_names": set(),
@@ -476,36 +476,36 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     "account_cost": 0.0,
                 },
             )
-            user_entry["request_count"] += request_count
-            user_entry["error_count"] += error_count
-            user_entry["prompt_tokens"] += prompt_tokens
-            user_entry["completion_tokens"] += completion_tokens
-            user_entry["total_tokens"] += total_tokens
-            user_entry["input_bytes"] += input_bytes
-            user_entry["output_bytes"] += output_bytes
-            user_entry["cache_read_tokens"] += cache_read_tokens
-            user_entry["cache_write_tokens"] += cache_write_tokens
-            user_entry["amount_cents"] += amount_cents
-            user_entry["total_cost"] += total_cost
-            user_entry["actual_cost"] += actual_cost
-            user_entry["account_cost"] += account_cost
+            account_entry["request_count"] += request_count
+            account_entry["error_count"] += error_count
+            account_entry["prompt_tokens"] += prompt_tokens
+            account_entry["completion_tokens"] += completion_tokens
+            account_entry["total_tokens"] += total_tokens
+            account_entry["input_bytes"] += input_bytes
+            account_entry["output_bytes"] += output_bytes
+            account_entry["cache_read_tokens"] += cache_read_tokens
+            account_entry["cache_write_tokens"] += cache_write_tokens
+            account_entry["amount_cents"] += amount_cents
+            account_entry["total_cost"] += total_cost
+            account_entry["actual_cost"] += actual_cost
+            account_entry["account_cost"] += account_cost
             if group_id:
-                user_entry["group_ids"].add(group_id)
+                account_entry["group_ids"].add(group_id)
             if group_name:
-                user_entry["group_names"].add(group_name)
+                account_entry["group_names"].add(group_name)
             if plan_id:
-                user_entry["plan_ids"].add(plan_id)
+                account_entry["plan_ids"].add(plan_id)
             if plan_name:
-                user_entry["plan_names"].add(plan_name)
+                account_entry["plan_names"].add(plan_name)
             if subscription_id:
-                user_entry["subscription_ids"].add(subscription_id)
+                account_entry["subscription_ids"].add(subscription_id)
 
             group_entry = by_group.setdefault(
                 group_id or "ungrouped",
                 {
                     "group_id": group_id or "",
                     "group_name": group_name,
-                    "user_ids": set(),
+                    "account_ids": set(),
                     "plan_ids": set(),
                     "subscription_ids": set(),
                     "request_count": 0,
@@ -519,7 +519,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     "account_cost": 0.0,
                 },
             )
-            group_entry["user_ids"].add(user_id or "anonymous")
+            group_entry["account_ids"].add(account_id or "anonymous")
             if plan_id:
                 group_entry["plan_ids"].add(plan_id)
             if subscription_id:
@@ -542,7 +542,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     "group_id": group_id,
                     "group_name": group_name,
                     "plan_price_cents": plan_price_cents,
-                    "user_ids": set(),
+                    "account_ids": set(),
                     "subscription_ids": set(),
                     "request_count": 0,
                     "error_count": 0,
@@ -555,7 +555,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     "account_cost": 0.0,
                 },
             )
-            plan_entry["user_ids"].add(user_id or "anonymous")
+            plan_entry["account_ids"].add(account_id or "anonymous")
             if subscription_id:
                 plan_entry["subscription_ids"].add(subscription_id)
             plan_entry["request_count"] += request_count
@@ -575,8 +575,8 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     {
                         "subscription_id": subscription_id,
                         "status": coerce_text(subscription.get("status")) or "unknown",
-                        "user_id": user_id,
-                        "user_name": user_name,
+                        "account_id": account_id,
+                        "account_name": account_name,
                         "plan_id": plan_id,
                         "plan_name": plan_name,
                         "group_id": group_id,
@@ -619,14 +619,14 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     normalized.pop(field, None)
                 items.append(normalized)
             sort_keys = sort_keys or ["amount_cents", "total_tokens", "request_count"]
-            items.sort(key=lambda item: tuple(-safe_int(item.get(key)) for key in sort_keys) + (coerce_text(item.get("user_name") or item.get("group_name") or item.get("plan_name") or item.get("subscription_id")),))
+            items.sort(key=lambda item: tuple(-safe_int(item.get(key)) for key in sort_keys) + (coerce_text(item.get("account_name") or item.get("group_name") or item.get("plan_name") or item.get("subscription_id")),))
             return items
 
         return {
             "ok": True,
             "summary": summary,
-            "by_user": _normalize(
-                by_user,
+            "by_account": _normalize(
+                by_account,
                 set_fields={
                     "group_ids": "group_ids",
                     "group_names": "group_names",
@@ -638,7 +638,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
             "by_group": _normalize(
                 by_group,
                 set_fields={
-                    "user_ids": "user_ids",
+                    "account_ids": "account_ids",
                     "plan_ids": "plan_ids",
                     "subscription_ids": "subscription_ids",
                 },
@@ -646,7 +646,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
             "by_plan": _normalize(
                 by_plan,
                 set_fields={
-                    "user_ids": "user_ids",
+                    "account_ids": "account_ids",
                     "subscription_ids": "subscription_ids",
                 },
             ),
@@ -658,13 +658,13 @@ class AdminAnalyticsMixin(AdminServiceBase):
         }
 
     def dashboard_summary(self) -> dict:
-        users = self.list_users(limit=500).get("items", [])
+        accounts = self.list_accounts(limit=500).get("items", [])
         groups = self.list_groups().get("items", [])
         usage = self.list_usage(limit=500).get("items", [])
         protocols = self.list_protocol_profiles().get("items", [])
         return {
             "ok": True,
-            "user_count": len(users),
+            "account_count": len(accounts),
             "group_count": len(groups),
             "protocol_count": len(protocols),
             "request_count": len(usage),
@@ -672,6 +672,6 @@ class AdminAnalyticsMixin(AdminServiceBase):
             "input_bytes": sum(safe_int(item.get("input_bytes")) for item in usage),
             "output_bytes": sum(safe_int(item.get("output_bytes")) for item in usage),
             "error_count": sum(1 for item in usage if safe_int(item.get("status_code")) >= 400 or item.get("error")),
-            "top_users": users[:5],
+            "top_accounts": accounts[:5],
             "top_groups": groups[:5],
         }

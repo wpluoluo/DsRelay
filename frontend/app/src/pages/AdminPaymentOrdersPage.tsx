@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { BadgeCheck, CreditCard, Eye, Plus, RefreshCw, ReceiptText, ShieldCheck, Wallet } from 'lucide-react';
-import { createAdminPaymentOrder, fetchAdminPaymentChannels, fetchAdminPaymentOrders, fetchAdminSubscriptionPlans, fetchAdminUsers, updateAdminPaymentOrderStatus } from '../api';
+import { createAdminPaymentOrder, fetchAdminAccounts, fetchAdminPaymentChannels, fetchAdminPaymentOrders, fetchAdminSubscriptionPlans, updateAdminPaymentOrderStatus } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
 import { ActionButton, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { queryClient } from '../state/queryClient';
@@ -12,7 +12,7 @@ const STORAGE_KEY = 'admin-payment-orders-view-state';
 
 export function AdminPaymentOrdersPage() {
   const ordersQuery = useQuery({ queryKey: ['admin-payment-orders'], queryFn: fetchAdminPaymentOrders, refetchInterval: 10000 });
-  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, refetchInterval: 10000 });
+  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
   const plansQuery = useQuery({ queryKey: ['admin-subscription-plans'], queryFn: fetchAdminSubscriptionPlans, refetchInterval: 10000 });
   const channelsQuery = useQuery({ queryKey: ['admin-payment-channels'], queryFn: fetchAdminPaymentChannels, refetchInterval: 10000 });
   const [draft, setDraft] = useState<any | null>(null);
@@ -58,14 +58,14 @@ export function AdminPaymentOrdersPage() {
   const plans = plansQuery.data?.items || [];
   const channels = channelsQuery.data?.items || [];
   const selectedPlan = draft?.plan_id ? plans.find((plan) => plan.id === draft.plan_id) : undefined;
-  const selectedUser = draft?.user_id ? users.find((user) => user.id === draft.user_id) : undefined;
+  const selectedAccount = draft?.account_id ? users.find((user) => user.id === draft.account_id) : undefined;
   const selectedChannel = draft?.channel_id ? channels.find((channel) => channel.id === draft.channel_id) : undefined;
 
   const filteredItems = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     return items.filter((item) => {
       if (keyword) {
-        const haystack = [item.id, item.user_name, item.user_id, item.plan_name, item.plan_id, item.channel_name, item.provider_order_id].map((value) => String(value || '').toLowerCase()).join(' ');
+        const haystack = [item.id, item.account_name, item.account_id, item.plan_name, item.plan_id, item.channel_name, item.provider_order_id].map((value) => String(value || '').toLowerCase()).join(' ');
         if (!haystack.includes(keyword)) return false;
       }
       if (statusFilter && item.status !== statusFilter) return false;
@@ -141,7 +141,7 @@ export function AdminPaymentOrdersPage() {
                     <span>切换 50 / 页</span>
                   </button>
                 </ToolsMenu>
-                <Button tone="primary" onClick={() => setDraft({ user_id: '', plan_id: '', channel_id: '', amount_cents: 0, currency: 'CNY' })}>
+                <Button tone="primary" onClick={() => setDraft({ account_id: '', plan_id: '', channel_id: '', amount_cents: 0, currency: 'CNY' })}>
                   <Plus size={15} />创建订单
                 </Button>
               </ToolbarButtonRow>
@@ -166,7 +166,7 @@ export function AdminPaymentOrdersPage() {
               <thead>
                 <tr>
                   <th>订单</th>
-                  <th>用户</th>
+                  <th>账户</th>
                   <th>计划</th>
                   <th>分组 / 定价</th>
                   <th>通道</th>
@@ -186,7 +186,7 @@ export function AdminPaymentOrdersPage() {
                         <small>{item.provider_order_id || item.resume_token || '-'}</small>
                       </div>
                     </td>
-                    <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.user_name || item.user_id}</strong><small>{item.user_id}</small></div></td>
+                    <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.account_name || item.account_id}</strong><small>{item.account_id}</small></div></td>
                     <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.plan_name || item.plan_id}</strong><small>{item.plan_id}</small></div></td>
                     <td>
                       <div className="sub2-cell-stack sub2-cell-stack-tight">
@@ -228,13 +228,13 @@ export function AdminPaymentOrdersPage() {
                           <RowAction
                             icon={BadgeCheck}
                             label="完成"
-                            onClick={() => setStatusTarget({ id: item.id, status: 'paid', title: '确认完成订单', subtitle: `${item.user_name || item.user_id || item.id} · ${item.plan_name || item.plan_id || '-'}` })}
+                            onClick={() => setStatusTarget({ id: item.id, status: 'paid', title: '确认完成订单', subtitle: `${item.account_name || item.account_id || item.id} · ${item.plan_name || item.plan_id || '-'}` })}
                           />
                           <RowAction
                             icon={ShieldCheck}
                             label="失败"
                             tone="warn"
-                            onClick={() => setStatusTarget({ id: item.id, status: 'failed', title: '确认标记失败', subtitle: `${item.user_name || item.user_id || item.id} · ${item.plan_name || item.plan_id || '-'}` })}
+                            onClick={() => setStatusTarget({ id: item.id, status: 'failed', title: '确认标记失败', subtitle: `${item.account_name || item.account_id || item.id} · ${item.plan_name || item.plan_id || '-'}` })}
                           />
                         </RowActions>
                       )}
@@ -245,7 +245,7 @@ export function AdminPaymentOrdersPage() {
                     colSpan={10}
                     title="暂无支付订单"
                     description="当前没有可展示的支付订单记录。"
-                    action={<Button tone="primary" onClick={() => setDraft({ user_id: '', plan_id: '', channel_id: '', amount_cents: 0, currency: 'CNY' })}>创建订单</Button>}
+                    action={<Button tone="primary" onClick={() => setDraft({ account_id: '', plan_id: '', channel_id: '', amount_cents: 0, currency: 'CNY' })}>创建订单</Button>}
                   />
                 )}
               </tbody>
@@ -270,7 +270,7 @@ export function AdminPaymentOrdersPage() {
           title="创建支付订单"
           size="md"
           onClose={() => setDraft(null)}
-          footer={<ModalActions><Button onClick={() => setDraft(null)}>取消</Button><Button tone="primary" disabled={createMutation.isPending || !draft.user_id || !draft.plan_id} onClick={() => createMutation.mutate(draft)}>创建</Button></ModalActions>}
+          footer={<ModalActions><Button onClick={() => setDraft(null)}>取消</Button><Button tone="primary" disabled={createMutation.isPending || !draft.account_id || !draft.plan_id} onClick={() => createMutation.mutate(draft)}>创建</Button></ModalActions>}
         >
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
@@ -296,9 +296,9 @@ export function AdminPaymentOrdersPage() {
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
-                <span>目标用户</span>
-                <strong>{selectedUser?.name || '待选择用户'}</strong>
-                <small>{selectedUser?.group_name || selectedUser?.group_id || '未分组'}</small>
+                <span>目标账户</span>
+                <strong>{selectedAccount?.name || '待选择账户'}</strong>
+                <small>{selectedAccount?.group_name || selectedAccount?.group_id || '未分组'}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>选中计划</span>
@@ -317,7 +317,7 @@ export function AdminPaymentOrdersPage() {
                 <span>用户、计划、通道和金额会直接写入订单主记录</span>
               </div>
               <div className="admin-dialog-grid modal-grid">
-                <Field label="用户"><Select value={draft.user_id} onChange={(e) => setDraft({ ...draft, user_id: e.target.value })}><option value="">请选择用户</option>{users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</Select></Field>
+                <Field label="账户"><Select value={draft.account_id} onChange={(e) => setDraft({ ...draft, account_id: e.target.value })}><option value="">请选择账户</option>{users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</Select></Field>
                 <Field label="计划"><Select value={draft.plan_id} onChange={(e) => setDraft({ ...draft, plan_id: e.target.value })}><option value="">请选择计划</option>{plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</Select></Field>
                 <Field label="通道"><Select value={draft.channel_id} onChange={(e) => setDraft({ ...draft, channel_id: e.target.value })}><option value="">不指定</option>{channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}</Select></Field>
                 <Field label="金额(分)"><TextInput type="number" value={String(draft.amount_cents)} onChange={(e) => setDraft({ ...draft, amount_cents: Number(e.target.value || 0) })} /></Field>
@@ -417,7 +417,7 @@ function OrderInspect({ item, includePayload, includeOrderPayload }: { item: Adm
         <div className="admin-dialog-summary-card">
           <span>履约日志</span>
           <strong>{Array.isArray(item.fulfillment_logs) ? item.fulfillment_logs.length : 0} 条</strong>
-          <small>{item.user_name || item.user_id || '未识别用户'}</small>
+          <small>{item.account_name || item.account_id || '未识别账户'}</small>
         </div>
       </div>
       {includePayload ? (

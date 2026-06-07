@@ -10,7 +10,7 @@ import type { RequestEntry } from '../types';
 import { formatMs, formatNumber, formatTokenCount, formatUsdCost } from '../utils';
 
 export function UserUsagePage() {
-  const { selectedUser, selectedUserId } = useUserCenter();
+  const { selectedAccount, selectedAccountId } = useUserCenter();
   const usageQuery = useQuery({ queryKey: ['admin-usage'], queryFn: () => fetchAdminUsage(), refetchInterval: 10000 });
   const keysQuery = useQuery({ queryKey: ['admin-api-keys'], queryFn: fetchAdminApiKeys, refetchInterval: 10000 });
   const [filters, setFilters] = useState({ start: '', end: '', model: '', status: 'all', apiKeyId: '' });
@@ -22,10 +22,10 @@ export function UserUsagePage() {
     const modelNeedle = filters.model.trim().toLowerCase();
     const start = filters.start ? new Date(filters.start).getTime() : 0;
     const end = filters.end ? new Date(filters.end).getTime() : 0;
-    const currentKeyIds = new Set((keysQuery.data?.items || []).filter((item) => !selectedUserId || item.user_id === selectedUserId).map((item) => item.id));
+    const currentKeyIds = new Set((keysQuery.data?.items || []).filter((item) => !selectedAccountId || item.account_id === selectedAccountId).map((item) => item.id));
     return items
       .filter((row) => {
-        if (selectedUserId && row.consumer_id !== selectedUserId) return false;
+        if (selectedAccountId && row.consumer_id !== selectedAccountId) return false;
         if (filters.apiKeyId && String((row as any).api_key_id || '') !== filters.apiKeyId) return false;
         if (currentKeyIds.size && (row as any).api_key_id && !currentKeyIds.has(String((row as any).api_key_id))) return false;
         const started = row.started_at ? new Date(String(row.started_at).replace(',', '.')).getTime() : 0;
@@ -41,7 +41,7 @@ export function UserUsagePage() {
       })
       .map((row) => ({
         ...row,
-        remote: row.consumer_name || row.consumer_preview || row.consumer_type || '当前用户',
+        remote: row.consumer_name || row.consumer_preview || row.consumer_type || '当前账户',
         logical_model: row.model || row.resolved_model || '-',
         pool_name: row.pool_name || row.group_name || row.plan_name || '-',
         upstream_url: row.route_url || '',
@@ -51,7 +51,7 @@ export function UserUsagePage() {
         upstream_prompt_cache_status: row.upstream_cache_status || 'off',
         bytes_sent: Number(row.output_bytes || 0),
       }));
-  }, [filters, keysQuery.data?.items, selectedUserId, usageQuery.data?.items]);
+  }, [filters, keysQuery.data?.items, selectedAccountId, usageQuery.data?.items]);
 
   const pagedRows = useMemo(() => rows.slice((page - 1) * pageSize, page * pageSize), [rows, page, pageSize]);
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
@@ -142,7 +142,7 @@ export function UserUsagePage() {
             <SearchField value={filters.model} placeholder="搜索模型 / 线路" onChange={(value) => { setFilters((current) => ({ ...current, model: value })); setPage(1); }} />
             <Select value={filters.apiKeyId} onChange={(event) => { setFilters((current) => ({ ...current, apiKeyId: event.target.value })); setPage(1); }}>
               <option value="">全部 API Key</option>
-              {(keysQuery.data?.items || []).filter((item) => !selectedUserId || item.user_id === selectedUserId).map((item) => (
+              {(keysQuery.data?.items || []).filter((item) => !selectedAccountId || item.account_id === selectedAccountId).map((item) => (
                 <option key={item.id} value={item.id}>{item.name}</option>
               ))}
             </Select>
@@ -184,7 +184,7 @@ export function UserUsagePage() {
                 )) : (
                   <tr>
                     <td colSpan={7}>
-                      <EmptyState title="暂无使用记录" description={`当前账户 ${selectedUser?.name || ''} 在筛选条件下没有请求记录。`} />
+                      <EmptyState title="暂无使用记录" description={`当前账户 ${selectedAccount?.name || ''} 在筛选条件下没有请求记录。`} />
                     </td>
                   </tr>
                 )}

@@ -134,7 +134,7 @@ export function DashboardLayout() {
               <NavLink to="/logs" icon={<Server size={18} />} label="运行日志" />
             </NavGroup>
             <NavGroup
-              title="用户中心"
+              title="账户中心"
               open={menuOpen.userCenter}
               onToggle={() => setMenuOpen((current) => ({ ...current, userCenter: !current.userCenter }))}
             >
@@ -142,7 +142,7 @@ export function DashboardLayout() {
               <NavLink to="/purchase" icon={<CreditCard size={18} />} label="购买与订阅" />
               <NavLink to="/user-orders" icon={<CreditCard size={18} />} label="支付订单" />
               <NavLink to="/user-subscriptions" icon={<Ticket size={18} />} label="我的订阅" />
-              <NavLink to="/keys" icon={<KeyRound size={18} />} label="用户 API Key" />
+              <NavLink to="/keys" icon={<KeyRound size={18} />} label="账户 API Key" />
               <NavLink to="/usage" icon={<BarChart3 size={18} />} label="使用记录" />
             </NavGroup>
             <NavGroup
@@ -150,12 +150,12 @@ export function DashboardLayout() {
               open={menuOpen.admin}
               onToggle={() => setMenuOpen((current) => ({ ...current, admin: !current.admin }))}
             >
-              <NavLink to="/users" icon={<Users size={18} />} label="用户管理" />
+              <NavLink to="/users" icon={<Users size={18} />} label="账户管理" />
               <NavLink to="/groups" icon={<FolderTree size={18} />} label="分组管理" />
               <NavLink to="/user-api-keys" icon={<KeyRound size={18} />} label="业务 API Key" />
               <NavLink to="/billing" icon={<Coins size={18} />} label="计费管理" />
               <NavLink to="/subscription-plans" icon={<Ticket size={18} />} label="订阅计划" />
-              <NavLink to="/subscriptions" icon={<Ticket size={18} />} label="用户订阅" />
+              <NavLink to="/subscriptions" icon={<Ticket size={18} />} label="账户订阅" />
               <NavLink to="/payment-channels" icon={<CreditCard size={18} />} label="支付通道" />
               <NavLink to="/payment-orders" icon={<CreditCard size={18} />} label="支付订单" />
             </NavGroup>

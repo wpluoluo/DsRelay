@@ -47,7 +47,7 @@ class AdminSubscriptionsMixin(AdminServiceBase):
             raise ValueError("plan name is required")
         return {"ok": True, "item": self.storage.upsert_admin_subscription_plan(item)}
 
-    def list_user_subscriptions(self) -> dict:
+    def list_account_subscriptions(self) -> dict:
         if self.storage is None:
             return {"ok": True, "items": [], "total": 0}
         items = self.storage.list_admin_user_subscriptions()
@@ -61,6 +61,8 @@ class AdminSubscriptionsMixin(AdminServiceBase):
             normalized.append(
                 {
                     **item,
+                    "account_id": coerce_text(item.get("user_id")),
+                    "account_name": coerce_text(item.get("user_name")) or coerce_text(item.get("user_id")),
                     "group_name": coerce_text(item.get("group_name")) or coerce_text(group.get("name")),
                     "rate_multiplier": group.get("rate_multiplier"),
                     "daily_limit": safe_int(plan.get("daily_limit")),
@@ -73,24 +75,24 @@ class AdminSubscriptionsMixin(AdminServiceBase):
     def assign_subscription(self, payload: dict) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
-        user_id = coerce_text(payload.get("user_id"))
+        account_id = coerce_text(payload.get("account_id")) or coerce_text(payload.get("user_id"))
         plan_id = coerce_text(payload.get("plan_id"))
-        if not user_id or not plan_id:
-            raise ValueError("user_id and plan_id are required")
-        user = self.storage.get_admin_user(user_id)
-        if not user:
-            raise ValueError("user not found")
-        self._validate_user_active(user)
+        if not account_id or not plan_id:
+            raise ValueError("account_id and plan_id are required")
+        account = self.storage.get_admin_user(account_id)
+        if not account:
+            raise ValueError("account not found")
+        self._validate_account_active(account)
         plan = next((item for item in self.storage.list_admin_subscription_plans() if coerce_text(item.get("id")) == plan_id), None)
         if not plan:
             raise ValueError("subscription plan not found")
         resolved_group_id = self._resolve_plan_group_id(plan, payload)
         if resolved_group_id:
             self._validate_group_set([resolved_group_id])
-            self._validate_user_allowed_groups(user, [resolved_group_id])
+            self._validate_account_allowed_groups(account, [resolved_group_id])
         item = {
             "id": coerce_text(payload.get("id")) or f"sub_{uuid.uuid4().hex[:16]}",
-            "user_id": user_id,
+            "user_id": account_id,
             "plan_id": plan_id,
             "group_id": resolved_group_id,
             "status": coerce_text(payload.get("status")) or "active",

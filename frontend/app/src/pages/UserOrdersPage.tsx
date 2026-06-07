@@ -9,7 +9,7 @@ import { useUserCenter } from '../state/userCenterContext';
 import { formatNumber, formatUsdCost } from '../utils';
 
 export function UserOrdersPage() {
-  const { selectedUser, selectedUserId, orders, reload } = useUserCenter();
+  const { selectedAccount, selectedAccountId, orders, reload } = useUserCenter();
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -29,11 +29,11 @@ export function UserOrdersPage() {
 
   const filtered = useMemo(() => {
     return orders.filter((item) => {
-      if (selectedUserId && item.user_id !== selectedUserId) return false;
+      if (selectedAccountId && item.account_id !== selectedAccountId) return false;
       if (status && item.status !== status) return false;
       return true;
     });
-  }, [orders, selectedUserId, status]);
+  }, [orders, selectedAccountId, status]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const rows = filtered.slice((page - 1) * pageSize, page * pageSize);
@@ -45,10 +45,10 @@ export function UserOrdersPage() {
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>支付订单</strong>
-          <span>对齐 SUB2 用户订单页的入口逻辑，聚焦筛选、刷新和状态查看。</span>
+          <span>对齐 SUB2 账户订单页的入口逻辑，聚焦筛选、刷新和状态查看。</span>
         </div>
         <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>当前账户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.source_type || '请选择用户'}</small></div>
+          <div className="sub2-inline-summary-item"><span>当前账户</span><strong>{selectedAccount?.name || '未选择账户'}</strong><small>{selectedAccount?.source_type || '请选择账户'}</small></div>
           <div className="sub2-inline-summary-item"><span>订单总数</span><strong>{formatNumber(filtered.length)}</strong><small>当前筛选范围</small></div>
           <div className="sub2-inline-summary-item"><span>待支付</span><strong>{formatNumber(pendingCount)}</strong><small>已支付 {formatNumber(paidCount)}</small></div>
           <div className="sub2-inline-summary-item"><span>累计金额</span><strong>{formatUsdCost(filtered.reduce((sum, item) => sum + Number(item.final_price_cents ?? item.amount_cents ?? 0), 0) / 100, 2)}</strong><small>按订单金额聚合</small></div>
@@ -86,7 +86,7 @@ export function UserOrdersPage() {
               <tbody>
                 {rows.length ? rows.map((item) => (
                   <tr key={item.id}>
-                    <td><div className="sub2-cell-stack"><strong>{item.id}</strong><small>{item.user_name || item.user_id}</small></div></td>
+                    <td><div className="sub2-cell-stack"><strong>{item.id}</strong><small>{item.account_name || item.account_id}</small></div></td>
                     <td><div className="sub2-cell-stack"><strong>{item.plan_name || item.plan_id}</strong><small>{item.group_name || item.group_id || '-'}</small></div></td>
                     <td><div className="sub2-cell-stack"><strong>{item.channel_name || item.channel_id || item.provider || '-'}</strong><small>{item.provider_order_id || item.resume_token || '-'}</small></div></td>
                     <td><strong className="sub2-number-cell">{formatUsdCost(Number(item.final_price_cents ?? item.amount_cents ?? 0) / 100, 2)}</strong></td>
@@ -104,7 +104,7 @@ export function UserOrdersPage() {
                 )) : (
                   <tr>
                     <td colSpan={7}>
-                      <EmptyState title="暂无订单" description="当前用户还没有订单记录。" />
+                      <EmptyState title="暂无订单" description="当前账户还没有订单记录。" />
                     </td>
                   </tr>
                 )}

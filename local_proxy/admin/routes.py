@@ -11,48 +11,48 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
     @app.get("/admin/users")
     @admin_required
     def admin_users():
-        return jsonify(analytics_service.list_users())
+        return jsonify(analytics_service.list_accounts())
 
     @app.post("/admin/users")
     @admin_required
     def admin_users_upsert():
         payload = request.get_json(silent=True) or {}
-        return jsonify(analytics_service.upsert_user(payload))
+        return jsonify(analytics_service.upsert_account(payload))
 
-    @app.get("/admin/users/<user_id>")
+    @app.get("/admin/users/<account_id>")
     @admin_required
-    def admin_user_get(user_id: str):
-        return jsonify(analytics_service.get_user(user_id))
+    def admin_account_get(account_id: str):
+        return jsonify(analytics_service.get_account(account_id))
 
-    @app.post("/admin/users/<user_id>/balance")
+    @app.post("/admin/users/<account_id>/balance")
     @admin_required
-    def admin_user_balance(user_id: str):
+    def admin_account_balance(account_id: str):
         payload = request.get_json(silent=True) or {}
-        return jsonify(analytics_service.set_user_balance(user_id, payload))
+        return jsonify(analytics_service.set_account_balance(account_id, payload))
 
-    @app.post("/admin/users/<user_id>/concurrency")
+    @app.post("/admin/users/<account_id>/concurrency")
     @admin_required
-    def admin_user_concurrency(user_id: str):
+    def admin_account_concurrency(account_id: str):
         payload = request.get_json(silent=True) or {}
-        return jsonify(analytics_service.set_user_concurrency(user_id, payload))
+        return jsonify(analytics_service.set_account_concurrency(account_id, payload))
 
-    @app.post("/admin/users/<user_id>/allowed-groups")
+    @app.post("/admin/users/<account_id>/allowed-groups")
     @admin_required
-    def admin_user_allowed_groups(user_id: str):
+    def admin_account_allowed_groups(account_id: str):
         payload = request.get_json(silent=True) or {}
-        return jsonify(analytics_service.set_user_allowed_groups(user_id, payload))
+        return jsonify(analytics_service.set_account_allowed_groups(account_id, payload))
 
-    @app.post("/admin/users/<user_id>/memberships")
+    @app.post("/admin/users/<account_id>/memberships")
     @admin_required
-    def admin_user_memberships(user_id: str):
+    def admin_account_memberships(account_id: str):
         payload = request.get_json(silent=True) or {}
-        return jsonify(analytics_service.set_user_membership_groups(user_id, payload))
+        return jsonify(analytics_service.set_account_membership_groups(account_id, payload))
 
-    @app.post("/admin/users/<user_id>/role-status")
+    @app.post("/admin/users/<account_id>/role-status")
     @admin_required
-    def admin_user_role_status(user_id: str):
+    def admin_account_role_status(account_id: str):
         payload = request.get_json(silent=True) or {}
-        return jsonify(analytics_service.set_user_role_status(user_id, payload))
+        return jsonify(analytics_service.set_account_role_status(account_id, payload))
 
     @app.get("/admin/groups")
     @admin_required
@@ -116,7 +116,7 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
     @app.get("/admin/subscriptions")
     @admin_required
     def admin_subscriptions():
-        return jsonify(analytics_service.list_user_subscriptions())
+        return jsonify(analytics_service.list_account_subscriptions())
 
     @app.post("/admin/subscriptions/assign")
     @admin_required
