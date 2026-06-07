@@ -94,7 +94,7 @@ function RequestActions() {
   return <ToolbarButtonRow><ActionButton onClick={() => clearMutation.mutate()}><Trash2 size={14} />清空请求</ActionButton><ActionButton onClick={() => cacheMutation.mutate()}><Trash2 size={14} />清空缓存</ActionButton></ToolbarButtonRow>;
 }
 
-function RequestRow({ entry }: { entry: RequestEntry }) {
+export function RequestRow({ entry }: { entry: RequestEntry }) {
   const isTerminal = Boolean(entry.error || entry.client_gone || entry.status_code);
   const status = isTerminal
     ? (entry.error ? '异常' : entry.client_gone ? '客户端断开' : entry.status_code || '-')
