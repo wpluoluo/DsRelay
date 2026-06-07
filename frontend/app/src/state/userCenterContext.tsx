@@ -33,7 +33,7 @@ export type UserCenterContextValue = {
 const UserCenterContext = createContext<UserCenterContextValue | null>(null);
 
 export function UserCenterProvider({ children }: { children: React.ReactNode }) {
-  const accountsQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
+  const accountsQuery = useQuery({ queryKey: ['admin-accounts'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
   const plansQuery = useQuery({ queryKey: ['admin-subscription-plans'], queryFn: fetchAdminSubscriptionPlans, refetchInterval: 10000 });
   const channelsQuery = useQuery({ queryKey: ['admin-payment-channels'], queryFn: fetchAdminPaymentChannels, refetchInterval: 10000 });
   const ordersQuery = useQuery({ queryKey: ['admin-payment-orders'], queryFn: fetchAdminPaymentOrders, refetchInterval: 10000 });

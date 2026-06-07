@@ -69,7 +69,7 @@ class AdminPaymentChannelRecord:
 @dataclass(slots=True)
 class AdminPaymentOrderRecord:
     id: str
-    user_id: str
+    account_id: str
     plan_id: str
     status: str = PaymentStatus.PENDING
     channel_id: str = ""

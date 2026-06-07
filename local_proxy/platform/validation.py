@@ -104,7 +104,7 @@ def normalize_admin_payment_order_payload(payload: dict[str, Any]) -> dict[str, 
         status = PaymentStatus.PENDING
     record = AdminPaymentOrderRecord(
         id=_text(payload.get("id")),
-        user_id=_text(payload.get("user_id")),
+        account_id=_text(payload.get("account_id") or payload.get("user_id")),
         plan_id=_text(payload.get("plan_id")),
         status=status,
         channel_id=_text(payload.get("channel_id")),
@@ -116,4 +116,6 @@ def normalize_admin_payment_order_payload(payload: dict[str, Any]) -> dict[str, 
         payload=payload.get("payload") if isinstance(payload.get("payload"), dict) else {},
         provider_payload=payload.get("provider_payload") if isinstance(payload.get("provider_payload"), dict) else {},
     )
-    return asdict(record)
+    item = asdict(record)
+    item["user_id"] = item.pop("account_id", "")
+    return item

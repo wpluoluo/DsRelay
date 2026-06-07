@@ -8,7 +8,7 @@ import { queryClient } from '../state/queryClient';
 import type { AdminAccount } from '../types';
 import { cn, formatByteCount, formatCost, formatNumber, formatTokenCount, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
 
-type UserDraft = {
+type AccountDraft = {
   id?: string;
   name: string;
   external_key: string;
@@ -23,7 +23,7 @@ type UserDraft = {
   group_ids: string[];
 };
 
-type UserColumnKey =
+type AccountColumnKey =
   | 'name'
   | 'external_key'
   | 'role'
@@ -37,10 +37,10 @@ type UserColumnKey =
   | 'last_seen'
   | 'status';
 
-type UserSourceFilter = '' | 'managed' | 'env' | 'anonymous';
-type UserSortKey = 'name_asc' | 'requests_desc' | 'tokens_desc' | 'last_seen_desc';
+type AccountSourceFilter = '' | 'managed' | 'env' | 'anonymous';
+type AccountSortKey = 'name_asc' | 'requests_desc' | 'tokens_desc' | 'last_seen_desc';
 
-const EMPTY_DRAFT: UserDraft = {
+const EMPTY_DRAFT: AccountDraft = {
   name: '',
   external_key: '',
   source_type: 'managed',
@@ -55,20 +55,20 @@ const EMPTY_DRAFT: UserDraft = {
 };
 
 const PAGE_SIZE = 20;
-const DEFAULT_VISIBLE_COLUMNS: UserColumnKey[] = ['external_key', 'subscription', 'group', 'requests', 'tokens', 'last_seen', 'status'];
-const STORAGE_KEY = 'admin-users-view-state';
-const USER_SORT_OPTIONS: Array<{ value: UserSortKey; label: string }> = [
+const DEFAULT_VISIBLE_COLUMNS: AccountColumnKey[] = ['external_key', 'subscription', 'group', 'requests', 'tokens', 'last_seen', 'status'];
+const STORAGE_KEY = 'admin-accounts-view-state';
+const ACCOUNT_SORT_OPTIONS: Array<{ value: AccountSortKey; label: string }> = [
   { value: 'name_asc', label: '名称排序' },
   { value: 'requests_desc', label: '请求数从高到低' },
   { value: 'tokens_desc', label: 'Token 从高到低' },
   { value: 'last_seen_desc', label: '最近请求优先' },
 ];
-const USER_SORT_SET = new Set<UserSortKey>(USER_SORT_OPTIONS.map((item) => item.value));
+const ACCOUNT_SORT_SET = new Set<AccountSortKey>(ACCOUNT_SORT_OPTIONS.map((item) => item.value));
 
-export function AdminUsersPage() {
-  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
+export function AdminAccountsPage() {
+  const accountsQuery = useQuery({ queryKey: ['admin-accounts'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
   const groupsQuery = useQuery({ queryKey: ['admin-groups'], queryFn: fetchAdminGroups, refetchInterval: 10000 });
-  const [draft, setDraft] = useState<UserDraft | null>(null);
+  const [draft, setDraft] = useState<AccountDraft | null>(null);
   const [quotaDraft, setQuotaDraft] = useState<{ id: string; name: string; balance_cents: number; concurrency_limit: number } | null>(null);
   const savedState = readStorageJSON(STORAGE_KEY, {
     search: '',
@@ -82,18 +82,18 @@ export function AdminUsersPage() {
   const [search, setSearch] = useState(savedState.search);
   const [statusFilter, setStatusFilter] = useState(savedState.statusFilter);
   const [groupFilter, setGroupFilter] = useState(savedState.groupFilter);
-  const [sourceFilter, setSourceFilter] = useState<UserSourceFilter>(isUserSourceFilter(savedState.sourceFilter) ? savedState.sourceFilter : '');
-  const [sortBy, setSortBy] = useState<UserSortKey>(isUserSortKey(savedState.sortBy) ? savedState.sortBy : 'name_asc');
+  const [sourceFilter, setSourceFilter] = useState<AccountSourceFilter>(isAccountSourceFilter(savedState.sourceFilter) ? savedState.sourceFilter : '');
+  const [sortBy, setSortBy] = useState<AccountSortKey>(isAccountSortKey(savedState.sortBy) ? savedState.sortBy : 'name_asc');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(savedState.pageSize || PAGE_SIZE);
-  const [visibleColumns, setVisibleColumns] = useState<Set<UserColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
+  const [visibleColumns, setVisibleColumns] = useState<Set<AccountColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
 
   const saveMutation = useMutation({
     mutationFn: saveAdminAccount,
     onSuccess: async () => {
       setDraft(null);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin-accounts'] }),
         queryClient.invalidateQueries({ queryKey: ['admin-groups'] }),
         queryClient.invalidateQueries({ queryKey: ['admin-overview'] }),
       ]);
@@ -108,11 +108,11 @@ export function AdminUsersPage() {
     },
     onSuccess: async () => {
       setQuotaDraft(null);
-      await queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      await queryClient.invalidateQueries({ queryKey: ['admin-accounts'] });
     },
   });
 
-  const items = usersQuery.data?.items || [];
+  const items = accountsQuery.data?.items || [];
   const groups = groupsQuery.data?.items || [];
 
   const filteredItems = useMemo(() => {
@@ -130,7 +130,7 @@ export function AdminUsersPage() {
       if (sourceFilter && (item.source_type || 'managed') !== sourceFilter) return false;
       return true;
     });
-    return [...scopedItems].sort((left, right) => compareUsers(left, right, sortBy));
+    return [...scopedItems].sort((left, right) => compareAccounts(left, right, sortBy));
   }, [groupFilter, items, search, sortBy, sourceFilter, statusFilter]);
 
   const pagedItems = useMemo(() => {
@@ -212,7 +212,7 @@ export function AdminUsersPage() {
     });
   }
 
-  function toggleColumn(key: UserColumnKey) {
+  function toggleColumn(key: AccountColumnKey) {
     setVisibleColumns((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
@@ -228,7 +228,7 @@ export function AdminUsersPage() {
 
   function exportCurrentView() {
     const lines = [
-      ['用户', '来源键', '来源类型', '分组', '请求数', '总Token', '请求字节', '响应字节', '最后请求', '状态'].join('\t'),
+      ['账户', '来源键', '来源类型', '额度', '分组', '请求数', '总Token', '请求字节', '响应字节', '最后请求', '状态'].join('\t'),
       ...filteredItems.map((item) => [
         item.name || '-',
         item.external_key || item.id || '-',
@@ -248,7 +248,7 @@ export function AdminUsersPage() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'admin-users.tsv';
+    link.download = 'admin-accounts.tsv';
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -265,7 +265,7 @@ export function AdminUsersPage() {
           <div className="sub2-inline-summary-item"><span>启用状态</span><strong>{formatNumber(enabledCount)}</strong><small>停用 {formatNumber(disabledCount)}</small></div>
           <div className="sub2-inline-summary-item"><span>有效订阅</span><strong>{formatNumber(activeSubscriptionCount)}</strong><small>未覆盖 {formatNumber(uncoveredCount)}</small></div>
           <div className="sub2-inline-summary-item"><span>累计请求</span><strong>{formatNumber(requestTotal)}</strong><small>{formatTokenCount(tokenTotal)}</small></div>
-          <div className="sub2-inline-summary-item"><span>最近请求</span><strong>{latestSeenAt ? formatDateTime(latestSeenAt) : '-'}</strong><small>{sourceFilter ? `来源：${formatUserSource(sourceFilter)}` : (USER_SORT_OPTIONS.find((item) => item.value === sortBy)?.label || '名称排序')}</small></div>
+          <div className="sub2-inline-summary-item"><span>最近请求</span><strong>{latestSeenAt ? formatDateTime(latestSeenAt) : '-'}</strong><small>{sourceFilter ? `来源：${formatAccountSource(sourceFilter)}` : (ACCOUNT_SORT_OPTIONS.find((item) => item.value === sortBy)?.label || '名称排序')}</small></div>
         </div>
       </div>
       <TablePageLayout
@@ -273,7 +273,7 @@ export function AdminUsersPage() {
           <FilterToolbar
             right={
               <ToolbarButtonRow>
-                <ActionButton onClick={() => usersQuery.refetch()}><RefreshCw size={15} />刷新</ActionButton>
+                <ActionButton onClick={() => accountsQuery.refetch()}><RefreshCw size={15} />刷新</ActionButton>
                 <ColumnMenu
                   label="列设置"
                   items={[
@@ -580,7 +580,7 @@ export function AdminUsersPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{quotaDraft.name}</strong>
-              <span>快速调整余额和并发，不进入完整用户编辑流程。</span>
+              <span>快速调整余额和并发，不进入完整账户编辑流程。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
@@ -628,7 +628,7 @@ export function AdminUsersPage() {
   );
 }
 
-function compareUsers(left: AdminAccount, right: AdminAccount, sortBy: UserSortKey) {
+function compareAccounts(left: AdminAccount, right: AdminAccount, sortBy: AccountSortKey) {
   if (sortBy === 'requests_desc') {
     return compareNumbers(Number(right.request_count || 0), Number(left.request_count || 0));
   }
@@ -657,15 +657,15 @@ function formatDateTime(timestamp: number) {
   return new Date(timestamp).toLocaleString('zh-CN', { hour12: false });
 }
 
-function isUserSourceFilter(value: unknown): value is UserSourceFilter {
+function isAccountSourceFilter(value: unknown): value is AccountSourceFilter {
   return value === '' || value === 'managed' || value === 'env' || value === 'anonymous';
 }
 
-function isUserSortKey(value: unknown): value is UserSortKey {
-  return typeof value === 'string' && USER_SORT_SET.has(value as UserSortKey);
+function isAccountSortKey(value: unknown): value is AccountSortKey {
+  return typeof value === 'string' && ACCOUNT_SORT_SET.has(value as AccountSortKey);
 }
 
-function formatUserSource(value: UserSourceFilter) {
+function formatAccountSource(value: AccountSourceFilter) {
   if (value === 'managed') return '托管 Key';
   if (value === 'env') return '环境 Key';
   if (value === 'anonymous') return '匿名';

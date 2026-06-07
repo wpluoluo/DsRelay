@@ -14,7 +14,7 @@ const STORAGE_KEY = 'admin-subscriptions-view-state';
 
 export function AdminSubscriptionsPage() {
   const subsQuery = useQuery({ queryKey: ['admin-subscriptions'], queryFn: fetchAdminAccountSubscriptions, refetchInterval: 10000 });
-  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
+  const accountsQuery = useQuery({ queryKey: ['admin-accounts'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
   const plansQuery = useQuery({ queryKey: ['admin-subscription-plans'], queryFn: fetchAdminSubscriptionPlans, refetchInterval: 10000 });
   const [draft, setDraft] = useState<any | null>(null);
   const [inspectSubscription, setInspectSubscription] = useState<any | null>(null);
@@ -61,11 +61,11 @@ export function AdminSubscriptionsPage() {
   });
 
   const items = subsQuery.data?.items || [];
-  const users = usersQuery.data?.items || [];
+  const accounts = accountsQuery.data?.items || [];
   const plans = plansQuery.data?.items || [];
   const planMap = useMemo(() => new Map(plans.map((plan) => [plan.id, plan])), [plans]);
   const selectedPlan = draft?.plan_id ? planMap.get(draft.plan_id) : undefined;
-  const selectedAccount = draft?.account_id ? users.find((user) => user.id === draft.account_id) : undefined;
+  const selectedAccount = draft?.account_id ? accounts.find((account) => account.id === draft.account_id) : undefined;
   const groupOptions = useMemo(
     () =>
       Array.from(new Map(plans.filter((plan) => plan.group_id).map((plan) => [plan.group_id, plan.group_name || plan.group_id])).entries()).sort((left, right) =>
@@ -165,7 +165,7 @@ export function AdminSubscriptionsPage() {
               </ToolbarButtonRow>
             }
           >
-            <SearchField value={search} placeholder="搜索用户 / 计划 / 订阅 ID" onChange={(value) => { setSearch(value); setPage(1); }} />
+            <SearchField value={search} placeholder="搜索账户 / 计划 / 订阅 ID" onChange={(value) => { setSearch(value); setPage(1); }} />
             <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}>
               <option value="">全部状态</option>
               <option value="active">active</option>
@@ -316,7 +316,7 @@ export function AdminSubscriptionsPage() {
                 <Field label="账户">
                   <Select value={draft.account_id} onChange={(e) => setDraft({ ...draft, account_id: e.target.value })}>
                     <option value="">请选择账户</option>
-                    {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+                    {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
                   </Select>
                 </Field>
                 <Field label="计划">

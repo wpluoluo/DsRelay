@@ -7,7 +7,7 @@ from local_proxy.platform import normalize_admin_account_payload
 from .base import AdminServiceBase, coerce_text
 
 
-class AdminUsersMixin(AdminServiceBase):
+class AdminAccountsMixin(AdminServiceBase):
     def get_account(self, account_id: str) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")

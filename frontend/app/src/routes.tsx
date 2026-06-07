@@ -9,7 +9,7 @@ import { AdminPaymentChannelsPage } from './pages/AdminPaymentChannelsPage';
 import { AdminPaymentOrdersPage } from './pages/AdminPaymentOrdersPage';
 import { AdminSubscriptionPlansPage } from './pages/AdminSubscriptionPlansPage';
 import { AdminSubscriptionsPage } from './pages/AdminSubscriptionsPage';
-import { AdminUsersPage } from './pages/AdminUsersPage';
+import { AdminAccountsPage } from './pages/AdminAccountsPage';
 import { LogsView } from './pages/LogsView';
 import { Overview } from './pages/Overview';
 import { PurchaseCenterPage } from './pages/PurchaseCenterPage';
@@ -80,7 +80,7 @@ function ProxyKeysRoute() {
 }
 
 function UsersRoute() {
-  return <AdminUsersPage />;
+  return <AdminAccountsPage />;
 }
 
 function GroupsRoute() {

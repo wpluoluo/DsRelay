@@ -12,7 +12,7 @@ const STORAGE_KEY = 'admin-payment-orders-view-state';
 
 export function AdminPaymentOrdersPage() {
   const ordersQuery = useQuery({ queryKey: ['admin-payment-orders'], queryFn: fetchAdminPaymentOrders, refetchInterval: 10000 });
-  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
+  const accountsQuery = useQuery({ queryKey: ['admin-accounts'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
   const plansQuery = useQuery({ queryKey: ['admin-subscription-plans'], queryFn: fetchAdminSubscriptionPlans, refetchInterval: 10000 });
   const channelsQuery = useQuery({ queryKey: ['admin-payment-channels'], queryFn: fetchAdminPaymentChannels, refetchInterval: 10000 });
   const [draft, setDraft] = useState<any | null>(null);
@@ -54,11 +54,11 @@ export function AdminPaymentOrdersPage() {
   });
 
   const items = ordersQuery.data?.items || [];
-  const users = usersQuery.data?.items || [];
+  const accounts = accountsQuery.data?.items || [];
   const plans = plansQuery.data?.items || [];
   const channels = channelsQuery.data?.items || [];
   const selectedPlan = draft?.plan_id ? plans.find((plan) => plan.id === draft.plan_id) : undefined;
-  const selectedAccount = draft?.account_id ? users.find((user) => user.id === draft.account_id) : undefined;
+  const selectedAccount = draft?.account_id ? accounts.find((account) => account.id === draft.account_id) : undefined;
   const selectedChannel = draft?.channel_id ? channels.find((channel) => channel.id === draft.channel_id) : undefined;
 
   const filteredItems = useMemo(() => {
@@ -147,7 +147,7 @@ export function AdminPaymentOrdersPage() {
               </ToolbarButtonRow>
             }
           >
-            <SearchField value={search} placeholder="搜索订单 / 用户 / 计划 / 通道" onChange={(value) => { setSearch(value); setPage(1); }} />
+            <SearchField value={search} placeholder="搜索订单 / 账户 / 计划 / 通道" onChange={(value) => { setSearch(value); setPage(1); }} />
             <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}>
               <option value="">全部状态</option>
               <option value="pending">pending</option>
@@ -317,7 +317,7 @@ export function AdminPaymentOrdersPage() {
                 <span>用户、计划、通道和金额会直接写入订单主记录</span>
               </div>
               <div className="admin-dialog-grid modal-grid">
-                <Field label="账户"><Select value={draft.account_id} onChange={(e) => setDraft({ ...draft, account_id: e.target.value })}><option value="">请选择账户</option>{users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</Select></Field>
+                <Field label="账户"><Select value={draft.account_id} onChange={(e) => setDraft({ ...draft, account_id: e.target.value })}><option value="">请选择账户</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</Select></Field>
                 <Field label="计划"><Select value={draft.plan_id} onChange={(e) => setDraft({ ...draft, plan_id: e.target.value })}><option value="">请选择计划</option>{plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</Select></Field>
                 <Field label="通道"><Select value={draft.channel_id} onChange={(e) => setDraft({ ...draft, channel_id: e.target.value })}><option value="">不指定</option>{channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}</Select></Field>
                 <Field label="金额(分)"><TextInput type="number" value={String(draft.amount_cents)} onChange={(e) => setDraft({ ...draft, amount_cents: Number(e.target.value || 0) })} /></Field>

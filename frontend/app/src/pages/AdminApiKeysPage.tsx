@@ -12,7 +12,7 @@ const STORAGE_KEY = 'admin-api-keys-view-state';
 
 export function AdminApiKeysPage() {
   const keysQuery = useQuery({ queryKey: ['admin-api-keys'], queryFn: fetchAdminApiKeys, refetchInterval: 10000 });
-  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
+  const accountsQuery = useQuery({ queryKey: ['admin-accounts'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
   const [draft, setDraft] = useState<{ account_id: string; name: string } | null>(null);
   const [generatedKey, setGeneratedKey] = useState('');
   const [copiedKeyId, setCopiedKeyId] = useState('');
@@ -46,7 +46,7 @@ export function AdminApiKeysPage() {
   });
 
   const items = keysQuery.data?.items || [];
-  const users = usersQuery.data?.items || [];
+  const accounts = accountsQuery.data?.items || [];
 
   const filteredItems = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -122,7 +122,7 @@ export function AdminApiKeysPage() {
                     <button type="button" onClick={() => { setPageSize(50); setPage(1); }}>
                       <span>切换 50 / 页</span>
                     </button>
-                    <button type="button" onClick={() => { void keysQuery.refetch(); void usersQuery.refetch(); }}>
+                    <button type="button" onClick={() => { void keysQuery.refetch(); void accountsQuery.refetch(); }}>
                       <span>同步账户与 Key</span>
                     </button>
                 </ToolsMenu>
@@ -331,7 +331,7 @@ export function AdminApiKeysPage() {
                 <Field label="归属账户">
                   <Select value={draft.account_id} onChange={(e) => setDraft({ ...draft, account_id: e.target.value })}>
                     <option value="">请选择账户</option>
-                    {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+                    {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
                   </Select>
                 </Field>
                 <Field label="Key 名称">
