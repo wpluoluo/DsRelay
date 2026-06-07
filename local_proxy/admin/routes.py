@@ -2,123 +2,183 @@ from __future__ import annotations
 
 from flask import jsonify, request
 
-
-def register_admin_routes(app, *, login_required, analytics_service) -> None:
+def register_admin_routes(app, *, admin_required, analytics_service) -> None:
     @app.get("/admin/overview")
-    @login_required
+    @admin_required
     def admin_overview():
         return jsonify(analytics_service.dashboard_summary())
 
     @app.get("/admin/users")
-    @login_required
+    @admin_required
     def admin_users():
         return jsonify(analytics_service.list_users())
 
     @app.post("/admin/users")
-    @login_required
+    @admin_required
     def admin_users_upsert():
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.upsert_user(payload))
 
+    @app.get("/admin/users/<user_id>")
+    @admin_required
+    def admin_user_get(user_id: str):
+        return jsonify(analytics_service.get_user(user_id))
+
+    @app.post("/admin/users/<user_id>/balance")
+    @admin_required
+    def admin_user_balance(user_id: str):
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.set_user_balance(user_id, payload))
+
+    @app.post("/admin/users/<user_id>/concurrency")
+    @admin_required
+    def admin_user_concurrency(user_id: str):
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.set_user_concurrency(user_id, payload))
+
+    @app.post("/admin/users/<user_id>/allowed-groups")
+    @admin_required
+    def admin_user_allowed_groups(user_id: str):
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.set_user_allowed_groups(user_id, payload))
+
+    @app.post("/admin/users/<user_id>/memberships")
+    @admin_required
+    def admin_user_memberships(user_id: str):
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.set_user_membership_groups(user_id, payload))
+
+    @app.post("/admin/users/<user_id>/role-status")
+    @admin_required
+    def admin_user_role_status(user_id: str):
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.set_user_role_status(user_id, payload))
+
     @app.get("/admin/groups")
-    @login_required
+    @admin_required
     def admin_groups():
         return jsonify(analytics_service.list_groups())
 
     @app.post("/admin/groups")
-    @login_required
+    @admin_required
     def admin_groups_upsert():
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.upsert_group(payload))
 
     @app.get("/admin/usage")
-    @login_required
+    @admin_required
     def admin_usage():
-        return jsonify(analytics_service.list_usage())
+        return jsonify(
+            analytics_service.list_usage(
+                started_after=request.args.get("started_after"),
+                started_before=request.args.get("started_before"),
+            )
+        )
+
+    @app.get("/admin/billing")
+    @admin_required
+    def admin_billing():
+        return jsonify(
+            analytics_service.billing_summary(
+                started_after=request.args.get("started_after"),
+                started_before=request.args.get("started_before"),
+            )
+        )
 
     @app.get("/admin/api-keys")
-    @login_required
+    @admin_required
     def admin_api_keys():
         return jsonify(analytics_service.list_api_keys())
 
     @app.post("/admin/api-keys")
-    @login_required
+    @admin_required
     def admin_api_keys_create():
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.create_api_key(payload))
 
     @app.post("/admin/api-keys/<key_id>/enabled")
-    @login_required
+    @admin_required
     def admin_api_keys_enabled(key_id: str):
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.set_api_key_enabled(key_id, payload.get("enabled") is True))
 
     @app.get("/admin/subscription-plans")
-    @login_required
+    @admin_required
     def admin_subscription_plans():
         return jsonify(analytics_service.list_subscription_plans())
 
     @app.post("/admin/subscription-plans")
-    @login_required
+    @admin_required
     def admin_subscription_plans_upsert():
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.upsert_subscription_plan(payload))
 
     @app.get("/admin/subscriptions")
-    @login_required
+    @admin_required
     def admin_subscriptions():
         return jsonify(analytics_service.list_user_subscriptions())
 
     @app.post("/admin/subscriptions/assign")
-    @login_required
+    @admin_required
     def admin_subscriptions_assign():
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.assign_subscription(payload))
 
     @app.post("/admin/subscriptions/<subscription_id>/extend")
-    @login_required
+    @admin_required
     def admin_subscriptions_extend(subscription_id: str):
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.extend_subscription(subscription_id, payload))
 
     @app.post("/admin/subscriptions/<subscription_id>/reset-quota")
-    @login_required
+    @admin_required
     def admin_subscriptions_reset_quota(subscription_id: str):
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.reset_subscription_quota(subscription_id, payload))
 
     @app.delete("/admin/subscriptions/<subscription_id>")
-    @login_required
+    @admin_required
     def admin_subscriptions_revoke(subscription_id: str):
         return jsonify(analytics_service.revoke_subscription(subscription_id))
 
     @app.get("/admin/payment-channels")
-    @login_required
+    @admin_required
     def admin_payment_channels():
         return jsonify(analytics_service.list_payment_channels())
 
     @app.post("/admin/payment-channels")
-    @login_required
+    @admin_required
     def admin_payment_channels_upsert():
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.upsert_payment_channel(payload))
 
     @app.get("/admin/payment-channels/template")
-    @login_required
+    @admin_required
     def admin_payment_channels_template():
         provider = str(request.args.get("provider") or "")
         return jsonify({"ok": True, "provider": provider or "manual", "config": analytics_service.payment_channel_config_template(provider)})
 
     @app.get("/admin/payment-orders")
-    @login_required
+    @admin_required
     def admin_payment_orders():
         return jsonify(analytics_service.list_payment_orders())
 
     @app.post("/admin/payment-orders")
-    @login_required
+    @admin_required
     def admin_payment_orders_create():
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.create_payment_order(payload))
+
+    @app.post("/admin/payment-orders/<order_id>/status")
+    @admin_required
+    def admin_payment_orders_update_status(order_id: str):
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.update_payment_order_status(order_id, payload))
+
+    @app.get("/admin/protocols")
+    @admin_required
+    def admin_protocols():
+        return jsonify(analytics_service.list_protocol_profiles())
 
     @app.post("/payment/webhook/<order_id>")
     def payment_webhook(order_id: str):

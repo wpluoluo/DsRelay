@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { CreditCard, ShoppingCart, Ticket, UserRound } from 'lucide-react';
-import { createAdminPaymentOrder, fetchAdminPaymentChannels, fetchAdminPaymentOrders, fetchAdminSubscriptionPlans, fetchAdminSubscriptions, fetchAdminUsers } from '../api';
-import { Badge, Button, Empty, Field, Metric, Panel, PanelHead, Select, TextInput } from '../components';
+import { useMutation } from '@tanstack/react-query';
+import { CreditCard, Eye, KeyRound, ShoppingCart, Ticket, UserRound } from 'lucide-react';
+import { createAdminPaymentOrder } from '../api';
+import { Badge, Button, Empty, Field, Metric, Modal, ModalActions, Panel, PanelHead, Select, TextArea, TextInput } from '../components';
 import { queryClient } from '../state/queryClient';
+import { useUserCenter } from '../state/userCenterContext';
 import type { AdminPaymentOrder, AdminUserSubscription } from '../types';
-import { formatNumber } from '../utils';
+import { formatNumber, formatUsdCost } from '../utils';
 
 type PurchaseDraft = {
   user_id: string;
@@ -24,27 +25,30 @@ const DEFAULT_DRAFT: PurchaseDraft = {
 };
 
 export function PurchaseCenterPage() {
-  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, refetchInterval: 10000 });
-  const plansQuery = useQuery({ queryKey: ['admin-subscription-plans'], queryFn: fetchAdminSubscriptionPlans, refetchInterval: 10000 });
-  const channelsQuery = useQuery({ queryKey: ['admin-payment-channels'], queryFn: fetchAdminPaymentChannels, refetchInterval: 10000 });
-  const ordersQuery = useQuery({ queryKey: ['admin-payment-orders'], queryFn: fetchAdminPaymentOrders, refetchInterval: 10000 });
-  const subscriptionsQuery = useQuery({ queryKey: ['admin-subscriptions'], queryFn: fetchAdminSubscriptions, refetchInterval: 10000 });
+  const {
+    users,
+    plans,
+    channels,
+    orders,
+    subscriptions,
+    selectedUserId,
+    selectedUser,
+    visiblePlans,
+    visibleChannels,
+    setSelectedUserId,
+  } = useUserCenter();
   const [draft, setDraft] = useState<PurchaseDraft>(DEFAULT_DRAFT);
   const [createdOrder, setCreatedOrder] = useState<AdminPaymentOrder | null>(null);
-
-  const users = usersQuery.data?.items || [];
-  const plans = plansQuery.data?.items || [];
-  const channels = channelsQuery.data?.items?.filter((item) => item.enabled !== false) || [];
-  const orders = ordersQuery.data?.items || [];
-  const subscriptions = subscriptionsQuery.data?.items || [];
-
-  const selectedPlan = plans.find((item) => item.id === draft.plan_id);
-  const selectedUser = users.find((item) => item.id === draft.user_id);
-  const selectedOrders = useMemo(() => orders.filter((item) => !draft.user_id || item.user_id === draft.user_id), [orders, draft.user_id]);
+  const [inspectOrder, setInspectOrder] = useState<AdminPaymentOrder | null>(null);
+  const [confirmCreate, setConfirmCreate] = useState(false);
+  const selectedPlan = visiblePlans.find((item) => item.id === draft.plan_id);
+  const selectedOrders = useMemo(() => orders.filter((item) => !selectedUserId || item.user_id === selectedUserId), [orders, selectedUserId]);
   const selectedSubscriptions = useMemo(
-    () => subscriptions.filter((item) => !draft.user_id || item.user_id === draft.user_id),
-    [subscriptions, draft.user_id],
+    () => subscriptions.filter((item) => !selectedUserId || item.user_id === selectedUserId),
+    [subscriptions, selectedUserId],
   );
+  const paidOrders = selectedOrders.filter((item) => item.status === 'paid').length;
+  const todayActualCost = selectedOrders.reduce((sum, item) => sum + Number(item.final_price_cents ?? item.amount_cents ?? 0), 0) / 100;
 
   const createMutation = useMutation({
     mutationFn: createAdminPaymentOrder,
@@ -62,21 +66,38 @@ export function PurchaseCenterPage() {
   }
 
   useEffect(() => {
+    if (!selectedUserId && users.length) {
+      setSelectedUserId(users[0].id);
+    }
+  }, [selectedUserId, setSelectedUserId, users]);
+
+  useEffect(() => {
+    setDraft((current) => ({ ...current, user_id: selectedUserId }));
+  }, [selectedUserId]);
+
+  useEffect(() => {
     if (!selectedPlan) return;
     setDraft((current) => {
-      const priceCents = Number(selectedPlan.price_cents || 0);
+      const priceCents = Number(selectedPlan.final_price_cents || selectedPlan.price_cents || 0);
       if (current.amount_cents === priceCents) return current;
       return { ...current, amount_cents: priceCents };
     });
-  }, [selectedPlan?.id, selectedPlan?.price_cents]);
+  }, [selectedPlan?.id, selectedPlan?.price_cents, selectedPlan?.final_price_cents]);
 
   return (
     <section className="grid-page">
-      <div className="metrics-row">
-        <Metric label="可选用户" value={formatNumber(users.length)} sub="当前可绑定购买账户" />
-        <Metric label="订阅计划" value={formatNumber(plans.length)} sub="启用计划供购买选择" />
-        <Metric label="支付通道" value={formatNumber(channels.length)} sub="当前可拉起支付配置" />
-        <Metric label="待支付订单" value={formatNumber(selectedOrders.filter((item) => item.status === 'pending').length)} sub="当前筛选用户范围" />
+      <div className="sub2-page-head">
+        <div className="sub2-page-title">
+          <strong>购买与订阅</strong>
+          <span>面向普通用户查看当前订阅、创建订单并追踪最近消费。</span>
+        </div>
+        <div className="sub2-inline-summary">
+          <div className="sub2-inline-summary-item"><span>账户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.source_type || '请选择用户'}</small></div>
+          <div className="sub2-inline-summary-item"><span>可用计划</span><strong>{formatNumber(visiblePlans.length)}</strong><small>启用计划</small></div>
+          <div className="sub2-inline-summary-item"><span>支付通道</span><strong>{formatNumber(visibleChannels.length)}</strong><small>当前可用</small></div>
+          <div className="sub2-inline-summary-item"><span>已支付订单</span><strong>{formatNumber(paidOrders)}</strong><small>待支付 {formatNumber(selectedOrders.filter((item) => item.status === 'pending').length)}</small></div>
+          <div className="sub2-inline-summary-item"><span>当前消费</span><strong>{formatUsdCost(todayActualCost, 2)}</strong><small>按订单金额聚合</small></div>
+        </div>
       </div>
 
       <div className="dashboard-main-grid purchase-grid">
@@ -85,7 +106,7 @@ export function PurchaseCenterPage() {
           <div className="section-stack">
             <div className="form-grid">
               <Field label="用户">
-                <Select value={draft.user_id} onChange={(event) => updateDraft({ user_id: event.target.value })}>
+                <Select value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}>
                   <option value="">请选择用户</option>
                   {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
                 </Select>
@@ -93,13 +114,13 @@ export function PurchaseCenterPage() {
               <Field label="订阅计划">
                 <Select value={draft.plan_id} onChange={(event) => updateDraft({ plan_id: event.target.value })}>
                   <option value="">请选择计划</option>
-                  {plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
+                  {visiblePlans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
                 </Select>
               </Field>
               <Field label="支付通道">
                 <Select value={draft.channel_id} onChange={(event) => updateDraft({ channel_id: event.target.value })}>
                   <option value="">不指定</option>
-                  {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
+                  {visibleChannels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
                 </Select>
               </Field>
               <Field label="金额(分)" note="跟随订阅计划价格自动带出。">
@@ -112,21 +133,28 @@ export function PurchaseCenterPage() {
                 <span className="quick-action-icon blue"><UserRound size={20} /></span>
                 <span className="quick-action-copy">
                   <strong>{selectedUser?.name || '未选择用户'}</strong>
-                  <small>{selectedUser?.group_name || selectedUser?.type || '用户归属将在这里显示'}</small>
+                  <small>{selectedUser?.group_name || selectedUser?.source_type || '用户归属将在这里显示'}</small>
                 </span>
               </div>
               <div className="quick-action">
                 <span className="quick-action-icon amber"><Ticket size={20} /></span>
                 <span className="quick-action-copy">
                   <strong>{selectedPlan?.name || '未选择计划'}</strong>
-                  <small>{selectedPlan ? `有效期 ${selectedPlan.validity_days || 0} 天 · 价格 ${selectedPlan.price_cents || 0} CNY` : '计划有效期、价格与限额将在这里显示'}</small>
+                  <small>{selectedPlan ? `有效期 ${selectedPlan.validity_days || 0} 天 · 价格 ${formatUsdCost(Number(selectedPlan.final_price_cents || selectedPlan.price_cents || 0) / 100, 2)}` : '计划有效期、价格与限额将在这里显示'}</small>
                 </span>
               </div>
               <div className="quick-action">
                 <span className="quick-action-icon green"><CreditCard size={20} /></span>
                 <span className="quick-action-copy">
-                  <strong>{draft.amount_cents || 0} {draft.currency}</strong>
+                  <strong>{formatUsdCost(Number(draft.amount_cents || 0) / 100, 2)}</strong>
                   <small>{draft.channel_id ? channels.find((item) => item.id === draft.channel_id)?.name || draft.channel_id : '手工通道或后续自动分配'}</small>
+                </span>
+              </div>
+              <div className="quick-action">
+                <span className="quick-action-icon violet"><KeyRound size={20} /></span>
+                <span className="quick-action-copy">
+                  <strong>{formatNumber(selectedSubscriptions.filter((item) => item.status === 'active').length)} 个有效订阅</strong>
+                  <small>已选用户当前订阅状态</small>
                 </span>
               </div>
             </div>
@@ -135,11 +163,11 @@ export function PurchaseCenterPage() {
               <Button
                 tone="primary"
                 disabled={createMutation.isPending || !draft.user_id || !draft.plan_id}
-                onClick={() => createMutation.mutate(draft)}
+                onClick={() => setConfirmCreate(true)}
               >
                 创建支付订单
               </Button>
-              <Button onClick={() => setDraft(DEFAULT_DRAFT)}>重置选择</Button>
+              <Button onClick={() => setDraft((current) => ({ ...DEFAULT_DRAFT, user_id: current.user_id || selectedUserId }))}>重置选择</Button>
             </div>
           </div>
         </Panel>
@@ -165,6 +193,7 @@ export function PurchaseCenterPage() {
                 <th>金额</th>
                 <th>状态</th>
                 <th>拉起参数</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -174,12 +203,15 @@ export function PurchaseCenterPage() {
                   <td>{item.user_name || item.user_id}</td>
                   <td>{item.plan_name || item.plan_id}</td>
                   <td>{item.channel_name || item.channel_id || item.provider || '-'}</td>
-                  <td>{item.amount_cents || 0} {item.currency || 'CNY'}</td>
+                  <td>{formatUsdCost(Number(item.final_price_cents ?? item.amount_cents ?? 0) / 100, 2)}</td>
                   <td><Badge tone={item.status === 'paid' ? 'ok' : item.status === 'pending' ? 'warn' : 'neutral'}>{item.status || '-'}</Badge></td>
                   <td><code>{compactPayload(item.provider_payload)}</code></td>
+                  <td>
+                    <Button onClick={() => setInspectOrder(item)}><Eye size={14} />详情</Button>
+                  </td>
                 </tr>
               )) : (
-                <tr><td colSpan={7}><Empty>暂无订单记录。</Empty></td></tr>
+                <tr><td colSpan={8}><Empty>暂无订单记录。</Empty></td></tr>
               )}
             </tbody>
           </table>
@@ -187,21 +219,128 @@ export function PurchaseCenterPage() {
       </Panel>
 
       {createdOrder ? (
-        <Panel>
-          <PanelHead title="最新创建订单" action={<Button onClick={() => setCreatedOrder(null)}>关闭</Button>} />
-          <div className="section-stack payment-order-inspect">
-            <div className="payment-order-summary">
-              <div><span>订单号</span><code>{createdOrder.id}</code></div>
-              <div><span>状态</span><strong>{createdOrder.status || '-'}</strong></div>
-              <div><span>计划</span><strong>{createdOrder.plan_name || createdOrder.plan_id || '-'}</strong></div>
-              <div><span>用户</span><strong>{createdOrder.user_name || createdOrder.user_id || '-'}</strong></div>
+        <Modal
+          title="最新创建订单"
+          size="lg"
+          onClose={() => setCreatedOrder(null)}
+          footer={<ModalActions><Button onClick={() => setCreatedOrder(null)}>关闭</Button></ModalActions>}
+        >
+          <div className="admin-dialog">
+            <div className="admin-dialog-intro">
+              <strong>{createdOrder.id}</strong>
+              <span>订单已经创建完成，下面是当前可直接用于支付拉起的参数。</span>
             </div>
-            <div className="payment-payload-block">
-              <div className="payment-payload-head"><span>拉起参数</span></div>
-              <pre><code>{JSON.stringify(createdOrder.provider_payload || {}, null, 2)}</code></pre>
+            <div className="admin-dialog-summary">
+              <div className="admin-dialog-summary-card">
+                <span>状态</span>
+                <strong>{createdOrder.status || '-'}</strong>
+                <small>{createdOrder.user_name || createdOrder.user_id || '-'}</small>
+              </div>
+              <div className="admin-dialog-summary-card">
+                <span>计划</span>
+                <strong>{createdOrder.plan_name || createdOrder.plan_id || '-'}</strong>
+                <small>{createdOrder.group_name || createdOrder.group_id || '-'}</small>
+              </div>
+              <div className="admin-dialog-summary-card">
+                <span>金额</span>
+                <strong>{formatUsdCost(Number(createdOrder.final_price_cents ?? createdOrder.amount_cents ?? 0) / 100, 2)}</strong>
+                <small>{createdOrder.channel_name || createdOrder.channel_id || createdOrder.provider || '-'}</small>
+              </div>
+            </div>
+            <Field label="拉起参数" full>
+              <TextArea readOnly rows={10} value={JSON.stringify(createdOrder.provider_payload || {}, null, 2)} />
+            </Field>
+          </div>
+        </Modal>
+      ) : null}
+
+      {confirmCreate ? (
+        <Modal
+          title="确认创建订单"
+          size="md"
+          onClose={() => setConfirmCreate(false)}
+          footer={
+            <ModalActions>
+              <Button onClick={() => setConfirmCreate(false)}>取消</Button>
+              <Button
+                tone="primary"
+                disabled={createMutation.isPending || !draft.user_id || !draft.plan_id}
+                onClick={() => {
+                  setConfirmCreate(false);
+                  createMutation.mutate(draft);
+                }}
+              >
+                确认创建
+              </Button>
+            </ModalActions>
+          }
+        >
+          <div className="admin-dialog">
+            <div className="admin-dialog-intro">
+              <strong>{selectedUser?.name || '未选择用户'}</strong>
+              <span>确认按当前计划、通道和金额创建支付订单。创建后会进入统一支付与履约链路。</span>
+            </div>
+            <div className="admin-dialog-summary">
+              <div className="admin-dialog-summary-card">
+                <span>订阅计划</span>
+                <strong>{selectedPlan?.name || '未选择计划'}</strong>
+                <small>{selectedPlan ? `${selectedPlan.validity_days || 0} 天` : '待选择计划'}</small>
+              </div>
+              <div className="admin-dialog-summary-card">
+                <span>支付通道</span>
+                <strong>{channels.find((item) => item.id === draft.channel_id)?.name || '不指定'}</strong>
+                <small>{channels.find((item) => item.id === draft.channel_id)?.provider || 'manual'}</small>
+              </div>
+              <div className="admin-dialog-summary-card">
+                <span>订单金额</span>
+                <strong>{formatUsdCost(Number(draft.amount_cents || 0) / 100, 2)}</strong>
+                <small>{draft.currency || 'CNY'}</small>
+              </div>
             </div>
           </div>
-        </Panel>
+        </Modal>
+      ) : null}
+
+      {inspectOrder ? (
+        <Modal
+          title="订单详情"
+          size="lg"
+          onClose={() => setInspectOrder(null)}
+          footer={<ModalActions><Button onClick={() => setInspectOrder(null)}>关闭</Button></ModalActions>}
+        >
+          <div className="admin-dialog">
+            <div className="admin-dialog-intro">
+              <strong>{inspectOrder.id}</strong>
+              <span>查看当前订单的用户、计划、金额和支付拉起参数。</span>
+            </div>
+            <div className="admin-dialog-summary">
+              <div className="admin-dialog-summary-card">
+                <span>状态</span>
+                <strong>{inspectOrder.status || '-'}</strong>
+                <small>{inspectOrder.provider || 'manual'}</small>
+              </div>
+              <div className="admin-dialog-summary-card">
+                <span>订阅计划</span>
+                <strong>{inspectOrder.plan_name || inspectOrder.plan_id || '-'}</strong>
+                <small>{inspectOrder.group_name || inspectOrder.group_id || '-'}</small>
+              </div>
+              <div className="admin-dialog-summary-card">
+                <span>金额</span>
+                <strong>{formatUsdCost(Number(inspectOrder.final_price_cents ?? inspectOrder.amount_cents ?? 0) / 100, 2)}</strong>
+                <small>{inspectOrder.channel_name || inspectOrder.channel_id || inspectOrder.provider || '-'}</small>
+              </div>
+            </div>
+            <div className="admin-dialog-grid">
+              <Field label="用户"><TextInput readOnly value={inspectOrder.user_name || inspectOrder.user_id || '-'} /></Field>
+              <Field label="计划"><TextInput readOnly value={inspectOrder.plan_name || inspectOrder.plan_id || '-'} /></Field>
+              <Field label="通道"><TextInput readOnly value={inspectOrder.channel_name || inspectOrder.channel_id || inspectOrder.provider || '-'} /></Field>
+              <Field label="金额"><TextInput readOnly value={formatUsdCost(Number(inspectOrder.final_price_cents ?? inspectOrder.amount_cents ?? 0) / 100, 2)} /></Field>
+            </div>
+            <Field label="支付参数" full>
+              <TextArea readOnly rows={10} value={JSON.stringify(inspectOrder.provider_payload || {}, null, 2)} />
+            </Field>
+          </div>
+        </Modal>
       ) : null}
     </section>
   );

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { cn } from './utils';
 
 export function Button({
@@ -96,10 +97,22 @@ export function Tabs<T extends string>({
   );
 }
 
-export function Modal({ title, children, footer, onClose }: { title: string; children: ReactNode; footer?: ReactNode; onClose: () => void }) {
-  return (
+export function Modal({
+  title,
+  children,
+  footer,
+  onClose,
+  size = 'lg',
+}: {
+  title: string;
+  children: ReactNode;
+  footer?: ReactNode;
+  onClose: () => void;
+  size?: 'md' | 'lg' | 'xl';
+}) {
+  const content = (
     <div className="modal-overlay" role="dialog" aria-modal="true">
-      <div className="modal">
+      <div className={cn('modal', `modal-${size}`)}>
         <div className="modal-head">
           <h3>{title}</h3>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="关闭">×</button>
@@ -109,6 +122,12 @@ export function Modal({ title, children, footer, onClose }: { title: string; chi
       </div>
     </div>
   );
+  if (typeof document === 'undefined') return content;
+  return createPortal(content, document.body);
+}
+
+export function ModalActions({ children }: { children: ReactNode }) {
+  return <div className="modal-actions">{children}</div>;
 }
 
 export function Empty({ children }: { children: ReactNode }) {

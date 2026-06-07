@@ -25,6 +25,8 @@ export function ProxyKeys({ payload, refresh }: { payload?: ProxyKeyPayload; ref
   const [generated, setGenerated] = useState('');
   const [status, setStatus] = useState('');
   const [copied, setCopied] = useState('');
+  const [toggleTarget, setToggleTarget] = useState<ProxyKey | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ProxyKey | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
   const [showTools, setShowTools] = useState(false);
@@ -76,6 +78,7 @@ export function ProxyKeys({ payload, refresh }: { payload?: ProxyKeyPayload; ref
   }
 
   function openEdit(key: ProxyKey) {
+    setGenerated('');
     setFormName(key.name || 'NEWAPI');
     setEditKey(key);
   }
@@ -179,8 +182,8 @@ export function ProxyKeys({ payload, refresh }: { payload?: ProxyKeyPayload; ref
                       <div className="key-table-actions">
                         <button type="button" onClick={() => setUseKey(key)} title="使用方式"><Terminal size={15} /><span>使用</span></button>
                         <button type="button" onClick={() => openEdit(key)} title="编辑名称"><Edit3 size={15} /><span>编辑</span></button>
-                        <button type="button" onClick={() => mutation.mutate({ action: 'update', id: key.id, enabled: key.enabled === false })} title={key.enabled === false ? '启用' : '停用'}><Eye size={15} /><span>{key.enabled === false ? '启用' : '停用'}</span></button>
-                        <button type="button" className="danger" onClick={() => { if (confirm(`确认删除 API Key「${key.name || 'NEWAPI'}」？`)) mutation.mutate({ action: 'delete', id: key.id }); }} title="删除"><Trash2 size={15} /><span>删除</span></button>
+                        <button type="button" onClick={() => setToggleTarget(key)} title={key.enabled === false ? '启用' : '停用'}><Eye size={15} /><span>{key.enabled === false ? '启用' : '停用'}</span></button>
+                        <button type="button" className="danger" onClick={() => setDeleteTarget(key)} title="删除"><Trash2 size={15} /><span>删除</span></button>
                       </div>
                     </td>
                   </tr>
@@ -236,7 +239,33 @@ export function ProxyKeys({ payload, refresh }: { payload?: ProxyKeyPayload; ref
         />
       ) : null}
 
-      {useKey ? <UseKeyModal apiKey={(useKey as any).key || generated || useKey.preview || ''} endpoint={endpoint} name={useKey.name || 'NEWAPI'} onClose={() => setUseKey(null)} onCopy={copyText} copied={copied} /> : null}
+      {useKey ? <UseKeyModal apiKey={(useKey as any).key || useKey.preview || ''} endpoint={endpoint} name={useKey.name || 'NEWAPI'} onClose={() => setUseKey(null)} onCopy={copyText} copied={copied} /> : null}
+
+      {toggleTarget ? (
+        <Modal
+          title={toggleTarget.enabled === false ? '确认启用入口 Key' : '确认停用入口 Key'}
+          onClose={() => setToggleTarget(null)}
+          footer={<><Button onClick={() => setToggleTarget(null)}>取消</Button><Button tone={toggleTarget.enabled === false ? 'primary' : 'danger'} disabled={mutation.isPending} onClick={() => mutation.mutate({ action: 'update', id: toggleTarget.id, enabled: toggleTarget.enabled === false }, { onSuccess: () => setToggleTarget(null) })}>确认</Button></>}
+        >
+          <div className="section-stack">
+            <p className="subtle">{toggleTarget.enabled === false ? '启用后该入口 Key 会重新参与入口鉴权。' : '停用后该入口 Key 立即失效，但记录仍保留。'}</p>
+            <code>{toggleTarget.name || 'NEWAPI'}</code>
+          </div>
+        </Modal>
+      ) : null}
+
+      {deleteTarget ? (
+        <Modal
+          title="确认删除入口 Key"
+          onClose={() => setDeleteTarget(null)}
+          footer={<><Button onClick={() => setDeleteTarget(null)}>取消</Button><Button tone="danger" disabled={mutation.isPending} onClick={() => mutation.mutate({ action: 'delete', id: deleteTarget.id }, { onSuccess: () => setDeleteTarget(null) })}>确认删除</Button></>}
+        >
+          <div className="section-stack">
+            <p className="subtle">删除后该入口 Key 将从当前托管列表移除。</p>
+            <code>{deleteTarget.name || 'NEWAPI'}</code>
+          </div>
+        </Modal>
+      ) : null}
     </div>
   );
 }

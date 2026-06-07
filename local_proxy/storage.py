@@ -102,6 +102,12 @@ class ProxyStorage:
                         name VARCHAR(128) NOT NULL,
                         external_key VARCHAR(128) NOT NULL,
                         source_type VARCHAR(32) NOT NULL,
+                        role_name VARCHAR(32) NOT NULL DEFAULT 'user',
+                        status VARCHAR(32) NOT NULL DEFAULT 'active',
+                        balance_cents BIGINT NOT NULL DEFAULT 0,
+                        concurrency_limit INT NOT NULL DEFAULT 0,
+                        allowed_group_ids_json MEDIUMTEXT NULL,
+                        extra_json MEDIUMTEXT NULL,
                         enabled TINYINT(1) NOT NULL DEFAULT 1,
                         note TEXT NULL,
                         created_at DOUBLE NOT NULL,
@@ -116,6 +122,10 @@ class ProxyStorage:
                         id VARCHAR(64) PRIMARY KEY,
                         name VARCHAR(128) NOT NULL,
                         description_text TEXT NULL,
+                        platform VARCHAR(32) NOT NULL DEFAULT '',
+                        is_exclusive TINYINT(1) NOT NULL DEFAULT 0,
+                        rate_multiplier DOUBLE NOT NULL DEFAULT 1,
+                        extra_json MEDIUMTEXT NULL,
                         enabled TINYINT(1) NOT NULL DEFAULT 1,
                         sort_order INT NOT NULL DEFAULT 0,
                         created_at DOUBLE NOT NULL,
@@ -123,6 +133,46 @@ class ProxyStorage:
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                     """
                 )
+                try:
+                    cur.execute("ALTER TABLE admin_users ADD COLUMN role_name VARCHAR(32) NOT NULL DEFAULT 'user' AFTER source_type")
+                except Exception:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE admin_users ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'active' AFTER role_name")
+                except Exception:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE admin_users ADD COLUMN balance_cents BIGINT NOT NULL DEFAULT 0 AFTER status")
+                except Exception:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE admin_users ADD COLUMN concurrency_limit INT NOT NULL DEFAULT 0 AFTER balance_cents")
+                except Exception:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE admin_users ADD COLUMN allowed_group_ids_json MEDIUMTEXT NULL AFTER concurrency_limit")
+                except Exception:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE admin_users ADD COLUMN extra_json MEDIUMTEXT NULL AFTER allowed_group_ids_json")
+                except Exception:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE admin_groups ADD COLUMN platform VARCHAR(32) NOT NULL DEFAULT '' AFTER description_text")
+                except Exception:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE admin_groups ADD COLUMN is_exclusive TINYINT(1) NOT NULL DEFAULT 0 AFTER platform")
+                except Exception:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE admin_groups ADD COLUMN rate_multiplier DOUBLE NOT NULL DEFAULT 1 AFTER is_exclusive")
+                except Exception:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE admin_groups ADD COLUMN extra_json MEDIUMTEXT NULL AFTER rate_multiplier")
+                except Exception:
+                    pass
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS admin_user_groups (
@@ -246,6 +296,23 @@ class ProxyStorage:
                         created_at DOUBLE NOT NULL,
                         updated_at DOUBLE NOT NULL,
                         INDEX idx_admin_payment_webhook_events_order_id (order_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS admin_payment_fulfillment_logs (
+                        id VARCHAR(64) PRIMARY KEY,
+                        order_id VARCHAR(64) NOT NULL,
+                        subscription_id VARCHAR(64) NULL,
+                        action VARCHAR(64) NOT NULL,
+                        actor_type VARCHAR(32) NOT NULL,
+                        actor_id VARCHAR(128) NULL,
+                        note_text TEXT NULL,
+                        payload_json MEDIUMTEXT NOT NULL,
+                        created_at DOUBLE NOT NULL,
+                        INDEX idx_admin_payment_fulfillment_logs_order_id (order_id),
+                        INDEX idx_admin_payment_fulfillment_logs_subscription_id (subscription_id)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                     """
                 )
@@ -565,27 +632,61 @@ class ProxyStorage:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, name, external_key, source_type, enabled, note, created_at, updated_at
+                    SELECT id, name, external_key, source_type, role_name, status, balance_cents,
+                           concurrency_limit, allowed_group_ids_json, extra_json,
+                           enabled, note, created_at, updated_at
                     FROM admin_users
                     ORDER BY updated_at DESC, created_at DESC
                     """
                 )
                 for row in cur.fetchall():
+                    try:
+                        allowed_group_ids = json.loads(row[8]) if row[8] else []
+                    except json.JSONDecodeError:
+                        allowed_group_ids = []
+                    try:
+                        extra = json.loads(row[9]) if row[9] else {}
+                    except json.JSONDecodeError:
+                        extra = {}
                     rows.append(
                         {
                             "id": str(row[0] or ""),
                             "name": str(row[1] or ""),
                             "external_key": str(row[2] or ""),
                             "source_type": str(row[3] or ""),
-                            "enabled": bool(row[4]),
-                            "note": str(row[5] or ""),
-                            "created_at": float(row[6] or 0.0),
-                            "updated_at": float(row[7] or 0.0),
+                            "role": str(row[4] or "user"),
+                            "status": str(row[5] or "active"),
+                            "balance_cents": int(row[6] or 0),
+                            "concurrency_limit": int(row[7] or 0),
+                            "allowed_group_ids": allowed_group_ids if isinstance(allowed_group_ids, list) else [],
+                            "extra": extra if isinstance(extra, dict) else {},
+                            "enabled": bool(row[10]),
+                            "note": str(row[11] or ""),
+                            "created_at": float(row[12] or 0.0),
+                            "updated_at": float(row[13] or 0.0),
                         }
                     )
         finally:
             conn.close()
         return rows
+
+    def get_admin_user(self, user_id: str) -> dict:
+        target = str(user_id or "").strip()
+        if not target:
+            return {}
+        for item in self.list_admin_users():
+            if str(item.get("id") or "") == target:
+                return item
+        return {}
+
+    def get_admin_user_by_external_key(self, external_key: str) -> dict:
+        target = str(external_key or "").strip()
+        if not target:
+            return {}
+        for item in self.list_admin_users():
+            if str(item.get("external_key") or "") == target:
+                return item
+        return {}
 
     def upsert_admin_user(self, payload: dict) -> dict:
         now = time.time()
@@ -594,6 +695,12 @@ class ProxyStorage:
             "name": str(payload.get("name") or "").strip(),
             "external_key": str(payload.get("external_key") or "").strip(),
             "source_type": str(payload.get("source_type") or "").strip() or "managed",
+            "role": str(payload.get("role") or "user").strip() or "user",
+            "status": str(payload.get("status") or "active").strip() or "active",
+            "balance_cents": int(payload.get("balance_cents") or 0),
+            "concurrency_limit": int(payload.get("concurrency_limit") or 0),
+            "allowed_group_ids": payload.get("allowed_group_ids") if isinstance(payload.get("allowed_group_ids"), list) else [],
+            "extra": payload.get("extra") if isinstance(payload.get("extra"), dict) else {},
             "enabled": payload.get("enabled") is not False,
             "note": str(payload.get("note") or ""),
         }
@@ -608,14 +715,20 @@ class ProxyStorage:
                 cur.execute(
                     """
                     REPLACE INTO admin_users
-                    (id, name, external_key, source_type, enabled, note, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    (id, name, external_key, source_type, role_name, status, balance_cents, concurrency_limit, allowed_group_ids_json, extra_json, enabled, note, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         item["id"],
                         item["name"],
                         item["external_key"],
                         item["source_type"],
+                        item["role"],
+                        item["status"],
+                        item["balance_cents"],
+                        item["concurrency_limit"],
+                        json.dumps(item["allowed_group_ids"], ensure_ascii=False, separators=(",", ":")),
+                        json.dumps(item["extra"], ensure_ascii=False, separators=(",", ":")),
                         1 if item["enabled"] else 0,
                         item["note"],
                         created_at,
@@ -636,26 +749,43 @@ class ProxyStorage:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, name, description_text, enabled, sort_order, created_at, updated_at
+                    SELECT id, name, description_text, platform, is_exclusive, rate_multiplier, extra_json, enabled, sort_order, created_at, updated_at
                     FROM admin_groups
                     ORDER BY sort_order ASC, updated_at DESC, created_at DESC
                     """
                 )
                 for row in cur.fetchall():
+                    try:
+                        extra = json.loads(row[6]) if row[6] else {}
+                    except json.JSONDecodeError:
+                        extra = {}
                     rows.append(
                         {
                             "id": str(row[0] or ""),
                             "name": str(row[1] or ""),
                             "description": str(row[2] or ""),
-                            "enabled": bool(row[3]),
-                            "sort_order": int(row[4] or 0),
-                            "created_at": float(row[5] or 0.0),
-                            "updated_at": float(row[6] or 0.0),
+                            "platform": str(row[3] or ""),
+                            "is_exclusive": bool(row[4]),
+                            "rate_multiplier": float(row[5] or 1),
+                            "extra": extra if isinstance(extra, dict) else {},
+                            "enabled": bool(row[7]),
+                            "sort_order": int(row[8] or 0),
+                            "created_at": float(row[9] or 0.0),
+                            "updated_at": float(row[10] or 0.0),
                         }
                     )
         finally:
             conn.close()
         return rows
+
+    def get_admin_group(self, group_id: str) -> dict:
+        target = str(group_id or "").strip()
+        if not target:
+            return {}
+        for item in self.list_admin_groups():
+            if str(item.get("id") or "") == target:
+                return item
+        return {}
 
     def upsert_admin_group(self, payload: dict) -> dict:
         now = time.time()
@@ -663,6 +793,10 @@ class ProxyStorage:
             "id": str(payload.get("id") or "").strip(),
             "name": str(payload.get("name") or "").strip(),
             "description": str(payload.get("description") or ""),
+            "platform": str(payload.get("platform") or "").strip(),
+            "is_exclusive": payload.get("is_exclusive") is True,
+            "rate_multiplier": float(payload.get("rate_multiplier") or 1),
+            "extra": payload.get("extra") if isinstance(payload.get("extra"), dict) else {},
             "enabled": payload.get("enabled") is not False,
             "sort_order": int(payload.get("sort_order") or 0),
         }
@@ -677,13 +811,17 @@ class ProxyStorage:
                 cur.execute(
                     """
                     REPLACE INTO admin_groups
-                    (id, name, description_text, enabled, sort_order, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    (id, name, description_text, platform, is_exclusive, rate_multiplier, extra_json, enabled, sort_order, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         item["id"],
                         item["name"],
                         item["description"],
+                        item["platform"],
+                        1 if item["is_exclusive"] else 0,
+                        item["rate_multiplier"],
+                        json.dumps(item["extra"], ensure_ascii=False, separators=(",", ":")),
                         1 if item["enabled"] else 0,
                         item["sort_order"],
                         created_at,
@@ -853,7 +991,7 @@ class ProxyStorage:
                 cur.execute(
                     """
                     SELECT k.id, k.user_id, k.name, k.key_hash, k.key_preview, k.enabled,
-                           u.name, u.source_type, u.enabled, u.note
+                           u.name, u.source_type, u.enabled, u.note, u.status, u.allowed_group_ids_json
                     FROM admin_api_keys k
                     LEFT JOIN admin_users u ON u.id = k.user_id
                     WHERE k.key_hash = %s
@@ -866,6 +1004,10 @@ class ProxyStorage:
             conn.close()
         if row is None:
             return {}
+        try:
+            allowed_group_ids = json.loads(row[11]) if row[11] else []
+        except json.JSONDecodeError:
+            allowed_group_ids = []
         return {
             "id": str(row[0] or ""),
             "user_id": str(row[1] or ""),
@@ -877,6 +1019,8 @@ class ProxyStorage:
             "user_source_type": str(row[7] or ""),
             "user_enabled": bool(row[8]) if row[8] is not None else True,
             "user_note": str(row[9] or ""),
+            "user_status": str(row[10] or ""),
+            "user_allowed_group_ids": allowed_group_ids if isinstance(allowed_group_ids, list) else [],
         }
 
     def list_admin_subscription_plans(self) -> list[dict]:
@@ -971,10 +1115,11 @@ class ProxyStorage:
                     """
                     SELECT s.id, s.user_id, s.plan_id, s.group_id, s.status, s.started_at, s.expires_at,
                            s.daily_used, s.weekly_used, s.monthly_used, s.created_at, s.updated_at,
-                           u.name, p.name
+                           u.name, p.name, g.name, p.price_cents
                     FROM admin_user_subscriptions s
                     LEFT JOIN admin_users u ON u.id = s.user_id
                     LEFT JOIN admin_subscription_plans p ON p.id = s.plan_id
+                    LEFT JOIN admin_groups g ON g.id = s.group_id
                     ORDER BY s.updated_at DESC, s.created_at DESC
                     """
                 )
@@ -995,6 +1140,8 @@ class ProxyStorage:
                             "updated_at": float(row[11] or 0.0),
                             "user_name": str(row[12] or ""),
                             "plan_name": str(row[13] or ""),
+                            "group_name": str(row[14] or ""),
+                            "price_cents": int(row[15] or 0),
                         }
                     )
         finally:
@@ -1130,9 +1277,12 @@ class ProxyStorage:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, user_id, plan_id, subscription_id, channel_id, amount_cents, currency, status,
-                           provider_order_id, resume_token, payload_json, provider_payload_json, paid_at, created_at, updated_at
-                    FROM admin_payment_orders
+                    SELECT o.id, o.user_id, o.plan_id, o.subscription_id, o.channel_id, o.amount_cents, o.currency, o.status,
+                           o.provider_order_id, o.resume_token, o.payload_json, o.provider_payload_json, o.paid_at, o.created_at, o.updated_at,
+                           p.group_id, g.name, p.price_cents
+                    FROM admin_payment_orders o
+                    LEFT JOIN admin_subscription_plans p ON p.id = o.plan_id
+                    LEFT JOIN admin_groups g ON g.id = p.group_id
                     ORDER BY updated_at DESC, created_at DESC
                     """
                 )
@@ -1162,6 +1312,89 @@ class ProxyStorage:
                             "paid_at": float(row[12] or 0.0) if row[12] is not None else None,
                             "created_at": float(row[13] or 0.0),
                             "updated_at": float(row[14] or 0.0),
+                            "group_id": str(row[15] or ""),
+                            "group_name": str(row[16] or ""),
+                            "plan_price_cents": int(row[17] or 0),
+                        }
+                    )
+        finally:
+            conn.close()
+        return rows
+
+    def record_payment_fulfillment_log(self, payload: dict) -> dict:
+        now = time.time()
+        item = {
+            "id": str(payload.get("id") or "").strip(),
+            "order_id": str(payload.get("order_id") or "").strip(),
+            "subscription_id": str(payload.get("subscription_id") or "").strip(),
+            "action": str(payload.get("action") or "").strip(),
+            "actor_type": str(payload.get("actor_type") or "").strip() or "system",
+            "actor_id": str(payload.get("actor_id") or "").strip(),
+            "note_text": str(payload.get("note_text") or "").strip(),
+            "payload": payload.get("payload") if isinstance(payload.get("payload"), dict) else {},
+        }
+        if not item["id"] or not item["order_id"] or not item["action"]:
+            raise ValueError("missing required payment fulfillment log fields")
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    REPLACE INTO admin_payment_fulfillment_logs
+                    (id, order_id, subscription_id, action, actor_type, actor_id, note_text, payload_json, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        item["id"],
+                        item["order_id"],
+                        item["subscription_id"] or None,
+                        item["action"],
+                        item["actor_type"],
+                        item["actor_id"] or None,
+                        item["note_text"] or None,
+                        json.dumps(item["payload"], ensure_ascii=False, separators=(",", ":")),
+                        now,
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        item["created_at"] = now
+        return item
+
+    def list_payment_fulfillment_logs(self, order_id: str) -> list[dict]:
+        target = str(order_id or "").strip()
+        if not target:
+            return []
+        conn = self._connect()
+        rows = []
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, order_id, subscription_id, action, actor_type, actor_id, note_text, payload_json, created_at
+                    FROM admin_payment_fulfillment_logs
+                    WHERE order_id = %s
+                    ORDER BY created_at DESC
+                    """,
+                    (target,),
+                )
+                for row in cur.fetchall():
+                    try:
+                        payload_json = json.loads(row[7]) if row[7] else {}
+                    except json.JSONDecodeError:
+                        payload_json = {}
+                    rows.append(
+                        {
+                            "id": str(row[0] or ""),
+                            "order_id": str(row[1] or ""),
+                            "subscription_id": str(row[2] or ""),
+                            "action": str(row[3] or ""),
+                            "actor_type": str(row[4] or ""),
+                            "actor_id": str(row[5] or ""),
+                            "note_text": str(row[6] or ""),
+                            "payload": payload_json if isinstance(payload_json, dict) else {},
+                            "created_at": float(row[8] or 0.0),
                         }
                     )
         finally:
@@ -1346,6 +1579,47 @@ class ProxyStorage:
             "monthly_used": int(row[9] or 0),
             "created_at": float(row[10] or 0.0),
             "updated_at": float(row[11] or 0.0),
+        }
+
+    def get_active_subscription_context_for_user(self, user_id: str) -> dict:
+        target = str(user_id or "").strip()
+        if not target:
+            return {}
+        now = time.time()
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT s.id, s.user_id, s.plan_id, s.group_id, s.status, s.started_at, s.expires_at,
+                           p.name, p.price_cents, g.name
+                    FROM admin_user_subscriptions s
+                    LEFT JOIN admin_subscription_plans p ON p.id = s.plan_id
+                    LEFT JOIN admin_groups g ON g.id = s.group_id
+                    WHERE s.user_id = %s
+                      AND s.status = 'active'
+                      AND (s.expires_at IS NULL OR s.expires_at > %s)
+                    ORDER BY s.updated_at DESC, s.created_at DESC
+                    LIMIT 1
+                    """,
+                    (target, now),
+                )
+                row = cur.fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return {}
+        return {
+            "subscription_id": str(row[0] or ""),
+            "user_id": str(row[1] or ""),
+            "plan_id": str(row[2] or ""),
+            "group_id": str(row[3] or ""),
+            "status": str(row[4] or ""),
+            "started_at": float(row[5] or 0.0),
+            "expires_at": float(row[6] or 0.0) if row[6] is not None else None,
+            "plan_name": str(row[7] or ""),
+            "plan_price_cents": int(row[8] or 0),
+            "group_name": str(row[9] or ""),
         }
 
     def extend_admin_user_subscription(self, subscription_id: str, extra_days: int) -> dict:

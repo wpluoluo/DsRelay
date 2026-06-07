@@ -13,7 +13,7 @@ import secrets
 import time
 from functools import wraps
 
-from flask import redirect, request, session, url_for
+from flask import abort, redirect, request, session, url_for
 
 
 def _env_str(key: str, default: str = "") -> str:
@@ -100,6 +100,11 @@ def is_authenticated() -> bool:
     return session.get("_proxy_authed", False)
 
 
+def get_authenticated_role() -> str:
+    role = str(session.get("_proxy_role") or "admin").strip().lower()
+    return role or "admin"
+
+
 def _generate_csrf_token() -> str:
     token = session.get("_csrf_token", "")
     if not token:
@@ -125,6 +130,20 @@ def login_required(view):
             return view(*args, **kwargs)
         if not is_authenticated():
             return redirect(url_for("login_page", next=request.full_path))
+        return view(*args, **kwargs)
+
+    return wrapper
+
+
+def admin_required(view):
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        if request.method == "OPTIONS":
+            return view(*args, **kwargs)
+        if not is_authenticated():
+            return redirect(url_for("login_page", next=request.full_path))
+        if get_authenticated_role() != "admin":
+            return abort(403)
         return view(*args, **kwargs)
 
     return wrapper
@@ -220,6 +239,7 @@ def login_page():
             # Regenerate session on login to prevent fixation
             session.clear()
             session["_proxy_authed"] = True
+            session["_proxy_role"] = "admin"
             session.permanent = False
             _generate_csrf_token()
             next_url = request.args.get("next", "")

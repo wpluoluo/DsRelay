@@ -219,6 +219,7 @@ export type AdminOverviewPayload = {
   ok?: boolean;
   user_count?: number;
   group_count?: number;
+  protocol_count?: number;
   request_count?: number;
   total_tokens?: number;
   input_bytes?: number;
@@ -228,12 +229,28 @@ export type AdminOverviewPayload = {
   top_groups?: AdminGroup[];
 };
 
+export type AdminProtocolProfile = {
+  key: string;
+  label: string;
+  supports_tools?: boolean;
+  supports_stream?: boolean;
+  supports_system_prompt?: boolean;
+  supports_images?: boolean;
+  parameter_keys?: string[];
+};
+
 export type AdminUser = {
   id: string;
   name: string;
-  type: string;
+  source_type: string;
   preview?: string;
   external_key?: string;
+  role?: string;
+  status?: string;
+  balance_cents?: number;
+  concurrency_limit?: number;
+  allowed_group_ids?: string[];
+  extra?: Record<string, unknown>;
   enabled?: boolean;
   note?: string;
   request_count?: number;
@@ -246,13 +263,25 @@ export type AdminUser = {
   last_seen_at?: string;
   group_id?: string;
   group_name?: string;
+  subscription_active?: boolean;
+  active_subscription_id?: string;
+  active_plan_id?: string;
+  active_plan_name?: string;
+  active_group_id?: string;
+  active_group_name?: string;
+  active_subscription_status?: string;
+  active_subscription_expires_at?: number | string | null;
+  active_subscription_price_cents?: number;
 };
 
 export type AdminGroup = {
   id: string;
   name: string;
-  type: string;
   description?: string;
+  platform?: string;
+  is_exclusive?: boolean;
+  rate_multiplier?: number;
+  extra?: Record<string, unknown>;
   enabled?: boolean;
   sort_order?: number;
   user_count?: number;
@@ -270,6 +299,12 @@ export type AdminUsageItem = {
   consumer_name?: string;
   consumer_type?: string;
   consumer_preview?: string;
+  subscription_id?: string;
+  plan_id?: string;
+  plan_name?: string;
+  group_id?: string;
+  group_name?: string;
+  plan_price_cents?: number;
   model?: string;
   resolved_model?: string;
   pool_name?: string;
@@ -286,6 +321,147 @@ export type AdminUsageItem = {
   local_cache_status?: string;
   upstream_cache_status?: string;
   error?: string;
+  total_cost?: number;
+  actual_cost?: number;
+  account_cost?: number;
+};
+
+export type AdminBillingSummary = {
+  request_count?: number;
+  error_count?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  input_bytes?: number;
+  output_bytes?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  amount_cents?: number;
+  total_cost?: number;
+  actual_cost?: number;
+  account_cost?: number;
+  active_subscription_count?: number;
+  covered_request_count?: number;
+};
+
+export type AdminBillingUserItem = {
+  user_id: string;
+  user_name?: string;
+  consumer_type?: string;
+  group_ids?: string[];
+  group_names?: string[];
+  plan_ids?: string[];
+  plan_names?: string[];
+  subscription_ids?: string[];
+  request_count?: number;
+  error_count?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  input_bytes?: number;
+  output_bytes?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  amount_cents?: number;
+  total_cost?: number;
+  actual_cost?: number;
+  account_cost?: number;
+};
+
+export type AdminBillingGroupItem = {
+  group_id?: string;
+  group_name?: string;
+  user_ids?: string[];
+  plan_ids?: string[];
+  subscription_ids?: string[];
+  request_count?: number;
+  error_count?: number;
+  total_tokens?: number;
+  input_bytes?: number;
+  output_bytes?: number;
+  amount_cents?: number;
+  total_cost?: number;
+  actual_cost?: number;
+  account_cost?: number;
+};
+
+export type AdminBillingPlanItem = {
+  plan_id?: string;
+  plan_name?: string;
+  group_id?: string;
+  group_name?: string;
+  plan_price_cents?: number;
+  user_ids?: string[];
+  subscription_ids?: string[];
+  request_count?: number;
+  error_count?: number;
+  total_tokens?: number;
+  input_bytes?: number;
+  output_bytes?: number;
+  amount_cents?: number;
+  total_cost?: number;
+  actual_cost?: number;
+  account_cost?: number;
+};
+
+export type AdminBillingSubscriptionItem = {
+  subscription_id: string;
+  status?: string;
+  user_id?: string;
+  user_name?: string;
+  plan_id?: string;
+  plan_name?: string;
+  group_id?: string;
+  group_name?: string;
+  price_cents?: number;
+  started_at?: number | string | null;
+  expires_at?: number | string | null;
+  request_count?: number;
+  error_count?: number;
+  total_tokens?: number;
+  input_bytes?: number;
+  output_bytes?: number;
+  amount_cents?: number;
+  total_cost?: number;
+  actual_cost?: number;
+  account_cost?: number;
+};
+
+export type AdminBillingOrderItem = {
+  order_id: string;
+  subscription_id?: string;
+  user_id?: string;
+  user_name?: string;
+  plan_id?: string;
+  plan_name?: string;
+  group_id?: string;
+  group_name?: string;
+  channel_id?: string;
+  channel_name?: string;
+  provider?: string;
+  status?: string;
+  amount_cents?: number;
+  request_count?: number;
+  error_count?: number;
+  total_tokens?: number;
+  input_bytes?: number;
+  output_bytes?: number;
+  total_cost?: number;
+  actual_cost?: number;
+  account_cost?: number;
+};
+
+export type AdminBillingPayload = {
+  ok?: boolean;
+  summary?: AdminBillingSummary;
+  by_user?: AdminBillingUserItem[];
+  by_group?: AdminBillingGroupItem[];
+  by_plan?: AdminBillingPlanItem[];
+  by_subscription?: AdminBillingSubscriptionItem[];
+  by_order?: AdminBillingOrderItem[];
+  recent_request_total?: number;
+  started_after?: string;
+  started_before?: string;
 };
 
 export type AdminListPayload<T> = {
@@ -298,19 +474,33 @@ export type AdminApiKey = {
   id: string;
   user_id: string;
   user_name?: string;
+  user_source_type?: string;
+  user_enabled?: boolean;
+  user_note?: string;
   name: string;
   key_preview: string;
   enabled?: boolean;
   last_used_at?: number | null;
   created_at?: number;
   updated_at?: number;
+  subscription_active?: boolean;
+  active_subscription_id?: string;
+  active_plan_id?: string;
+  active_plan_name?: string;
+  active_group_id?: string;
+  active_group_name?: string;
+  active_subscription_status?: string;
+  active_subscription_expires_at?: number | string | null;
 };
 
 export type AdminSubscriptionPlan = {
   id: string;
   name: string;
   group_id?: string;
+  group_name?: string;
   price_cents?: number;
+  rate_multiplier?: number;
+  final_price_cents?: number;
   validity_days?: number;
   daily_limit?: number;
   weekly_limit?: number;
@@ -326,12 +516,30 @@ export type AdminUserSubscription = {
   plan_id: string;
   plan_name?: string;
   group_id?: string;
+  group_name?: string;
+  price_cents?: number;
+  rate_multiplier?: number;
   status?: string;
   started_at?: number;
   expires_at?: number | null;
   daily_used?: number;
   weekly_used?: number;
   monthly_used?: number;
+  daily_limit?: number;
+  weekly_limit?: number;
+  monthly_limit?: number;
+};
+
+export type AdminPaymentFulfillmentLog = {
+  id: string;
+  order_id: string;
+  subscription_id?: string;
+  action?: string;
+  actor_type?: string;
+  actor_id?: string;
+  note_text?: string;
+  payload?: Record<string, unknown>;
+  created_at?: number;
 };
 
 export type AdminPaymentChannel = {
@@ -340,6 +548,9 @@ export type AdminPaymentChannel = {
   provider: string;
   enabled?: boolean;
   config?: Record<string, unknown>;
+  allowed_group_ids?: string[];
+  allowed_protocols?: string[];
+  allowed_platforms?: string[];
 };
 
 export type AdminPaymentChannelTemplatePayload = {
@@ -354,11 +565,17 @@ export type AdminPaymentOrder = {
   user_name?: string;
   plan_id: string;
   plan_name?: string;
+  group_id?: string;
+  group_name?: string;
   channel_id?: string;
   channel_name?: string;
   provider?: string;
   subscription_id?: string;
   amount_cents?: number;
+  plan_price_cents?: number;
+  base_price_cents?: number;
+  final_price_cents?: number;
+  rate_multiplier?: number;
   currency?: string;
   status?: string;
   provider_order_id?: string;
@@ -366,4 +583,5 @@ export type AdminPaymentOrder = {
   paid_at?: number | null;
   payload?: Record<string, unknown>;
   provider_payload?: Record<string, unknown>;
+  fulfillment_logs?: AdminPaymentFulfillmentLog[];
 };

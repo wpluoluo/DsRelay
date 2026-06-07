@@ -2,7 +2,9 @@ import type {
   AdminGroup,
   AdminApiKey,
   AdminListPayload,
+  AdminBillingPayload,
   AdminOverviewPayload,
+  AdminProtocolProfile,
   AdminPaymentChannel,
   AdminPaymentChannelTemplatePayload,
   AdminPaymentOrder,
@@ -78,12 +80,51 @@ export function fetchAdminOverview(): Promise<AdminOverviewPayload> {
   return requestJson<AdminOverviewPayload>('/admin/overview');
 }
 
+export function fetchAdminProtocols(): Promise<AdminListPayload<AdminProtocolProfile>> {
+  return requestJson<AdminListPayload<AdminProtocolProfile>>('/admin/protocols');
+}
+
 export function fetchAdminUsers(): Promise<AdminListPayload<AdminUser>> {
   return requestJson<AdminListPayload<AdminUser>>('/admin/users');
 }
 
 export function saveAdminUser(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminUser }> {
   return requestJson<{ ok?: boolean; item?: AdminUser }>('/admin/users', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function setAdminUserBalance(userId: string, balance_cents: number): Promise<{ ok?: boolean; item?: AdminUser }> {
+  return requestJson<{ ok?: boolean; item?: AdminUser }>(`/admin/users/${userId}/balance`, {
+    method: 'POST',
+    body: JSON.stringify({ balance_cents }),
+  });
+}
+
+export function setAdminUserConcurrency(userId: string, concurrency_limit: number): Promise<{ ok?: boolean; item?: AdminUser }> {
+  return requestJson<{ ok?: boolean; item?: AdminUser }>(`/admin/users/${userId}/concurrency`, {
+    method: 'POST',
+    body: JSON.stringify({ concurrency_limit }),
+  });
+}
+
+export function setAdminUserAllowedGroups(userId: string, allowed_group_ids: string[]): Promise<{ ok?: boolean; item?: AdminUser }> {
+  return requestJson<{ ok?: boolean; item?: AdminUser }>(`/admin/users/${userId}/allowed-groups`, {
+    method: 'POST',
+    body: JSON.stringify({ allowed_group_ids }),
+  });
+}
+
+export function setAdminUserMemberships(userId: string, group_ids: string[]): Promise<{ ok?: boolean; item?: AdminUser }> {
+  return requestJson<{ ok?: boolean; item?: AdminUser }>(`/admin/users/${userId}/memberships`, {
+    method: 'POST',
+    body: JSON.stringify({ group_ids }),
+  });
+}
+
+export function setAdminUserRoleStatus(userId: string, payload: { role?: string; status?: string; enabled?: boolean }): Promise<{ ok?: boolean; item?: AdminUser }> {
+  return requestJson<{ ok?: boolean; item?: AdminUser }>(`/admin/users/${userId}/role-status`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -100,8 +141,20 @@ export function saveAdminGroup(payload: Record<string, unknown>): Promise<{ ok?:
   });
 }
 
-export function fetchAdminUsage(): Promise<AdminListPayload<AdminUsageItem>> {
-  return requestJson<AdminListPayload<AdminUsageItem>>('/admin/usage');
+export function fetchAdminUsage(params?: { started_after?: string; started_before?: string }): Promise<AdminListPayload<AdminUsageItem>> {
+  const query = new URLSearchParams();
+  if (params?.started_after) query.set('started_after', params.started_after);
+  if (params?.started_before) query.set('started_before', params.started_before);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return requestJson<AdminListPayload<AdminUsageItem>>(`/admin/usage${suffix}`);
+}
+
+export function fetchAdminBilling(params?: { started_after?: string; started_before?: string }): Promise<AdminBillingPayload> {
+  const query = new URLSearchParams();
+  if (params?.started_after) query.set('started_after', params.started_after);
+  if (params?.started_before) query.set('started_before', params.started_before);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return requestJson<AdminBillingPayload>(`/admin/billing${suffix}`);
 }
 
 export function fetchAdminApiKeys(): Promise<AdminListPayload<AdminApiKey>> {
@@ -186,6 +239,13 @@ export function fetchAdminPaymentOrders(): Promise<AdminListPayload<AdminPayment
 
 export function createAdminPaymentOrder(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminPaymentOrder; provider_payload?: Record<string, unknown> }> {
   return requestJson<{ ok?: boolean; item?: AdminPaymentOrder; provider_payload?: Record<string, unknown> }>('/admin/payment-orders', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateAdminPaymentOrderStatus(orderId: string, payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminPaymentOrder }> {
+  return requestJson<{ ok?: boolean; item?: AdminPaymentOrder }>(`/admin/payment-orders/${orderId}/status`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });

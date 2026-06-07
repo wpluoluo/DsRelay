@@ -12,6 +12,16 @@ export function formatTokenCount(value: unknown): string {
   return `${formatNumber(value)} Token`;
 }
 
+export function formatCost(value: unknown, fractionDigits = 4): string {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return '0.0000';
+  return number.toFixed(fractionDigits);
+}
+
+export function formatUsdCost(value: unknown, fractionDigits = 4): string {
+  return `$${formatCost(value, fractionDigits)}`;
+}
+
 export function formatByteCount(value: unknown): string {
   return formatNumber(value);
 }

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Link, Outlet } from '@tanstack/react-router';
-import { Activity, BarChart3, ChevronLeft, Coins, CreditCard, Database, FolderTree, KeyRound, ListChecks, RefreshCw, Server, Settings, Ticket, Users, Wifi } from 'lucide-react';
+import { Link, Outlet, useRouterState } from '@tanstack/react-router';
+import { BarChart3, ChevronDown, ChevronLeft, Coins, CreditCard, FolderTree, KeyRound, LayoutDashboard, ListChecks, RefreshCw, Server, Settings, Ticket, Users } from 'lucide-react';
 import { fetchDashboardState, fetchProxyKeys, saveConfig, testPool } from '../api';
 import { Badge, Button } from '../components';
 import { PoolModal } from '../features/config/PoolModal';
@@ -9,10 +9,11 @@ import { configFromState, normalizePool } from '../features/config/model';
 import type { ConfigTab } from '../features/config/model';
 import { DashboardProvider } from '../state/dashboardContext';
 import { queryClient } from '../state/queryClient';
+import { UserCenterProvider } from '../state/userCenterContext';
 import type { Pool, PoolTestResult, RuntimeConfig } from '../types';
-import { formatUptime } from '../utils';
 
 export function DashboardLayout() {
+  const locationHref = useRouterState({ select: (state) => state.location.href });
   const [configTab, setConfigTab] = useState<ConfigTab>('routes');
   const [draft, setDraft] = useState<RuntimeConfig>({ pools: [] });
   const [dirty, setDirty] = useState(false);
@@ -39,6 +40,10 @@ export function DashboardLayout() {
     }
   }, [stateQuery.data?.config, dirty]);
 
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [locationHref]);
+
   const saveMutation = useMutation({
     mutationFn: saveConfig,
     onSuccess: (data) => {
@@ -52,9 +57,12 @@ export function DashboardLayout() {
 
   const state = stateQuery.data || {};
   const runtime = state.runtime || {};
-  const recentRequests = Array.isArray(state.recent_requests) ? state.recent_requests : [];
-  const activeRequests = Array.isArray(state.active_requests) ? state.active_requests : [];
   const pools = (draft.pools || []).map(normalizePool);
+  const [menuOpen, setMenuOpen] = useState<Record<string, boolean>>({
+    console: true,
+    userCenter: true,
+    admin: true,
+  });
 
   function patchDraft(patch: Partial<RuntimeConfig>) {
     setDraft((current) => ({ ...current, ...patch }));
@@ -114,43 +122,52 @@ export function DashboardLayout() {
             <div className="brand-copy"><strong>DsRelay</strong><span>本地代理控制台</span></div>
           </div>
           <nav className="sidebar-nav">
-            <div className="sidebar-section-title">总览</div>
-            <NavLink to="/" icon={<BarChart3 size={18} />} label="总览仪表盘" />
-            <NavLink to="/requests" icon={<ListChecks size={18} />} label="使用记录" />
-            <NavLink to="/logs" icon={<Server size={18} />} label="运行日志" />
-            <div className="sidebar-section-title">API 管理</div>
-            <NavLink to="/keys" icon={<KeyRound size={18} />} label="API Key 管理" />
-            <NavLink to="/user-api-keys" icon={<KeyRound size={18} />} label="用户 API Key" />
-            <div className="sidebar-section-title">用户与分组</div>
-            <NavLink to="/users" icon={<Users size={18} />} label="用户管理" />
-            <NavLink to="/groups" icon={<FolderTree size={18} />} label="分组管理" />
-            <div className="sidebar-section-title">订阅与计费</div>
-            <NavLink to="/billing" icon={<Coins size={18} />} label="计费管理" />
-            <NavLink to="/subscription-plans" icon={<Ticket size={18} />} label="订阅计划" />
-            <NavLink to="/subscriptions" icon={<Ticket size={18} />} label="用户订阅" />
-            <NavLink to="/payment-channels" icon={<CreditCard size={18} />} label="支付通道" />
-            <NavLink to="/payment-orders" icon={<CreditCard size={18} />} label="支付订单" />
-            <div className="sidebar-section-title">系统</div>
-            <NavLink to="/config" icon={<Settings size={18} />} label="渠道与策略" />
+            <NavGroup
+              title="控制台"
+              open={menuOpen.console}
+              onToggle={() => setMenuOpen((current) => ({ ...current, console: !current.console }))}
+            >
+              <NavLink to="/" icon={<BarChart3 size={18} />} label="总览仪表盘" />
+              <NavLink to="/config" icon={<Settings size={18} />} label="线路与策略" />
+              <NavLink to="/proxy-keys" icon={<KeyRound size={18} />} label="入口 API Key" />
+              <NavLink to="/requests" icon={<ListChecks size={18} />} label="使用记录" />
+              <NavLink to="/logs" icon={<Server size={18} />} label="运行日志" />
+            </NavGroup>
+            <NavGroup
+              title="用户中心"
+              open={menuOpen.userCenter}
+              onToggle={() => setMenuOpen((current) => ({ ...current, userCenter: !current.userCenter }))}
+            >
+              <NavLink to="/user-dashboard" icon={<LayoutDashboard size={18} />} label="控制台" />
+              <NavLink to="/purchase" icon={<CreditCard size={18} />} label="购买与订阅" />
+              <NavLink to="/user-orders" icon={<CreditCard size={18} />} label="支付订单" />
+              <NavLink to="/user-subscriptions" icon={<Ticket size={18} />} label="我的订阅" />
+              <NavLink to="/keys" icon={<KeyRound size={18} />} label="用户 API Key" />
+              <NavLink to="/usage" icon={<BarChart3 size={18} />} label="我的用量" />
+            </NavGroup>
+            <NavGroup
+              title="管理后台"
+              open={menuOpen.admin}
+              onToggle={() => setMenuOpen((current) => ({ ...current, admin: !current.admin }))}
+            >
+              <NavLink to="/users" icon={<Users size={18} />} label="用户管理" />
+              <NavLink to="/groups" icon={<FolderTree size={18} />} label="分组管理" />
+              <NavLink to="/user-api-keys" icon={<KeyRound size={18} />} label="业务 API Key" />
+              <NavLink to="/billing" icon={<Coins size={18} />} label="计费管理" />
+              <NavLink to="/subscription-plans" icon={<Ticket size={18} />} label="订阅计划" />
+              <NavLink to="/subscriptions" icon={<Ticket size={18} />} label="用户订阅" />
+              <NavLink to="/payment-channels" icon={<CreditCard size={18} />} label="支付通道" />
+              <NavLink to="/payment-orders" icon={<CreditCard size={18} />} label="支付订单" />
+            </NavGroup>
           </nav>
-          <div className="sidebar-foot">
-            <div className="sidebar-status-dot"><span />运行中 · {formatUptime(runtime.uptime_seconds)}</div>
-            <small>PID {runtime.pid || '-'} · 端口 {runtime.port || '18765'}</small>
-          </div>
         </aside>
 
         <main className="main">
           <header className="topbar">
             <div className="topbar-main">
               <div className="topbar-title">
-                <h1>运行控制台</h1>
-                <p><Database size={13} />入口地址 <span className="endpoint">http://127.0.0.1:{runtime.port || '18765'}/v1</span></p>
-              </div>
-              <div className="topbar-runtime-strip">
-                <TopbarMeta label="运行时长" value={formatUptime(runtime.uptime_seconds)} />
-                <TopbarMeta label="活跃请求" value={String(activeRequests.length)} />
-                <TopbarMeta label="最近记录" value={String(recentRequests.length)} />
-                <TopbarMeta label="已启用线路" value={`${state.pools_enabled_count ?? state.config?.pools_enabled_count ?? 0}`} />
+                <h1>DsRelay</h1>
+                <p>管理控制台</p>
               </div>
             </div>
             <div className="hero-actions">
@@ -160,14 +177,9 @@ export function DashboardLayout() {
             </div>
           </header>
 
-          <div className="topbar-meta-row">
-            <div className="topbar-meta-chip"><Activity size={14} /><span>采样窗口 {recentRequests.length} 条</span></div>
-            <div className="topbar-meta-chip"><Wifi size={14} /><span>运行端口 {runtime.port || '18765'}</span></div>
-            <div className="topbar-meta-chip"><Server size={14} /><span>PID {runtime.pid || '-'}</span></div>
-            <div className="topbar-meta-chip"><Database size={14} /><span>{runtime.config_source || state.config?.config_source || '未标记配置来源'}</span></div>
-          </div>
-
-          <Outlet />
+          <UserCenterProvider>
+            <Outlet />
+          </UserCenterProvider>
         </main>
 
         {poolDraft ? (
@@ -189,11 +201,24 @@ export function DashboardLayout() {
   );
 }
 
-function TopbarMeta({ label, value }: { label: string; value: string }) {
+function NavGroup({
+  title,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="topbar-runtime-item">
-      <span>{label}</span>
-      <strong>{value}</strong>
+    <div className="sidebar-group">
+      <button type="button" className="sidebar-group-toggle" onClick={onToggle}>
+        <span>{title}</span>
+        <ChevronDown size={14} className={open ? 'sidebar-group-toggle-open' : ''} />
+      </button>
+      {open ? <div className="sidebar-group-links">{children}</div> : null}
     </div>
   );
 }

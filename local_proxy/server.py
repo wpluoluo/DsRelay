@@ -53,7 +53,7 @@ from local_proxy.compat.protocols import (
     payload_looks_anthropic,
 )
 from local_proxy.dashboard import load_dashboard_template
-from local_proxy.auth import init_auth, login_page, login_required, logout, is_authenticated
+from local_proxy.auth import admin_required, init_auth, login_page, login_required, logout, is_authenticated
 from local_proxy.admin import register_admin_routes
 from local_proxy.admin.service import AdminAnalyticsService
 from local_proxy.http.headers import (
@@ -3729,6 +3729,15 @@ def build_request_meta(
                 "proxy_consumer_type": str(consumer_meta.get("type") or ""),
                 "proxy_consumer_preview": str(consumer_meta.get("preview") or ""),
                 "proxy_consumer_source": str(consumer_meta.get("source") or ""),
+                "proxy_consumer_status": str(consumer_meta.get("status") or ""),
+                "proxy_consumer_group_ids": consumer_meta.get("group_ids") if isinstance(consumer_meta.get("group_ids"), list) else [],
+                "proxy_consumer_allowed_group_ids": consumer_meta.get("allowed_group_ids") if isinstance(consumer_meta.get("allowed_group_ids"), list) else [],
+                "proxy_subscription_id": str(consumer_meta.get("subscription_id") or ""),
+                "proxy_plan_id": str(consumer_meta.get("plan_id") or ""),
+                "proxy_plan_name": str(consumer_meta.get("plan_name") or ""),
+                "proxy_group_id": str(consumer_meta.get("group_id") or ""),
+                "proxy_group_name": str(consumer_meta.get("group_name") or ""),
+                "proxy_plan_price_cents": int(consumer_meta.get("plan_price_cents") or 0),
             }
         )
     if isinstance(execution, dict):
@@ -6284,12 +6293,35 @@ def require_proxy_api_key() -> Response | None:
             candidate_hash = hash_proxy_api_key(candidate) if candidate else ""
             matched = storage.find_admin_api_key_by_hash(candidate_hash) if candidate_hash else {}
             if matched and matched.get("enabled") and matched.get("user_enabled", True):
+                memberships = []
+                active_subscription = {}
+                try:
+                    memberships = [
+                        str(row.get("group_id") or "").strip()
+                        for row in storage.list_admin_user_groups()
+                        if str(row.get("user_id") or "").strip() == str(matched.get("user_id") or "").strip()
+                    ]
+                except Exception:
+                    memberships = []
+                try:
+                    active_subscription = storage.get_active_subscription_context_for_user(str(matched.get("user_id") or ""))
+                except Exception:
+                    active_subscription = {}
                 REQUEST_LOCAL.proxy_consumer = {
                     "id": str(matched.get("user_id") or ""),
                     "name": str(matched.get("user_name") or matched.get("name") or "业务用户"),
                     "type": "user_api_key",
                     "preview": str(matched.get("key_preview") or ""),
                     "source": str(source or "authorization"),
+                    "status": str(matched.get("user_status") or ""),
+                    "allowed_group_ids": matched.get("user_allowed_group_ids") if isinstance(matched.get("user_allowed_group_ids"), list) else [],
+                    "group_ids": [item for item in memberships if item],
+                    "subscription_id": str(active_subscription.get("subscription_id") or ""),
+                    "plan_id": str(active_subscription.get("plan_id") or ""),
+                    "plan_name": str(active_subscription.get("plan_name") or ""),
+                    "group_id": str(active_subscription.get("group_id") or ""),
+                    "group_name": str(active_subscription.get("group_name") or ""),
+                    "plan_price_cents": int(active_subscription.get("plan_price_cents") or 0),
                 }
                 storage.touch_admin_api_key(str(matched.get("id") or ""))
                 return None
@@ -9565,7 +9597,7 @@ register_http_routes(
 admin_analytics_service = AdminAnalyticsService(storage=storage, request_recorder=request_recorder)
 register_admin_routes(
     app,
-    login_required=login_required,
+    admin_required=admin_required,
     analytics_service=admin_analytics_service,
 )
 

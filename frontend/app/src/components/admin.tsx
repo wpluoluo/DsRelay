@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, MoreHorizontal, Search } from 'lucide-react';
 import { Button } from '../components';
 import { cn } from '../utils';
 
@@ -18,9 +19,7 @@ export function TablePageLayout({
     <div className="sub2-page-layout">
       {actions ? <div className="layout-section-fixed">{actions}</div> : null}
       {filters ? <div className="layout-section-fixed">{filters}</div> : null}
-      <div className="layout-section-scrollable">
-        <div className="sub2-table-shell">{table}</div>
-      </div>
+      <div className="sub2-table-shell">{table}</div>
       {pagination ? <div className="layout-section-fixed">{pagination}</div> : null}
     </div>
   );
@@ -70,6 +69,69 @@ export function EmptyState({
       {description ? <p>{description}</p> : null}
       {action ? <div className="sub2-empty-action">{action}</div> : null}
     </div>
+  );
+}
+
+export function ListEmptyRow({
+  colSpan,
+  title,
+  description,
+  action,
+}: {
+  colSpan: number;
+  title: string;
+  description?: string;
+  action?: ReactNode;
+}) {
+  return (
+    <tr>
+      <td colSpan={colSpan}>
+        <EmptyState title={title} description={description} action={action} />
+      </td>
+    </tr>
+  );
+}
+
+export function RowActions({ children }: { children: ReactNode }) {
+  return <div className="sub2-action-stack sub2-row-actions">{children}</div>;
+}
+
+export function RowAction({
+  icon: Icon,
+  label,
+  tone,
+  onClick,
+}: {
+  icon: LucideIcon;
+  label: string;
+  tone?: 'default' | 'warn' | 'danger';
+  onClick?: () => void;
+}) {
+  return (
+    <button type="button" className={cn('sub2-icon-action', tone === 'warn' && 'warn', tone === 'danger' && 'danger')} onClick={onClick}>
+      <Icon size={14} />
+      <span>{label}</span>
+    </button>
+  );
+}
+
+export function ToolsMenu({
+  label = '更多工具',
+  icon = true,
+  children,
+}: {
+  label?: string;
+  icon?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <details className="sub2-menu">
+      <summary>
+        {icon ? <MoreHorizontal size={14} /> : null}
+        <span>{label}</span>
+      </summary>
+      <div className="sub2-menu-panel">{children}</div>
+    </details>
   );
 }
 

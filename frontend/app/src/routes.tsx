@@ -12,7 +12,13 @@ import { AdminSubscriptionsPage } from './pages/AdminSubscriptionsPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
 import { LogsView } from './pages/LogsView';
 import { Overview } from './pages/Overview';
+import { PurchaseCenterPage } from './pages/PurchaseCenterPage';
 import { ProxyKeysPage } from './pages/ProxyKeysPage';
+import { UserApiKeysPage } from './pages/UserApiKeysPage';
+import { UserDashboardPage } from './pages/UserDashboardPage';
+import { UserOrdersPage } from './pages/UserOrdersPage';
+import { UserSubscriptionsPage } from './pages/UserSubscriptionsPage';
+import { UserUsagePage } from './pages/UserUsagePage';
 import { useDashboard } from './state/dashboardContext';
 
 function OverviewRoute() {
@@ -23,6 +29,22 @@ function OverviewRoute() {
 function RequestsRoute() {
   const { state } = useDashboard();
   return <RequestsView state={state} />;
+}
+
+function UserUsageRoute() {
+  return <UserUsagePage />;
+}
+
+function UserDashboardRoute() {
+  return <UserDashboardPage />;
+}
+
+function UserOrdersRoute() {
+  return <UserOrdersPage />;
+}
+
+function UserSubscriptionsRoute() {
+  return <UserSubscriptionsPage />;
 }
 
 function LogsRoute() {
@@ -50,6 +72,10 @@ function ConfigRoute() {
 }
 
 function KeysRoute() {
+  return <UserApiKeysPage />;
+}
+
+function ProxyKeysRoute() {
   return <ProxyKeysPage />;
 }
 
@@ -85,11 +111,20 @@ function PaymentOrdersRoute() {
   return <AdminPaymentOrdersPage />;
 }
 
+function PurchaseCenterRoute() {
+  return <PurchaseCenterPage />;
+}
+
 const rootRoute = createRootRoute({ component: DashboardLayout });
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: OverviewRoute });
 const requestsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/requests', component: RequestsRoute });
+const userUsageRoute = createRoute({ getParentRoute: () => rootRoute, path: '/usage', component: UserUsageRoute });
+const userDashboardRoute = createRoute({ getParentRoute: () => rootRoute, path: '/user-dashboard', component: UserDashboardRoute });
+const userOrdersRoute = createRoute({ getParentRoute: () => rootRoute, path: '/user-orders', component: UserOrdersRoute });
+const userSubscriptionsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/user-subscriptions', component: UserSubscriptionsRoute });
 const logsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/logs', component: LogsRoute });
 const keysRoute = createRoute({ getParentRoute: () => rootRoute, path: '/keys', component: KeysRoute });
+const proxyKeysRoute = createRoute({ getParentRoute: () => rootRoute, path: '/proxy-keys', component: ProxyKeysRoute });
 const usersRoute = createRoute({ getParentRoute: () => rootRoute, path: '/users', component: UsersRoute });
 const groupsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/groups', component: GroupsRoute });
 const billingRoute = createRoute({ getParentRoute: () => rootRoute, path: '/billing', component: BillingRoute });
@@ -98,9 +133,30 @@ const subscriptionPlansRoute = createRoute({ getParentRoute: () => rootRoute, pa
 const subscriptionsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/subscriptions', component: SubscriptionsRoute });
 const paymentChannelsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/payment-channels', component: PaymentChannelsRoute });
 const paymentOrdersRoute = createRoute({ getParentRoute: () => rootRoute, path: '/payment-orders', component: PaymentOrdersRoute });
+const purchaseCenterRoute = createRoute({ getParentRoute: () => rootRoute, path: '/purchase', component: PurchaseCenterRoute });
 const configRoute = createRoute({ getParentRoute: () => rootRoute, path: '/config', component: ConfigRoute });
 
-const routeTree = rootRoute.addChildren([indexRoute, requestsRoute, logsRoute, keysRoute, usersRoute, groupsRoute, billingRoute, adminApiKeysRoute, subscriptionPlansRoute, subscriptionsRoute, paymentChannelsRoute, paymentOrdersRoute, configRoute]);
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  requestsRoute,
+  userDashboardRoute,
+  userOrdersRoute,
+  userSubscriptionsRoute,
+  userUsageRoute,
+  logsRoute,
+  keysRoute,
+  proxyKeysRoute,
+  usersRoute,
+  groupsRoute,
+  billingRoute,
+  adminApiKeysRoute,
+  subscriptionPlansRoute,
+  subscriptionsRoute,
+  paymentChannelsRoute,
+  paymentOrdersRoute,
+  purchaseCenterRoute,
+  configRoute,
+]);
 
 export const router = createRouter({ routeTree, history: createHashHistory() });
 

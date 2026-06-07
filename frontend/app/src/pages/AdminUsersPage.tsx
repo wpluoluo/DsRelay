@@ -1,18 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Activity, Ban, Download, Layers3, MoreHorizontal, Pencil, Plus, RefreshCw, ShieldCheck, UserCheck, Users } from 'lucide-react';
-import { fetchAdminGroups, fetchAdminUsers, saveAdminUser } from '../api';
-import { Button, Field, Modal, Select, TextArea, TextInput } from '../components';
-import { ActionButton, ColumnMenu, EmptyState, FilterToolbar, Pager, SearchField, TablePageLayout, ToolbarButtonRow } from '../components/admin';
+import { Ban, Coins, Download, Pencil, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
+import { fetchAdminGroups, fetchAdminUsers, saveAdminUser, setAdminUserBalance, setAdminUserConcurrency } from '../api';
+import { Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
+import { ActionButton, ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { queryClient } from '../state/queryClient';
 import type { AdminUser } from '../types';
-import { cn, formatByteCount, formatNumber, formatTokenCount, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
+import { cn, formatByteCount, formatCost, formatNumber, formatTokenCount, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
 
 type UserDraft = {
   id?: string;
   name: string;
   external_key: string;
   source_type: string;
+  role: string;
+  status: string;
+  balance_cents: number;
+  concurrency_limit: number;
+  allowed_group_ids: string[];
   enabled: boolean;
   note: string;
   group_ids: string[];
@@ -21,6 +26,9 @@ type UserDraft = {
 type UserColumnKey =
   | 'name'
   | 'external_key'
+  | 'role'
+  | 'subscription'
+  | 'quota'
   | 'group'
   | 'requests'
   | 'tokens'
@@ -36,13 +44,18 @@ const EMPTY_DRAFT: UserDraft = {
   name: '',
   external_key: '',
   source_type: 'managed',
+  role: 'user',
+  status: 'active',
+  balance_cents: 0,
+  concurrency_limit: 0,
+  allowed_group_ids: [],
   enabled: true,
   note: '',
   group_ids: [],
 };
 
 const PAGE_SIZE = 20;
-const DEFAULT_VISIBLE_COLUMNS: UserColumnKey[] = ['external_key', 'group', 'requests', 'tokens', 'last_seen', 'status'];
+const DEFAULT_VISIBLE_COLUMNS: UserColumnKey[] = ['external_key', 'subscription', 'group', 'requests', 'tokens', 'last_seen', 'status'];
 const STORAGE_KEY = 'admin-users-view-state';
 const USER_SORT_OPTIONS: Array<{ value: UserSortKey; label: string }> = [
   { value: 'name_asc', label: '名称排序' },
@@ -56,6 +69,7 @@ export function AdminUsersPage() {
   const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, refetchInterval: 10000 });
   const groupsQuery = useQuery({ queryKey: ['admin-groups'], queryFn: fetchAdminGroups, refetchInterval: 10000 });
   const [draft, setDraft] = useState<UserDraft | null>(null);
+  const [quotaDraft, setQuotaDraft] = useState<{ id: string; name: string; balance_cents: number; concurrency_limit: number } | null>(null);
   const savedState = readStorageJSON(STORAGE_KEY, {
     search: '',
     statusFilter: '',
@@ -73,7 +87,6 @@ export function AdminUsersPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(savedState.pageSize || PAGE_SIZE);
   const [visibleColumns, setVisibleColumns] = useState<Set<UserColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
-  const [showTools, setShowTools] = useState(false);
 
   const saveMutation = useMutation({
     mutationFn: saveAdminUser,
@@ -84,6 +97,18 @@ export function AdminUsersPage() {
         queryClient.invalidateQueries({ queryKey: ['admin-groups'] }),
         queryClient.invalidateQueries({ queryKey: ['admin-overview'] }),
       ]);
+    },
+  });
+  const quotaMutation = useMutation({
+    mutationFn: async (payload: { id: string; balance_cents: number; concurrency_limit: number }) => {
+      await Promise.all([
+        setAdminUserBalance(payload.id, payload.balance_cents),
+        setAdminUserConcurrency(payload.id, payload.concurrency_limit),
+      ]);
+    },
+    onSuccess: async () => {
+      setQuotaDraft(null);
+      await queryClient.invalidateQueries({ queryKey: ['admin-users'] });
     },
   });
 
@@ -102,7 +127,7 @@ export function AdminUsersPage() {
         if ((item.enabled !== false) !== enabledValue) return false;
       }
       if (groupFilter && item.group_id !== groupFilter) return false;
-      if (sourceFilter && (item.type || 'managed') !== sourceFilter) return false;
+      if (sourceFilter && (item.source_type || 'managed') !== sourceFilter) return false;
       return true;
     });
     return [...scopedItems].sort((left, right) => compareUsers(left, right, sortBy));
@@ -118,14 +143,15 @@ export function AdminUsersPage() {
   const enabledCount = items.filter((item) => item.enabled !== false).length;
   const requestTotal = items.reduce((sum, item) => sum + Number(item.request_count || 0), 0);
   const tokenTotal = items.reduce((sum, item) => sum + Number(item.total_tokens || 0), 0);
-  const managedCount = items.filter((item) => (item.type || 'managed') === 'managed').length;
-  const anonymousCount = items.filter((item) => (item.type || 'managed') === 'anonymous').length;
+  const activeSubscriptionCount = items.filter((item) => item.subscription_active).length;
   const latestSeenAt = filteredItems.reduce<number | null>((latest, item) => {
     const current = parseMaybeDate(item.last_seen_at);
     if (current === null) return latest;
     if (latest === null || current > latest) return current;
     return latest;
   }, null);
+  const disabledCount = items.length - enabledCount;
+  const uncoveredCount = Math.max(0, items.length - activeSubscriptionCount);
 
   useEffect(() => {
     writeStorageJSON(STORAGE_KEY, {
@@ -148,10 +174,24 @@ export function AdminUsersPage() {
       id: item.id,
       name: item.name || '',
       external_key: item.external_key || item.id || '',
-      source_type: item.type || 'managed',
+      source_type: item.source_type || 'managed',
+      role: item.role || 'user',
+      status: item.status || 'active',
+      balance_cents: Number(item.balance_cents || 0),
+      concurrency_limit: Number(item.concurrency_limit || 0),
+      allowed_group_ids: Array.isArray(item.allowed_group_ids) ? item.allowed_group_ids : [],
       enabled: item.enabled !== false,
       note: item.note || '',
       group_ids: item.group_id ? [item.group_id] : [],
+    });
+  }
+
+  function openQuota(item: AdminUser) {
+    setQuotaDraft({
+      id: item.id,
+      name: item.name || item.id,
+      balance_cents: Number(item.balance_cents || 0),
+      concurrency_limit: Number(item.concurrency_limit || 0),
     });
   }
 
@@ -160,7 +200,12 @@ export function AdminUsersPage() {
       id: item.id,
       name: item.name || '',
       external_key: item.external_key || item.id || '',
-      source_type: item.type || 'managed',
+      source_type: item.source_type || 'managed',
+      role: item.role || 'user',
+      status: item.status || 'active',
+      balance_cents: Number(item.balance_cents || 0),
+      concurrency_limit: Number(item.concurrency_limit || 0),
+      allowed_group_ids: Array.isArray(item.allowed_group_ids) ? item.allowed_group_ids : [],
       enabled: item.enabled === false,
       note: item.note || '',
       group_ids: item.group_id ? [item.group_id] : [],
@@ -187,7 +232,9 @@ export function AdminUsersPage() {
       ...filteredItems.map((item) => [
         item.name || '-',
         item.external_key || item.id || '-',
-        item.type || 'managed',
+        item.source_type || 'managed',
+        item.role || 'user',
+        `${Number(item.balance_cents || 0)} / ${Number(item.concurrency_limit || 0)}`,
         item.group_name || item.group_id || '未分组',
         String(item.request_count || 0),
         String(item.total_tokens || 0),
@@ -208,62 +255,17 @@ export function AdminUsersPage() {
 
   return (
     <section className="grid-page">
-      <div className="key-stat-grid">
-        <div className="key-stat">
-          <div className="key-stat-icon blue"><Users size={18} /></div>
-          <div><span>用户总数</span><strong>{formatNumber(items.length)}</strong><small>筛选前全量</small></div>
+      <div className="sub2-page-head">
+        <div className="sub2-page-title">
+          <strong>用户管理</strong>
+          <span>按用户管理账户、订阅、分组和用量，保持和 SUB2 一致的运营表格视图。</span>
         </div>
-        <div className="key-stat">
-          <div className="key-stat-icon green"><UserCheck size={18} /></div>
-          <div><span>启用用户</span><strong>{formatNumber(enabledCount)}</strong><small>停用 {formatNumber(items.length - enabledCount)}</small></div>
-        </div>
-        <div className="key-stat">
-          <div className="key-stat-icon amber"><Layers3 size={18} /></div>
-          <div><span>已绑定分组</span><strong>{formatNumber(new Set(items.map((item) => item.group_id).filter(Boolean)).size)}</strong><small>当前用户覆盖分组</small></div>
-        </div>
-        <div className="key-stat">
-          <div className="key-stat-icon slate"><Activity size={18} /></div>
-          <div><span>累计请求</span><strong>{formatNumber(requestTotal)}</strong><small>{formatTokenCount(tokenTotal)}</small></div>
-        </div>
-      </div>
-      <div className="key-stat-grid">
-        <div className="key-stat">
-          <div className="key-stat-icon blue"><Users size={18} /></div>
-          <div><span>托管来源</span><strong>{formatNumber(managedCount)}</strong><small>系统主流归因类型</small></div>
-        </div>
-        <div className="key-stat">
-          <div className="key-stat-icon amber"><Layers3 size={18} /></div>
-          <div><span>匿名来源</span><strong>{formatNumber(anonymousCount)}</strong><small>未绑定明确环境变量</small></div>
-        </div>
-        <div className="key-stat">
-          <div className="key-stat-icon green"><UserCheck size={18} /></div>
-          <div><span>当前排序</span><strong>{USER_SORT_OPTIONS.find((item) => item.value === sortBy)?.label || '名称排序'}</strong><small>与 SUB2 用户运营视角对齐</small></div>
-        </div>
-        <div className="key-stat">
-          <div className="key-stat-icon slate"><Activity size={18} /></div>
-          <div><span>最近请求</span><strong>{latestSeenAt ? formatDateTime(latestSeenAt) : '-'}</strong><small>筛选结果内最新时间</small></div>
-        </div>
-      </div>
-      <div className="admin-ops-strip">
-        <div className="admin-ops-item">
-          <span>当前筛选</span>
-          <strong>{statusFilter === 'enabled' ? '仅启用' : statusFilter === 'disabled' ? '仅停用' : '全部用户'}</strong>
-          <small>{search ? `关键词：${search}` : '未设置关键词'}{groupFilter ? ` · 分组：${groupFilter}` : ''}{sourceFilter ? ` · 来源：${sourceFilter}` : ''}</small>
-        </div>
-        <div className="admin-ops-item">
-          <span>来源类型</span>
-          <strong>{sourceFilter || '全部来源'}</strong>
-          <small>统一承接来源键、分组与用量统计</small>
-        </div>
-        <div className="admin-ops-item">
-          <span>列视图</span>
-          <strong>{formatNumber(visibleColumns.size)} 列</strong>
-          <small>按排障或运营需要切换字段</small>
-        </div>
-        <div className="admin-ops-item">
-          <span>列表容量</span>
-          <strong>{formatNumber(pageSize)} 条 / 页</strong>
-          <small>匹配结果 {formatNumber(filteredItems.length)} 条</small>
+        <div className="sub2-inline-summary">
+          <div className="sub2-inline-summary-item"><span>用户总数</span><strong>{formatNumber(items.length)}</strong><small>当前业务账户</small></div>
+          <div className="sub2-inline-summary-item"><span>启用状态</span><strong>{formatNumber(enabledCount)}</strong><small>停用 {formatNumber(disabledCount)}</small></div>
+          <div className="sub2-inline-summary-item"><span>有效订阅</span><strong>{formatNumber(activeSubscriptionCount)}</strong><small>未覆盖 {formatNumber(uncoveredCount)}</small></div>
+          <div className="sub2-inline-summary-item"><span>累计请求</span><strong>{formatNumber(requestTotal)}</strong><small>{formatTokenCount(tokenTotal)}</small></div>
+          <div className="sub2-inline-summary-item"><span>最近请求</span><strong>{latestSeenAt ? formatDateTime(latestSeenAt) : '-'}</strong><small>{sourceFilter ? `来源：${formatUserSource(sourceFilter)}` : (USER_SORT_OPTIONS.find((item) => item.value === sortBy)?.label || '名称排序')}</small></div>
         </div>
       </div>
       <TablePageLayout
@@ -276,6 +278,9 @@ export function AdminUsersPage() {
                   label="列设置"
                   items={[
                     { key: 'external_key', label: '来源键', checked: visibleColumns.has('external_key'), onToggle: () => toggleColumn('external_key') },
+                    { key: 'role', label: '角色 / 状态', checked: visibleColumns.has('role'), onToggle: () => toggleColumn('role') },
+                    { key: 'subscription', label: '订阅', checked: visibleColumns.has('subscription'), onToggle: () => toggleColumn('subscription') },
+                    { key: 'quota', label: '余额 / 并发', checked: visibleColumns.has('quota'), onToggle: () => toggleColumn('quota') },
                     { key: 'group', label: '分组', checked: visibleColumns.has('group'), onToggle: () => toggleColumn('group') },
                     { key: 'requests', label: '请求数', checked: visibleColumns.has('requests'), onToggle: () => toggleColumn('requests') },
                     { key: 'tokens', label: '总 Token', checked: visibleColumns.has('tokens'), onToggle: () => toggleColumn('tokens') },
@@ -285,27 +290,39 @@ export function AdminUsersPage() {
                     { key: 'status', label: '状态', checked: visibleColumns.has('status'), onToggle: () => toggleColumn('status') },
                   ]}
                 />
-                <details className="sub2-menu" open={showTools} onToggle={(event) => setShowTools((event.target as HTMLDetailsElement).open)}>
-                  <summary>
-                    <MoreHorizontal size={14} />
-                    <span>更多工具</span>
-                  </summary>
-                  <div className="sub2-menu-panel">
-                    <button type="button" onClick={() => { setSearch(''); setStatusFilter(''); setGroupFilter(''); setSourceFilter(''); setSortBy('name_asc'); resetPage(); setShowTools(false); }}>
+                <ToolsMenu>
+                    <button type="button" onClick={() => { setSearch(''); setStatusFilter(''); setGroupFilter(''); setSourceFilter(''); setSortBy('name_asc'); resetPage(); }}>
                       <span>清空筛选</span>
                     </button>
-                    <button type="button" onClick={() => { setSortBy('tokens_desc'); resetPage(); setShowTools(false); }}>
-                      <span>切到高耗用户排行</span>
+                    <button type="button" onClick={() => { setSourceFilter('managed'); resetPage(); }}>
+                      <span>仅看托管 Key</span>
                     </button>
-                    <button type="button" onClick={() => { resetPage(50); setShowTools(false); }}>
+                    <button type="button" onClick={() => { setSourceFilter('env'); resetPage(); }}>
+                      <span>仅看环境 Key</span>
+                    </button>
+                    <button type="button" onClick={() => { setSourceFilter('anonymous'); resetPage(); }}>
+                      <span>仅看匿名来源</span>
+                    </button>
+                    <button type="button" onClick={() => { setSortBy('name_asc'); resetPage(); }}>
+                      <span>按名称排序</span>
+                    </button>
+                    <button type="button" onClick={() => { setSortBy('requests_desc'); resetPage(); }}>
+                      <span>按请求数排序</span>
+                    </button>
+                    <button type="button" onClick={() => { setSortBy('tokens_desc'); resetPage(); }}>
+                      <span>按 Token 排序</span>
+                    </button>
+                    <button type="button" onClick={() => { setSortBy('last_seen_desc'); resetPage(); }}>
+                      <span>按最近请求排序</span>
+                    </button>
+                    <button type="button" onClick={() => { resetPage(50); }}>
                       <span>切换 50 / 页</span>
                     </button>
-                    <button type="button" onClick={() => { exportCurrentView(); setShowTools(false); }}>
+                    <button type="button" onClick={() => { exportCurrentView(); }}>
                       <span>导出当前视图</span>
                       <Download size={14} />
                     </button>
-                  </div>
-                </details>
+                </ToolsMenu>
                 <Button tone="primary" onClick={openCreate}><Plus size={15} />新增用户</Button>
               </ToolbarButtonRow>
             }
@@ -320,15 +337,6 @@ export function AdminUsersPage() {
               <option value="">全部分组</option>
               {groupOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </Select>
-            <Select value={sourceFilter} onChange={(event) => { setSourceFilter(event.target.value as UserSourceFilter); resetPage(); }}>
-              <option value="">全部来源</option>
-              <option value="managed">托管 Key</option>
-              <option value="env">环境 Key</option>
-              <option value="anonymous">匿名</option>
-            </Select>
-            <Select value={sortBy} onChange={(event) => { setSortBy(event.target.value as UserSortKey); resetPage(); }}>
-              {USER_SORT_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-            </Select>
           </FilterToolbar>
         }
         table={
@@ -338,6 +346,9 @@ export function AdminUsersPage() {
                 <tr>
                   <th>用户</th>
                   {visibleColumns.has('external_key') ? <th>来源键</th> : null}
+                  {visibleColumns.has('role') ? <th>角色 / 状态</th> : null}
+                  {visibleColumns.has('subscription') ? <th>订阅</th> : null}
+                  {visibleColumns.has('quota') ? <th>余额 / 并发</th> : null}
                   {visibleColumns.has('group') ? <th>分组</th> : null}
                   {visibleColumns.has('requests') ? <th>请求数</th> : null}
                   {visibleColumns.has('tokens') ? <th>总 Token</th> : null}
@@ -361,7 +372,35 @@ export function AdminUsersPage() {
                       <td>
                         <div className="sub2-cell-stack sub2-cell-stack-tight">
                           <strong>{maskEmpty(item.external_key)}</strong>
-                          <small>{item.type || 'managed'}</small>
+                          <small>{item.source_type || 'managed'}</small>
+                        </div>
+                      </td>
+                    ) : null}
+                    {visibleColumns.has('role') ? (
+                      <td>
+                        <div className="sub2-cell-stack sub2-cell-stack-tight">
+                          <strong>{item.role || 'user'}</strong>
+                          <small>{item.status || 'active'}</small>
+                        </div>
+                      </td>
+                    ) : null}
+                    {visibleColumns.has('subscription') ? (
+                      <td>
+                        <div className="sub2-cell-stack sub2-cell-stack-tight">
+                          <strong>{item.subscription_active ? (item.active_plan_name || '订阅有效') : '无可用订阅'}</strong>
+                          <small>
+                            {item.subscription_active
+                              ? `${item.active_group_name || item.active_group_id || '未分组'} · ${item.active_subscription_status || 'active'}`
+                              : (item.active_subscription_status || 'inactive')}
+                          </small>
+                        </div>
+                      </td>
+                    ) : null}
+                    {visibleColumns.has('quota') ? (
+                      <td>
+                        <div className="sub2-cell-stack sub2-cell-stack-tight">
+                          <strong>${formatCost(Number(item.balance_cents || 0) / 100, 2)}</strong>
+                          <small>并发 {formatNumber(item.concurrency_limit || 0)}</small>
                         </div>
                       </td>
                     ) : null}
@@ -387,24 +426,20 @@ export function AdminUsersPage() {
                     ) : null}
                     {visibleColumns.has('status') ? <td><span className={cn('badge', item.enabled === false ? 'badge-warn' : 'badge-ok')}>{item.enabled === false ? '停用' : '启用'}</span></td> : null}
                     <td>
-                      <div className="sub2-action-stack">
-                        <button type="button" className="sub2-icon-action" onClick={() => openEdit(item)}>
-                          <Pencil size={14} />
-                          <span>编辑</span>
-                        </button>
-                        <button type="button" className={cn('sub2-icon-action', item.enabled === false ? '' : 'warn')} onClick={() => toggleEnabled(item)}>
-                          {item.enabled === false ? <ShieldCheck size={14} /> : <Ban size={14} />}
-                          <span>{item.enabled === false ? '启用' : '停用'}</span>
-                        </button>
-                      </div>
+                      <RowActions>
+                        <RowAction icon={Pencil} label="编辑" onClick={() => openEdit(item)} />
+                        <RowAction icon={Coins} label="调额" onClick={() => openQuota(item)} />
+                        <RowAction icon={item.enabled === false ? ShieldCheck : Ban} label={item.enabled === false ? '启用' : '停用'} tone={item.enabled === false ? 'default' : 'warn'} onClick={() => toggleEnabled(item)} />
+                      </RowActions>
                     </td>
                   </tr>
                 )) : (
-                  <tr>
-                    <td colSpan={visibleColumns.size + 2}>
-                      <EmptyState title="暂无用户归因数据" description="当前没有可展示的业务用户记录。" action={<Button tone="primary" onClick={openCreate}>新增用户</Button>} />
-                    </td>
-                  </tr>
+                  <ListEmptyRow
+                    colSpan={visibleColumns.size + 2}
+                    title="暂无用户归因数据"
+                    description="当前没有可展示的业务用户记录。"
+                    action={<Button tone="primary" onClick={openCreate}>新增用户</Button>}
+                  />
                 )}
               </tbody>
             </table>
@@ -428,7 +463,7 @@ export function AdminUsersPage() {
           title={draft.id ? '编辑用户' : '新增用户'}
           onClose={() => setDraft(null)}
           footer={
-            <>
+            <ModalActions>
               <Button onClick={() => setDraft(null)}>取消</Button>
               <Button
                 tone="primary"
@@ -437,32 +472,155 @@ export function AdminUsersPage() {
               >
                 保存
               </Button>
-            </>
+            </ModalActions>
           }
         >
-          <div className="form-grid modal-grid">
-            <Field label="用户名称"><TextInput value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
-            <Field label="来源键"><TextInput value={draft.external_key} onChange={(e) => setDraft({ ...draft, external_key: e.target.value })} /></Field>
-            <Field label="来源类型">
-              <Select value={draft.source_type} onChange={(e) => setDraft({ ...draft, source_type: e.target.value })}>
-                <option value="managed">托管 Key</option>
-                <option value="env">环境 Key</option>
-                <option value="anonymous">匿名</option>
-              </Select>
-            </Field>
-            <Field label="分组">
-              <Select value={draft.group_ids[0] || ''} onChange={(e) => setDraft({ ...draft, group_ids: e.target.value ? [e.target.value] : [] })}>
-                <option value="">未分配</option>
-                {groupOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-              </Select>
-            </Field>
-            <Field label="启用状态">
-              <Select value={draft.enabled ? '1' : '0'} onChange={(e) => setDraft({ ...draft, enabled: e.target.value === '1' })}>
-                <option value="1">启用</option>
-                <option value="0">停用</option>
-              </Select>
-            </Field>
+          <div className="admin-dialog">
+            <div className="admin-dialog-intro">
+              <strong>{draft.id ? '编辑用户' : '新增用户'}</strong>
+              <span>这里维护业务用户归属、来源键、订阅覆盖和额度边界，属于管理员日常操作主流程。</span>
+            </div>
+            <div className="admin-dialog-summary">
+              <div className="admin-dialog-summary-card">
+                <span>用户总数</span>
+                <strong>{formatNumber(items.length)}</strong>
+                <small>当前业务账户</small>
+              </div>
+              <div className="admin-dialog-summary-card">
+                <span>有效订阅</span>
+                <strong>{formatNumber(activeSubscriptionCount)}</strong>
+                <small>未覆盖 {formatNumber(uncoveredCount)}</small>
+              </div>
+              <div className="admin-dialog-summary-card">
+                <span>当前草稿</span>
+                <strong>{draft.name?.trim() || '待填写用户名'}</strong>
+                <small>{draft.external_key?.trim() || '待填写来源键'}</small>
+              </div>
+            </div>
+            <div className="admin-dialog-section">
+              <div className="admin-dialog-section-head">
+                <strong>账户信息</strong>
+                <span>用户名、来源、角色和状态</span>
+              </div>
+              <div className="admin-dialog-grid modal-grid">
+                <Field label="用户名称"><TextInput value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
+                <Field label="来源键"><TextInput value={draft.external_key} onChange={(e) => setDraft({ ...draft, external_key: e.target.value })} /></Field>
+                <Field label="来源类型">
+                  <Select value={draft.source_type} onChange={(e) => setDraft({ ...draft, source_type: e.target.value })}>
+                    <option value="managed">托管 Key</option>
+                    <option value="env">环境 Key</option>
+                    <option value="anonymous">匿名</option>
+                  </Select>
+                </Field>
+                <Field label="角色">
+                  <Select value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value })}>
+                    <option value="user">user</option>
+                    <option value="admin">admin</option>
+                  </Select>
+                </Field>
+                <Field label="状态">
+                  <Select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
+                    <option value="active">active</option>
+                    <option value="disabled">disabled</option>
+                  </Select>
+                </Field>
+                <Field label="启用状态">
+                  <Select value={draft.enabled ? '1' : '0'} onChange={(e) => setDraft({ ...draft, enabled: e.target.value === '1' })}>
+                    <option value="1">启用</option>
+                    <option value="0">停用</option>
+                  </Select>
+                </Field>
+              </div>
+            </div>
+            <div className="admin-dialog-section">
+              <div className="admin-dialog-section-head">
+                <strong>归属与额度</strong>
+                <span>分组、允许范围、余额和并发</span>
+              </div>
+              <div className="admin-dialog-grid modal-grid">
+                <Field label="分组">
+                  <Select value={draft.group_ids[0] || ''} onChange={(e) => setDraft({ ...draft, group_ids: e.target.value ? [e.target.value] : [] })}>
+                    <option value="">未分配</option>
+                    {groupOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                  </Select>
+                </Field>
+                <Field label="允许分组">
+                  <Select value={draft.allowed_group_ids[0] || ''} onChange={(e) => setDraft({ ...draft, allowed_group_ids: e.target.value ? [e.target.value] : [] })}>
+                    <option value="">未限制</option>
+                    {groupOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                  </Select>
+                </Field>
+                <Field label="余额"><TextInput type="number" value={String(draft.balance_cents)} onChange={(e) => setDraft({ ...draft, balance_cents: Number(e.target.value || 0) })} /></Field>
+                <Field label="并发"><TextInput type="number" value={String(draft.concurrency_limit)} onChange={(e) => setDraft({ ...draft, concurrency_limit: Number(e.target.value || 0) })} /></Field>
+              </div>
+            </div>
             <Field label="备注" full><TextArea rows={4} value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></Field>
+          </div>
+        </Modal>
+      ) : null}
+
+      {quotaDraft ? (
+        <Modal
+          title="调整额度"
+          size="md"
+          onClose={() => setQuotaDraft(null)}
+          footer={
+            <ModalActions>
+              <Button onClick={() => setQuotaDraft(null)}>取消</Button>
+              <Button
+                tone="primary"
+                disabled={quotaMutation.isPending}
+                onClick={() => quotaMutation.mutate(quotaDraft)}
+              >
+                保存
+              </Button>
+            </ModalActions>
+          }
+        >
+          <div className="admin-dialog">
+            <div className="admin-dialog-intro">
+              <strong>{quotaDraft.name}</strong>
+              <span>快速调整余额和并发，不进入完整用户编辑流程。</span>
+            </div>
+            <div className="admin-dialog-summary">
+              <div className="admin-dialog-summary-card">
+                <span>当前余额</span>
+                <strong>{formatCost(quotaDraft.balance_cents / 100, 2)}</strong>
+                <small>以分存储</small>
+              </div>
+              <div className="admin-dialog-summary-card">
+                <span>当前并发</span>
+                <strong>{formatNumber(quotaDraft.concurrency_limit)}</strong>
+                <small>即时生效</small>
+              </div>
+              <div className="admin-dialog-summary-card">
+                <span>作用范围</span>
+                <strong>用户级</strong>
+                <small>只改当前用户</small>
+              </div>
+            </div>
+            <div className="admin-dialog-section">
+              <div className="admin-dialog-section-head">
+                <strong>额度参数</strong>
+                <span>调整后会立即更新到用户视图和鉴权链</span>
+              </div>
+              <div className="admin-dialog-grid">
+                <Field label="余额(分)">
+                  <TextInput
+                    type="number"
+                    value={String(quotaDraft.balance_cents)}
+                    onChange={(e) => setQuotaDraft({ ...quotaDraft, balance_cents: Number(e.target.value || 0) })}
+                  />
+                </Field>
+                <Field label="并发">
+                  <TextInput
+                    type="number"
+                    value={String(quotaDraft.concurrency_limit)}
+                    onChange={(e) => setQuotaDraft({ ...quotaDraft, concurrency_limit: Number(e.target.value || 0) })}
+                  />
+                </Field>
+              </div>
+            </div>
           </div>
         </Modal>
       ) : null}
@@ -505,4 +663,11 @@ function isUserSourceFilter(value: unknown): value is UserSourceFilter {
 
 function isUserSortKey(value: unknown): value is UserSortKey {
   return typeof value === 'string' && USER_SORT_SET.has(value as UserSortKey);
+}
+
+function formatUserSource(value: UserSourceFilter) {
+  if (value === 'managed') return '托管 Key';
+  if (value === 'env') return '环境 Key';
+  if (value === 'anonymous') return '匿名';
+  return '全部来源';
 }

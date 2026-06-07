@@ -1,6 +1,7 @@
 import { useMutation } from '@tanstack/react-query';
 import { ListChecks, Trash2 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { clearRequestCache, clearRequests } from '../../api';
 import { Button, Select, TextInput } from '../../components';
 import { ActionButton, EmptyState, FilterToolbar, TablePageLayout, ToolbarButtonRow } from '../../components/admin';
@@ -37,11 +38,17 @@ export function RequestsView({ state }: { state: DashboardState }) {
   const avgDuration = rows.length ? Math.round(totalDuration / rows.length) : 0;
   return (
     <section className="grid-page">
-      <div className="key-stat-grid">
-        <div className="key-stat"><div className="key-stat-icon blue"><ListChecks size={18} /></div><div><span>当前结果</span><strong>{formatNumber(rows.length)}</strong><small>筛选后的请求数</small></div></div>
-        <div className="key-stat"><div className="key-stat-icon green"><ListChecks size={18} /></div><div><span>成功请求</span><strong>{formatNumber(successCount)}</strong><small>异常 {formatNumber(errorCount)}</small></div></div>
-        <div className="key-stat"><div className="key-stat-icon amber"><ListChecks size={18} /></div><div><span>累计 Token</span><strong>{formatTokenCount(totalTokens)}</strong><small>当前筛选范围</small></div></div>
-        <div className="key-stat"><div className="key-stat-icon slate"><ListChecks size={18} /></div><div><span>平均耗时</span><strong>{formatMs(avgDuration)}</strong><small>活跃 {formatNumber(active.length)}</small></div></div>
+      <div className="sub2-page-head">
+        <div className="sub2-page-title">
+          <strong>使用记录</strong>
+          <span>按时间、模型、协议和线路查看请求明细。</span>
+        </div>
+        <div className="sub2-inline-summary">
+          <div className="sub2-inline-summary-item"><span>当前结果</span><strong>{formatNumber(rows.length)}</strong><small>筛选后的请求数</small></div>
+          <div className="sub2-inline-summary-item"><span>成功 / 异常</span><strong>{formatNumber(successCount)} / {formatNumber(errorCount)}</strong><small>当前窗口状态</small></div>
+          <div className="sub2-inline-summary-item"><span>累计 Token</span><strong>{formatTokenCount(totalTokens)}</strong><small>当前筛选范围</small></div>
+          <div className="sub2-inline-summary-item"><span>平均耗时</span><strong>{formatMs(avgDuration)}</strong><small>活跃 {formatNumber(active.length)}</small></div>
+        </div>
       </div>
       <TablePageLayout
         filters={
@@ -168,20 +175,61 @@ function CacheHover({
   cacheReadBytes: number;
   totalTokens: number;
 }) {
+  const triggerRef = useRef<HTMLSpanElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (!open) return;
+
+    const updatePosition = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const panelWidth = 238;
+      const gap = 12;
+      const viewportWidth = window.innerWidth;
+      const left = Math.min(Math.max(12, rect.left + rect.width / 2 - panelWidth / 2), viewportWidth - panelWidth - 12);
+      setPosition({
+        left,
+        top: rect.bottom + gap,
+      });
+    };
+
+    updatePosition();
+    window.addEventListener('scroll', updatePosition, true);
+    window.addEventListener('resize', updatePosition);
+    return () => {
+      window.removeEventListener('scroll', updatePosition, true);
+      window.removeEventListener('resize', updatePosition);
+    };
+  }, [open]);
+
   return (
-    <span className="cache-hover" aria-label="缓存明细" tabIndex={0}>
+    <span
+      ref={triggerRef}
+      className="cache-hover"
+      aria-label="缓存明细"
+      tabIndex={0}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={() => setOpen(false)}
+    >
       <svg width="12" height="12" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="1.6" /><path d="M10 6.5v4.2M10 13.6v.1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
-      <span className="cache-hover-panel">
-        <span className="cache-tip-title">Token 明细</span>
-        <CacheTipRow label="请求 Token" value={formatTokenCount(promptTokens)} />
-        <CacheTipRow label="回复 Token" value={formatTokenCount(completionTokens)} />
-        <CacheTipRow label="缓存读取 Token" value={formatTokenCount(cacheReadTokens)} />
-        <CacheTipRow label="缓存写入 Token" value={formatTokenCount(cacheCreationTokens)} />
-        <CacheTipRow label="上游缓存" value={upstreamCacheText} />
-        <CacheTipRow label="本地缓存" value={localCacheText} />
-        <CacheTipRow label="本地读取字节" value={formatByteCount(cacheReadBytes)} />
-        <span className="cache-tip-row cache-tip-total"><span className="cache-tip-label">总 Token</span><span className="cache-tip-value">{formatTokenCount(totalTokens)}</span></span>
-      </span>
+      {open ? createPortal(
+        <span className="cache-hover-panel cache-hover-panel-fixed" style={{ top: `${position.top}px`, left: `${position.left}px` }}>
+          <span className="cache-tip-title">Token 明细</span>
+          <CacheTipRow label="请求 Token" value={formatTokenCount(promptTokens)} />
+          <CacheTipRow label="回复 Token" value={formatTokenCount(completionTokens)} />
+          <CacheTipRow label="缓存读取 Token" value={formatTokenCount(cacheReadTokens)} />
+          <CacheTipRow label="缓存写入 Token" value={formatTokenCount(cacheCreationTokens)} />
+          <CacheTipRow label="上游缓存" value={upstreamCacheText} />
+          <CacheTipRow label="本地缓存" value={localCacheText} />
+          <CacheTipRow label="本地读取字节" value={formatByteCount(cacheReadBytes)} />
+          <span className="cache-tip-row cache-tip-total"><span className="cache-tip-label">总 Token</span><span className="cache-tip-value">{formatTokenCount(totalTokens)}</span></span>
+        </span>,
+        document.body,
+      ) : null}
     </span>
   );
 }
