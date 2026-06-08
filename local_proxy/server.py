@@ -6293,24 +6293,25 @@ def require_proxy_api_key() -> Response | None:
             candidate_hash = hash_proxy_api_key(candidate) if candidate else ""
             matched = storage.find_admin_api_key_by_hash(candidate_hash) if candidate_hash else {}
             if matched and matched.get("enabled") and matched.get("user_enabled", True):
+                matched_account_id = str(matched.get("account_id") or matched.get("user_id") or "").strip()
                 memberships = []
                 active_subscription = {}
                 try:
                     memberships = [
                         str(row.get("group_id") or "").strip()
                         for row in storage.list_admin_user_groups()
-                        if str(row.get("user_id") or "").strip() == str(matched.get("user_id") or "").strip()
+                        if str(row.get("user_id") or "").strip() == matched_account_id
                     ]
                 except Exception:
                     memberships = []
                 try:
-                    active_subscription = storage.get_active_subscription_context_for_user(str(matched.get("user_id") or ""))
+                    active_subscription = storage.get_active_subscription_context_for_user(matched_account_id)
                 except Exception:
                     active_subscription = {}
                 REQUEST_LOCAL.proxy_consumer = {
-                    "id": str(matched.get("user_id") or ""),
-                    "name": str(matched.get("user_name") or matched.get("name") or "业务用户"),
-                    "type": "user_api_key",
+                    "id": matched_account_id,
+                    "name": str(matched.get("account_name") or matched.get("user_name") or matched.get("name") or "业务账户"),
+                    "type": "account_api_key",
                     "preview": str(matched.get("key_preview") or ""),
                     "source": str(source or "authorization"),
                     "status": str(matched.get("user_status") or ""),

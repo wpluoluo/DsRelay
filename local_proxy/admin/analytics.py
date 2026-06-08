@@ -160,7 +160,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
             for group in self.storage.list_admin_groups():
                 stored_groups[coerce_text(group.get("id"))] = {
                     **group,
-                    "user_ids": set(),
+                    "account_ids": set(),
                     "request_count": 0,
                     "error_count": 0,
                     "total_tokens": 0,
@@ -168,12 +168,12 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     "output_bytes": 0,
                 }
             for row in self.storage.list_admin_user_groups():
-                user_id = coerce_text(row.get("user_id"))
+                account_id = coerce_text(row.get("user_id"))
                 group_id = coerce_text(row.get("group_id"))
-                if user_id and group_id:
-                    memberships.setdefault(user_id, []).append(group_id)
+                if account_id and group_id:
+                    memberships.setdefault(account_id, []).append(group_id)
                     if group_id in stored_groups:
-                        stored_groups[group_id]["user_ids"].add(user_id)
+                        stored_groups[group_id]["account_ids"].add(account_id)
 
         for row in rows:
             consumer_id, consumer_name, consumer_type, preview = self._consumer_key(row)
@@ -190,7 +190,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
                         "description": "",
                         "enabled": True,
                         "sort_order": 0,
-                        "user_ids": set(),
+                        "account_ids": set(),
                         "request_count": 0,
                         "error_count": 0,
                         "total_tokens": 0,
@@ -207,7 +207,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
                         "description": "",
                         "enabled": True,
                         "sort_order": 0,
-                        "user_ids": set(),
+                        "account_ids": set(),
                         "request_count": 0,
                         "error_count": 0,
                         "total_tokens": 0,
@@ -215,7 +215,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
                         "output_bytes": 0,
                     },
                 )
-                entry["user_ids"].add(account_id)
+                entry["account_ids"].add(account_id)
                 entry["request_count"] += 1
                 if row.get("error") or safe_int(row.get("status_code")) >= 400:
                     entry["error_count"] += 1
@@ -225,8 +225,8 @@ class AdminAnalyticsMixin(AdminServiceBase):
 
         items = []
         for entry in stored_groups.values():
-            items.append({**entry, "account_count": len(entry.get("user_ids") or [])})
-            items[-1].pop("user_ids", None)
+            items.append({**entry, "account_count": len(entry.get("account_ids") or [])})
+            items[-1].pop("account_ids", None)
         items.sort(key=lambda item: (safe_int(item.get("sort_order")), -safe_int(item.get("request_count")), coerce_text(item.get("name"))))
         return {"ok": True, "items": items, "total": len(items)}
 
@@ -299,7 +299,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
         ).get("items", [])
         subscriptions = {}
         orders_by_subscription: dict[str, list[dict]] = {}
-        orders_by_user_plan: dict[tuple[str, str], list[dict]] = {}
+        orders_by_account_plan: dict[tuple[str, str], list[dict]] = {}
         if self.storage is not None:
             try:
                 for item in self.storage.list_admin_user_subscriptions():
@@ -314,15 +314,15 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     subscription_id = coerce_text(order.get("subscription_id"))
                     if subscription_id:
                         orders_by_subscription.setdefault(subscription_id, []).append(order)
-                    user_plan_key = (
+                    account_plan_key = (
                         coerce_text(order.get("user_id")),
                         coerce_text(order.get("plan_id")),
                     )
-                    if user_plan_key[0] and user_plan_key[1]:
-                        orders_by_user_plan.setdefault(user_plan_key, []).append(order)
+                    if account_plan_key[0] and account_plan_key[1]:
+                        orders_by_account_plan.setdefault(account_plan_key, []).append(order)
             except Exception:
                 orders_by_subscription = {}
-                orders_by_user_plan = {}
+                orders_by_account_plan = {}
 
         summary = {
             "request_count": 0,
@@ -381,7 +381,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
             if subscription_id:
                 related_orders = orders_by_subscription.get(subscription_id, [])
             elif account_id and plan_id:
-                related_orders = orders_by_user_plan.get((account_id, plan_id), [])
+                related_orders = orders_by_account_plan.get((account_id, plan_id), [])
             if related_orders:
                 paid_orders = [order for order in related_orders if coerce_text(order.get("status")) == "paid"]
                 chosen_order = (paid_orders or related_orders)[-1]

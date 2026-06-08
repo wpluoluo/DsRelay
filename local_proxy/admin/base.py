@@ -63,10 +63,10 @@ class AdminServiceBase:
         for group in self.storage.list_admin_groups():
             groups[str(group.get("id") or "")] = group
         for row in self.storage.list_admin_user_groups():
-            user_id = str(row.get("user_id") or "")
+            account_id = str(row.get("user_id") or "")
             group_id = str(row.get("group_id") or "")
-            if user_id and group_id:
-                memberships.setdefault(user_id, []).append(group_id)
+            if account_id and group_id:
+                memberships.setdefault(account_id, []).append(group_id)
         return groups, memberships
 
     def _group_policy_map(self) -> dict[str, dict]:
