@@ -271,6 +271,12 @@ if (-not $commit) {
 $archivePath = Join-Path $repoRoot "local-proxy-$commit.tar"
 $runtimeConfigPath = Join-Path $repoRoot "config\proxy-config.json"
 $hasRuntimeConfig = $SyncRuntimeConfig -and (Test-Path $runtimeConfigPath)
+$trackedFiles = & git -C $repoRoot ls-tree -r --name-only HEAD
+if ($LASTEXITCODE -ne 0) {
+    throw "Unable to enumerate tracked files for deploy sync."
+}
+$trackedFilesJson = ($trackedFiles | Where-Object { $_ } | ForEach-Object { $_.Replace("\", "/") }) | ConvertTo-Json -Compress
+$trackedFilesB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($trackedFilesJson))
 
 Write-Step "Archive commit $commit"
 if (Test-Path $archivePath) {
@@ -361,6 +367,8 @@ rm -rf "__REMOTE_EXTRACT_DIR__"
 mkdir -p "__REMOTE_EXTRACT_DIR__"
 tar -xf "__REMOTE_ARCHIVE_PATH__" -C "__REMOTE_EXTRACT_DIR__"
 python3 - <<'PY'
+import base64
+import json
 from pathlib import Path
 import shutil
 
@@ -368,6 +376,7 @@ source_root = Path("__REMOTE_EXTRACT_DIR__")
 deploy_root = Path("__REMOTE_DEPLOY_DIR__")
 skip_exact = {".env", "config/proxy-config.json"}
 skip_prefix = ("var/",)
+tracked_files = set(json.loads(base64.b64decode("__TRACKED_FILES_B64__").decode("utf-8")))
 
 for path in sorted(source_root.rglob("*")):
     rel = path.relative_to(source_root).as_posix()
@@ -390,6 +399,21 @@ for relative in ("start.sh", "node_proxy.js", "app.py"):
     normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     if normalized != raw:
         path.write_bytes(normalized)
+
+for path in sorted(deploy_root.rglob("*"), reverse=True):
+    rel = path.relative_to(deploy_root).as_posix()
+    if rel in skip_exact:
+        continue
+    if any(rel == prefix[:-1] or rel.startswith(prefix) for prefix in skip_prefix):
+        continue
+    if path.is_file() and rel not in tracked_files:
+        path.unlink()
+        continue
+    if path.is_dir():
+        try:
+            next(path.iterdir())
+        except StopIteration:
+            path.rmdir()
 PY
 cd "__REMOTE_DEPLOY_DIR__"
 chmod +x ./start.sh
@@ -505,6 +529,7 @@ rm -rf "__REMOTE_EXTRACT_DIR__" "__REMOTE_ARCHIVE_PATH__"
     $deployCommand = $deployCommand.Replace("__REMOTE_SERVICE_NAME__", [string]$cfg.RemoteServiceName)
     $deployCommand = $deployCommand.Replace("__COMPOSE_FILE__", $composeFile)
     $deployCommand = $deployCommand.Replace("__APP_PORT__", [string]$cfg.AppPort)
+    $deployCommand = $deployCommand.Replace("__TRACKED_FILES_B64__", $trackedFilesB64)
     $deployCommandB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($deployCommand))
     Invoke-RemoteHelper $pythonCommand ($remoteBaseArgs + @("--command-b64", $deployCommandB64)) $passwordValue
     Write-Step "[$($cfg.Target)] Deploy complete: $commit"
