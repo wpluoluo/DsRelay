@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
-import { ChevronDown, ChevronLeft, RefreshCw } from 'lucide-react';
+import { ChevronDown, RefreshCw } from 'lucide-react';
 import { fetchDashboardState, saveConfig, testPool } from '../api';
 import { Badge, Button } from '../components';
 import { PoolModal } from '../features/config/PoolModal';
@@ -53,10 +53,6 @@ export function DashboardLayout() {
 
   const state = stateQuery.data || {};
   const pools = (draft.pools || []).map(normalizePool);
-  const [menuOpen, setMenuOpen] = useState<Record<string, boolean>>({
-    admin: true,
-    account: true,
-  });
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
   const activeGroupKeys = useMemo(() => {
@@ -128,29 +124,24 @@ export function DashboardLayout() {
             <div className="brand-copy"><strong>DsRelay</strong><span>管理控制台</span></div>
           </div>
           <nav className="sidebar-nav">
-            {adminNavSections.map((section) => (
-              <div className="sidebar-group" key={section.key}>
-                <button
-                  type="button"
-                  className="sidebar-group-toggle"
-                  onClick={() => setMenuOpen((current) => ({ ...current, [section.key]: !current[section.key] }))}
-                >
-                  <span>{section.title}</span>
-                  <ChevronDown size={14} className={menuOpen[section.key] ? 'sidebar-group-toggle-open' : ''} />
-                </button>
-                {menuOpen[section.key] ? (
-                  <div className="sidebar-group-links">
-                    {section.items.map((item) => (
-                      <SidebarItem
-                        key={item.key}
-                        item={item}
-                        pathname={locationPathname}
-                        expanded={Boolean(expandedGroups[item.key] || activeGroupKeys.has(item.key))}
-                        onToggleGroup={() => setExpandedGroups((current) => ({ ...current, [item.key]: !(current[item.key] || activeGroupKeys.has(item.key)) }))}
-                      />
-                    ))}
+            {adminNavSections.map((section, sectionIndex) => (
+              <div className="sidebar-section" key={section.key}>
+                {sectionIndex > 0 ? (
+                  <div className="sidebar-section-title">
+                    <span>{section.title}</span>
                   </div>
                 ) : null}
+                <div className="sidebar-section-links">
+                  {section.items.map((item) => (
+                    <SidebarItem
+                      key={item.key}
+                      item={item}
+                      pathname={locationPathname}
+                      expanded={Boolean(expandedGroups[item.key] || activeGroupKeys.has(item.key))}
+                      onToggleGroup={() => setExpandedGroups((current) => ({ ...current, [item.key]: !(current[item.key] || activeGroupKeys.has(item.key)) }))}
+                    />
+                  ))}
+                </div>
               </div>
             ))}
           </nav>
@@ -178,13 +169,13 @@ export function DashboardLayout() {
         {poolDraft ? (
           <PoolModal
             pool={poolDraft}
-            title={poolIndex == null ? '添加账号' : '管理账号'}
+            title={poolIndex == null ? '添加账号' : '编辑账号'}
             testResult={poolTest}
             onChange={setPoolDraft}
             onClose={() => { setPoolDraft(null); setPoolIndex(null); }}
             onSave={savePoolDraft}
             onTest={async () => {
-              if (poolIndex == null) return setPoolTest({ ok: false, message: '新连接池保存后再测试。' });
+              if (poolIndex == null) return setPoolTest({ ok: false, message: '新账号保存后再测试。' });
               setPoolTest(await testPool(poolIndex, poolDraft.name));
             }}
           />
@@ -207,7 +198,7 @@ function SidebarItem({
 }) {
   const Icon = item.icon;
   const isActive = pathname === item.path || pathname.startsWith(`${item.path}/`);
-  const childActive = Boolean(item.children?.some((child) => pathname === child.path));
+  const childActive = Boolean(item.children?.some((child) => pathname === child.path || pathname.startsWith(`${child.path}/`)));
 
   if (item.children?.length) {
     const buttonClass = `sidebar-link sidebar-link-button ${childActive ? 'active' : ''}`;
@@ -260,10 +251,9 @@ function SidebarItem({
   }
 
   return (
-    <Link to={item.path} activeProps={{ className: 'active' }} className={isActive ? 'active' : undefined}>
-      <Icon size={18} />
+    <Link to={item.path} activeProps={{ className: 'active' }} className={`sidebar-link ${isActive ? 'active' : ''}`}>
+      <Icon size={20} />
       <span>{item.label}</span>
-      <ChevronLeft className="nav-arrow" size={14} />
     </Link>
   );
 }

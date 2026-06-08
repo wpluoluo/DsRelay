@@ -23,7 +23,7 @@ export function PoolList({
       {pools.length ? pools.map((pool, index) => (
         <div className="pool-card" key={`${pool.name}-${index}`}>
           <div>
-            <strong>{pool.name || `连接池 ${index + 1}`}</strong>
+            <strong>{pool.name || `账号 ${index + 1}`}</strong>
             <p>{(pool.urls || []).join(' · ') || '未配置地址'}</p>
             <div className="chip-row">
               <Badge tone={pool.enabled === false ? 'warn' : 'ok'}>{pool.enabled === false ? '停用' : '启用'}</Badge>
@@ -40,7 +40,7 @@ export function PoolList({
             <Button tone="danger" onClick={() => onDeletePool(index)}>删除</Button>
           </div>
         </div>
-      )) : <Empty>暂无连接池。</Empty>}
+      )) : <Empty>暂无账号。</Empty>}
     </div>
   );
 }

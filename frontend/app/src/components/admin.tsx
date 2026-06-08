@@ -25,10 +25,10 @@ export function TablePageLayout({
   );
 }
 
-export function FilterToolbar({ children, right }: { children: ReactNode; right?: ReactNode }) {
+export function FilterToolbar({ children, right }: { children?: ReactNode; right?: ReactNode }) {
   return (
     <div className="sub2-filter-toolbar">
-      <div className="sub2-filter-main">{children}</div>
+      {children ? <div className="sub2-filter-main">{children}</div> : null}
       {right ? <div className="sub2-filter-actions">{right}</div> : null}
     </div>
   );

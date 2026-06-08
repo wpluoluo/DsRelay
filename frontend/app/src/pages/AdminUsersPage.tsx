@@ -58,6 +58,8 @@ type KeyDraft = {
 
 type CoverageFilter = 'all' | 'subscribed' | 'uncovered';
 type StatusFilter = '' | 'enabled' | 'disabled';
+type RoleFilter = '' | 'admin' | 'user';
+type UserFilterKey = 'role' | 'status' | 'group' | 'subscription';
 type UserColumnKey = 'identity' | 'groups' | 'limits' | 'keys' | 'subscriptions' | 'usage' | 'status';
 
 const EMPTY_DRAFT: UserDraft = {
@@ -78,6 +80,7 @@ const EMPTY_DRAFT: UserDraft = {
 };
 
 const DEFAULT_VISIBLE_COLUMNS: UserColumnKey[] = ['identity', 'groups', 'limits', 'keys', 'subscriptions', 'usage', 'status'];
+const DEFAULT_VISIBLE_FILTERS: UserFilterKey[] = ['role', 'status', 'group', 'subscription'];
 const STORAGE_KEY = 'admin-users-view-state';
 
 export function AdminUsersPage() {
@@ -89,18 +92,22 @@ export function AdminUsersPage() {
     search: '',
     coverageFilter: 'all' as CoverageFilter,
     statusFilter: '' as StatusFilter,
+    roleFilter: '' as RoleFilter,
     groupFilter: '',
     pageSize: 20,
     visibleColumns: DEFAULT_VISIBLE_COLUMNS,
+    visibleFilters: DEFAULT_VISIBLE_FILTERS,
   });
 
   const [search, setSearch] = useState(savedState.search);
   const [coverageFilter, setCoverageFilter] = useState<CoverageFilter>(savedState.coverageFilter || 'all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(savedState.statusFilter || '');
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>(savedState.roleFilter || '');
   const [groupFilter, setGroupFilter] = useState(savedState.groupFilter || '');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
   const [visibleColumns, setVisibleColumns] = useState<Set<UserColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
+  const [visibleFilters, setVisibleFilters] = useState<Set<UserFilterKey>>(new Set(savedState.visibleFilters || DEFAULT_VISIBLE_FILTERS));
   const [draft, setDraft] = useState<UserDraft | null>(null);
   const [inspectUser, setInspectUser] = useState<AdminUser | null>(null);
   const [viewKeysUser, setViewKeysUser] = useState<AdminUser | null>(null);
@@ -194,6 +201,7 @@ export function AdminUsersPage() {
         const enabledValue = statusFilter === 'enabled';
         if ((item.enabled !== false) !== enabledValue) return false;
       }
+      if (roleFilter && (item.role || item.user_role || 'user') !== roleFilter) return false;
       if (groupFilter) {
         const ids = item.group_ids || (item.group_id ? [item.group_id] : []);
         const allowedIds = item.allowed_group_ids || [];
@@ -215,18 +223,13 @@ export function AdminUsersPage() {
         .join(' ');
       return haystack.includes(keyword);
     });
-  }, [coverageFilter, groupFilter, rows, search, statusFilter]);
+  }, [coverageFilter, groupFilter, roleFilter, rows, search, statusFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
   const pagedRows = useMemo(() => {
     const start = (page - 1) * pageSize;
     return filteredRows.slice(start, start + pageSize);
   }, [filteredRows, page, pageSize]);
-
-  const activeUsers = rows.filter((item) => item.enabled !== false).length;
-  const coveredUsers = rows.filter((item) => item.active_subscription_count > 0).length;
-  const keyCoveredUsers = rows.filter((item) => item.active_key_count > 0).length;
-  const totalTokens = rows.reduce((sum, item) => sum + Number(item.total_tokens || 0), 0);
 
   const relatedKeys = useMemo(
     () => keyItems.filter((item) => viewKeysUser && getBusinessUserId(item) === viewKeysUser.id),
@@ -238,11 +241,13 @@ export function AdminUsersPage() {
       search,
       coverageFilter,
       statusFilter,
+      roleFilter,
       groupFilter,
       pageSize,
       visibleColumns: Array.from(visibleColumns),
+      visibleFilters: Array.from(visibleFilters),
     });
-  }, [coverageFilter, groupFilter, pageSize, search, statusFilter, visibleColumns]);
+  }, [coverageFilter, groupFilter, pageSize, roleFilter, search, statusFilter, visibleColumns, visibleFilters]);
 
   async function refreshAll() {
     await Promise.all([
@@ -310,6 +315,15 @@ export function AdminUsersPage() {
     });
   }
 
+  function toggleFilter(key: UserFilterKey) {
+    setVisibleFilters((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   function toggleGroup(field: 'group_ids' | 'allowed_group_ids', groupId: string) {
     if (!draft) return;
     const values = new Set(draft[field]);
@@ -333,12 +347,6 @@ export function AdminUsersPage() {
         <div className="sub2-page-title">
           <strong>用户管理</strong>
         </div>
-        <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>用户总数</span><strong>{formatNumber(rows.length)}</strong><small>启用 {formatNumber(activeUsers)}</small></div>
-          <div className="sub2-inline-summary-item"><span>订阅覆盖</span><strong>{formatNumber(coveredUsers)}</strong><small>未覆盖 {formatNumber(rows.length - coveredUsers)}</small></div>
-          <div className="sub2-inline-summary-item"><span>Key 覆盖</span><strong>{formatNumber(keyCoveredUsers)}</strong><small>可调用用户</small></div>
-          <div className="sub2-inline-summary-item"><span>总 Token</span><strong>{formatTokenCount(totalTokens)}</strong><small>当前用户列表</small></div>
-        </div>
       </div>
       <TablePageLayout
         filters={
@@ -349,6 +357,24 @@ export function AdminUsersPage() {
                   <RefreshCw size={15} />
                   刷新
                 </ActionButton>
+                <ToolsMenu label="筛选设置" icon={false}>
+                  <button type="button" onClick={() => toggleFilter('role')}>
+                    <span>角色</span>
+                    <strong>{visibleFilters.has('role') ? '✓' : ''}</strong>
+                  </button>
+                  <button type="button" onClick={() => toggleFilter('status')}>
+                    <span>状态</span>
+                    <strong>{visibleFilters.has('status') ? '✓' : ''}</strong>
+                  </button>
+                  <button type="button" onClick={() => toggleFilter('group')}>
+                    <span>分组</span>
+                    <strong>{visibleFilters.has('group') ? '✓' : ''}</strong>
+                  </button>
+                  <button type="button" onClick={() => toggleFilter('subscription')}>
+                    <span>订阅状态</span>
+                    <strong>{visibleFilters.has('subscription') ? '✓' : ''}</strong>
+                  </button>
+                </ToolsMenu>
                 <ColumnMenu
                   label="列设置"
                   items={[
@@ -362,7 +388,7 @@ export function AdminUsersPage() {
                   ]}
                 />
                 <ToolsMenu>
-                  <button type="button" onClick={() => { setSearch(''); setCoverageFilter('all'); setStatusFilter(''); setGroupFilter(''); setPage(1); }}>
+                  <button type="button" onClick={() => { setSearch(''); setCoverageFilter('all'); setStatusFilter(''); setRoleFilter(''); setGroupFilter(''); setPage(1); }}>
                     <span>清空筛选</span>
                   </button>
                   <button type="button" onClick={() => { setCoverageFilter('uncovered'); setPage(1); }}>
@@ -377,37 +403,50 @@ export function AdminUsersPage() {
                 </ToolsMenu>
                 <Button tone="primary" onClick={openCreate}>
                   <Plus size={15} />
-                  创建用户
+                  添加用户
                 </Button>
               </ToolbarButtonRow>
             }
           >
-            <SearchField value={search} placeholder="搜索邮箱 / 用户名 / 名称 / 标识" onChange={(value) => { setSearch(value); setPage(1); }} />
-            <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StatusFilter); setPage(1); }}>
-              <option value="">全部状态</option>
-              <option value="enabled">启用</option>
-              <option value="disabled">停用</option>
-            </Select>
-            <Select value={groupFilter} onChange={(event) => { setGroupFilter(event.target.value); setPage(1); }}>
-              <option value="">全部分组</option>
-              {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
-            </Select>
-            <div className="tabs">
-              {[
-                { value: 'all', label: '全部用户' },
-                { value: 'subscribed', label: '已订阅' },
-                { value: 'uncovered', label: '未订阅' },
-              ].map((item) => (
-                <button
-                  key={item.value}
-                  type="button"
-                  className={coverageFilter === item.value ? 'active' : ''}
-                  onClick={() => { setCoverageFilter(item.value as CoverageFilter); setPage(1); }}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
+            <SearchField value={search} placeholder="搜索邮箱 / 用户名 / 名称 / 密钥" onChange={(value) => { setSearch(value); setPage(1); }} />
+            {visibleFilters.has('role') ? (
+              <Select value={roleFilter} onChange={(event) => { setRoleFilter(event.target.value as RoleFilter); setPage(1); }}>
+                <option value="">全部角色</option>
+                <option value="admin">管理员</option>
+                <option value="user">用户</option>
+              </Select>
+            ) : null}
+            {visibleFilters.has('status') ? (
+              <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StatusFilter); setPage(1); }}>
+                <option value="">全部状态</option>
+                <option value="enabled">启用</option>
+                <option value="disabled">停用</option>
+              </Select>
+            ) : null}
+            {visibleFilters.has('group') ? (
+              <Select value={groupFilter} onChange={(event) => { setGroupFilter(event.target.value); setPage(1); }}>
+                <option value="">全部分组</option>
+                {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+              </Select>
+            ) : null}
+            {visibleFilters.has('subscription') ? (
+              <div className="tabs">
+                {[
+                  { value: 'all', label: '全部用户' },
+                  { value: 'subscribed', label: '已订阅' },
+                  { value: 'uncovered', label: '未订阅' },
+                ].map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    className={coverageFilter === item.value ? 'active' : ''}
+                    onClick={() => { setCoverageFilter(item.value as CoverageFilter); setPage(1); }}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </FilterToolbar>
         }
         table={
@@ -497,7 +536,7 @@ export function AdminUsersPage() {
                         <RowAction icon={KeyRound} label="Key" onClick={() => setViewKeysUser(item)} />
                         <RowAction icon={Edit} label="编辑" onClick={() => openEdit(item)} />
                         <RowAction icon={ShieldCheck} label={item.enabled === false ? '启用' : '停用'} tone={item.enabled === false ? 'default' : 'warn'} onClick={() => setToggleTarget(item)} />
-                        <RowAction icon={KeyRound} label="重置标识" onClick={() => setResetTarget(item)} />
+                        <RowAction icon={KeyRound} label="重置密钥" onClick={() => setResetTarget(item)} />
                         <RowAction icon={Trash2} label="删除" tone="danger" onClick={() => setDeleteTarget(item)} />
                       </RowActions>
                     </td>
@@ -506,7 +545,7 @@ export function AdminUsersPage() {
                   <ListEmptyRow
                     colSpan={visibleColumns.size + 2}
                     title="暂无用户"
-                    action={<Button tone="primary" onClick={openCreate}>创建用户</Button>}
+                    action={<Button tone="primary" onClick={openCreate}>添加用户</Button>}
                   />
                 )}
               </tbody>
@@ -528,7 +567,7 @@ export function AdminUsersPage() {
 
       {draft ? (
         <Modal
-          title={draft.id ? '编辑用户' : '创建用户'}
+          title={draft.id ? '编辑用户' : '添加用户'}
           size="lg"
           onClose={() => setDraft(null)}
           footer={
@@ -569,14 +608,14 @@ export function AdminUsersPage() {
                   <option value="disabled">停用</option>
                 </Select>
               </Field>
-              <Field label="业务标识">
+              <Field label="用户密钥">
                 <Select value={draft.auto_external_key ? 'auto' : 'manual'} onChange={(event) => setDraft({ ...draft, auto_external_key: event.target.value === 'auto' })}>
                   <option value="auto">系统生成</option>
                   <option value="manual">手工填写</option>
                 </Select>
               </Field>
               {!draft.auto_external_key ? (
-                <Field label="标识内容">
+                <Field label="密钥内容">
                   <TextInput value={draft.external_key} onChange={(event) => setDraft({ ...draft, external_key: event.target.value })} />
                 </Field>
               ) : null}
@@ -779,7 +818,7 @@ export function AdminUsersPage() {
 
       {resetTarget ? (
         <Modal
-          title="重置业务标识"
+          title="重置用户密钥"
           size="md"
           onClose={() => setResetTarget(null)}
           footer={
@@ -859,7 +898,7 @@ function UserInspect({ user, groups }: { user: AdminUser; groups: Array<{ id: st
       </div>
       <div className="admin-dialog-grid">
         <Field label="用户 ID"><TextInput readOnly value={user.id || '-'} /></Field>
-        <Field label="业务标识"><TextInput readOnly value={user.external_key || user.user_key || '-'} /></Field>
+        <Field label="用户密钥"><TextInput readOnly value={user.external_key || user.user_key || '-'} /></Field>
         <Field label="邮箱"><TextInput readOnly value={user.email || user.user_email || '-'} /></Field>
         <Field label="用户名"><TextInput readOnly value={user.username || user.user_username || '-'} /></Field>
         <Field label="角色"><TextInput readOnly value={user.role || user.user_role || 'user'} /></Field>

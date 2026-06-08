@@ -12,6 +12,8 @@ export default defineConfig({
   server: {
     proxy: {
       '/debug': 'http://127.0.0.1:18765',
+      '/admin': 'http://127.0.0.1:18765',
+      '/payment': 'http://127.0.0.1:18765',
       '/health': 'http://127.0.0.1:18765',
       '/v1': 'http://127.0.0.1:18765',
     },

@@ -62,6 +62,22 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
     def admin_groups_delete(group_id: str):
         return jsonify(analytics_service.delete_group(group_id))
 
+    @app.get("/admin/channels")
+    @admin_required
+    def admin_channels():
+        return jsonify(analytics_service.list_channels())
+
+    @app.post("/admin/channels")
+    @admin_required
+    def admin_channels_upsert():
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.upsert_channel(payload))
+
+    @app.delete("/admin/channels/<channel_id>")
+    @admin_required
+    def admin_channels_delete(channel_id: str):
+        return jsonify(analytics_service.delete_channel(channel_id))
+
     @app.get("/admin/usage")
     @admin_required
     def admin_usage():

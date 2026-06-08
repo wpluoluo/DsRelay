@@ -520,6 +520,32 @@ export type AdminListPayload<T> = {
   total?: number;
 };
 
+export type AdminChannelPricing = {
+  model: string;
+  input_price?: number;
+  output_price?: number;
+  unit?: string;
+};
+
+export type AdminChannel = {
+  id: string;
+  name: string;
+  description?: string;
+  platform?: string;
+  billing_model_source?: string;
+  group_ids?: string[];
+  group_names?: string[];
+  group_count?: number;
+  plan_count?: number;
+  pricing_count?: number;
+  model_pricing?: AdminChannelPricing[];
+  features_config?: Record<string, unknown>;
+  enabled?: boolean;
+  sort_order?: number;
+  created_at?: number;
+  updated_at?: number;
+};
+
 export type AdminApiKey = {
   id: string;
   account_id: string;

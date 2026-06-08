@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Edit, Eye, Plus, RefreshCw, Server } from 'lucide-react';
+import { Edit, Eye, Plus, RefreshCw, Server, Trash2 } from 'lucide-react';
 import { fetchAdminProviderAccounts } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
 import {
@@ -22,9 +22,9 @@ import { useDashboard } from '../state/dashboardContext';
 
 type StatusFilter = '' | 'enabled' | 'disabled';
 type HealthFilter = '' | 'error' | 'used' | 'unused';
-type AccountColumnKey = 'pool' | 'protocol' | 'models' | 'requests' | 'traffic' | 'status';
+type AccountColumnKey = 'route' | 'protocol' | 'models' | 'requests' | 'traffic' | 'status';
 
-const DEFAULT_VISIBLE_COLUMNS: AccountColumnKey[] = ['pool', 'protocol', 'models', 'requests', 'traffic', 'status'];
+const DEFAULT_VISIBLE_COLUMNS: AccountColumnKey[] = ['route', 'protocol', 'models', 'requests', 'traffic', 'status'];
 const STORAGE_KEY = 'admin-provider-accounts-view-state';
 
 export function AdminAccountsPage() {
@@ -47,8 +47,10 @@ export function AdminAccountsPage() {
   const [protocolFilter, setProtocolFilter] = useState(savedState.protocolFilter || '');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
-  const [visibleColumns, setVisibleColumns] = useState<Set<AccountColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
+  const initialVisibleColumns = ((savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS) as string[]).map((item) => (item === 'pool' ? 'route' : item)) as AccountColumnKey[];
+  const [visibleColumns, setVisibleColumns] = useState<Set<AccountColumnKey>>(new Set(initialVisibleColumns.length ? initialVisibleColumns : DEFAULT_VISIBLE_COLUMNS));
   const [inspectAccount, setInspectAccount] = useState<AdminProviderAccount | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AdminProviderAccount | null>(null);
 
   const items = accountsQuery.data?.items || [];
   const poolOptions = useMemo(() => Array.from(new Set(items.map((item) => item.pool_name).filter(Boolean))).sort(), [items]);
@@ -82,11 +84,6 @@ export function AdminAccountsPage() {
 
   const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
   const pagedItems = filteredItems.slice((page - 1) * pageSize, page * pageSize);
-  const enabledCount = items.filter((item) => item.enabled !== false).length;
-  const requestTotal = items.reduce((sum, item) => sum + Number(item.request_count || 0), 0);
-  const tokenTotal = items.reduce((sum, item) => sum + Number(item.total_tokens || 0), 0);
-  const errorTotal = items.reduce((sum, item) => sum + Number(item.error_count || 0), 0);
-  const usedRoutes = items.filter((item) => Number(item.request_count || 0) > 0).length;
 
   useEffect(() => {
     writeStorageJSON(STORAGE_KEY, {
@@ -118,17 +115,18 @@ export function AdminAccountsPage() {
     setPage(1);
   }
 
+  function confirmDeleteAccount() {
+    if (!deleteTarget) return;
+    const poolIndex = resolvePoolIndex(deleteTarget);
+    dashboard.deletePool(poolIndex);
+    setDeleteTarget(null);
+  }
+
   return (
     <section className="grid-page">
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>账号管理</strong>
-        </div>
-        <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>账号总数</span><strong>{formatNumber(items.length)}</strong><small>已使用 {formatNumber(usedRoutes)}</small></div>
-          <div className="sub2-inline-summary-item"><span>启用线路</span><strong>{formatNumber(enabledCount)}</strong><small>停用 {formatNumber(items.length - enabledCount)}</small></div>
-          <div className="sub2-inline-summary-item"><span>累计请求</span><strong>{formatNumber(requestTotal)}</strong><small>{formatTokenCount(tokenTotal)}</small></div>
-          <div className="sub2-inline-summary-item"><span>异常请求</span><strong>{formatNumber(errorTotal)}</strong><small>最近请求</small></div>
         </div>
       </div>
 
@@ -141,7 +139,7 @@ export function AdminAccountsPage() {
                 <ColumnMenu
                   label="列设置"
                   items={[
-                    { key: 'pool', label: '连接池', checked: visibleColumns.has('pool'), onToggle: () => toggleColumn('pool') },
+                    { key: 'route', label: '线路', checked: visibleColumns.has('route'), onToggle: () => toggleColumn('route') },
                     { key: 'protocol', label: '协议', checked: visibleColumns.has('protocol'), onToggle: () => toggleColumn('protocol') },
                     { key: 'models', label: '模型', checked: visibleColumns.has('models'), onToggle: () => toggleColumn('models') },
                     { key: 'requests', label: '请求', checked: visibleColumns.has('requests'), onToggle: () => toggleColumn('requests') },
@@ -167,14 +165,14 @@ export function AdminAccountsPage() {
               </ToolbarButtonRow>
             }
           >
-            <SearchField value={search} placeholder="搜索账号 / 连接池 / 线路 / 模型" onChange={(value) => { setSearch(value); setPage(1); }} />
+            <SearchField value={search} placeholder="搜索上游账号 / 线路 / 模型" onChange={(value) => { setSearch(value); setPage(1); }} />
             <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StatusFilter); setPage(1); }}>
               <option value="">全部状态</option>
               <option value="enabled">启用</option>
               <option value="disabled">停用</option>
             </Select>
             <Select value={poolFilter} onChange={(event) => { setPoolFilter(event.target.value); setPage(1); }}>
-              <option value="">全部连接池</option>
+              <option value="">全部上游账号</option>
               {poolOptions.map((pool) => <option key={pool} value={pool}>{pool}</option>)}
             </Select>
             <Select value={protocolFilter} onChange={(event) => { setProtocolFilter(event.target.value); setPage(1); }}>
@@ -194,8 +192,8 @@ export function AdminAccountsPage() {
             <table>
               <thead>
                 <tr>
-                  <th>账号</th>
-                  {visibleColumns.has('pool') ? <th>连接池</th> : null}
+                  <th>上游账号</th>
+                  {visibleColumns.has('route') ? <th>线路</th> : null}
                   {visibleColumns.has('protocol') ? <th>协议</th> : null}
                   {visibleColumns.has('models') ? <th>模型</th> : null}
                   {visibleColumns.has('requests') ? <th>请求</th> : null}
@@ -213,7 +211,7 @@ export function AdminAccountsPage() {
                         <small>{item.route_url || '-'}</small>
                       </div>
                     </td>
-                    {visibleColumns.has('pool') ? (
+                    {visibleColumns.has('route') ? (
                       <td>
                         <div className="sub2-cell-stack sub2-cell-stack-tight">
                           <strong>{item.pool_name || '-'}</strong>
@@ -264,7 +262,8 @@ export function AdminAccountsPage() {
                     <td>
                       <RowActions>
                         <RowAction icon={Eye} label="详情" onClick={() => setInspectAccount(item)} />
-                        <RowAction icon={Edit} label="管理" onClick={() => dashboard.openPool(resolvePoolIndex(item))} />
+                        <RowAction icon={Edit} label="编辑" onClick={() => dashboard.openPool(resolvePoolIndex(item))} />
+                        <RowAction icon={Trash2} label="删除" tone="danger" onClick={() => setDeleteTarget(item)} />
                       </RowActions>
                     </td>
                   </tr>
@@ -305,7 +304,7 @@ export function AdminAccountsPage() {
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
-                <span>连接池</span>
+                <span>上游账号</span>
                 <strong>{inspectAccount.pool_name || '-'}</strong>
                 <small>优先级 {formatNumber(inspectAccount.priority || 0)} · 线路 {formatNumber(inspectAccount.route_index || 0)}</small>
               </div>
@@ -348,6 +347,26 @@ export function AdminAccountsPage() {
             </div>
             <div className="admin-dialog-note">
               <Server size={14} /> 模型观测：{inspectAccount.models?.join(' / ') || '未观测到模型'}
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
+      {deleteTarget ? (
+        <Modal
+          title="删除账号"
+          size="md"
+          onClose={() => setDeleteTarget(null)}
+          footer={
+            <ModalActions>
+              <Button onClick={() => setDeleteTarget(null)}>取消</Button>
+              <Button tone="danger" onClick={confirmDeleteAccount}>删除</Button>
+            </ModalActions>
+          }
+        >
+          <div className="admin-dialog">
+            <div className="admin-dialog-intro">
+              <strong>{deleteTarget.pool_name || deleteTarget.provider_name || deleteTarget.id}</strong>
             </div>
           </div>
         </Modal>

@@ -22,7 +22,7 @@ export function ConfigView(props: {
   return (
     <section className="config-layout config-layout-single">
       <Panel>
-        <Tabs value={props.configTab} onChange={props.setConfigTab} items={[{ value: 'routes', label: '连接池' }, { value: 'routing', label: '模型与路由' }, { value: 'strategy', label: '策略' }]} />
+        <Tabs value={props.configTab} onChange={props.setConfigTab} items={[{ value: 'routes', label: '账号线路' }, { value: 'routing', label: '模型与路由' }, { value: 'strategy', label: '策略' }]} />
         {props.configTab === 'routes' ? <PoolList pools={props.pools} onOpenPool={props.onOpenPool} onDeletePool={props.onDeletePool} onMovePool={props.onMovePool} /> : null}
         {props.configTab === 'routing' ? <RoutingPanel /> : null}
         {props.configTab === 'strategy' ? <StrategyPanel draft={props.draft} onPatch={props.onPatch} /> : null}

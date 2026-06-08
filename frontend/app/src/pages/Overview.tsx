@@ -18,11 +18,18 @@ export function Overview({ state }: { state: DashboardState }) {
 
   const operationCards = useMemo(() => ([
     {
+      to: '/admin/users',
+      icon: <Users size={20} />,
+      title: '用户管理',
+      desc: '管理用户、角色、额度和分组归属',
+      tone: 'blue',
+    },
+    {
       to: '/admin/accounts',
       icon: <Users size={20} />,
       title: '账号管理',
-      desc: '管理账号状态、角色、额度和分组归属',
-      tone: 'blue',
+      desc: '管理上游账号、线路和可用状态',
+      tone: 'slate',
     },
     {
       to: '/admin/subscriptions',
@@ -54,6 +61,7 @@ export function Overview({ state }: { state: DashboardState }) {
           <strong>仪表盘</strong>
         </div>
         <div className="overview-command-actions">
+          <Link to="/admin/users" className="btn">用户管理</Link>
           <Link to="/admin/accounts" className="btn">账号管理</Link>
           <Link to="/admin/groups" className="btn">分组管理</Link>
           <Link to="/admin/usage" className="btn btn-primary">使用记录</Link>

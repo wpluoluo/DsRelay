@@ -1,5 +1,6 @@
 import type {
   AdminGroup,
+  AdminChannel,
   AdminApiKey,
   AdminListPayload,
   AdminBillingPayload,
@@ -129,6 +130,23 @@ export function saveAdminGroup(payload: Record<string, unknown>): Promise<{ ok?:
 
 export function deleteAdminGroup(groupId: string): Promise<{ ok?: boolean; id?: string }> {
   return requestJson<{ ok?: boolean; id?: string }>(`/admin/groups/${groupId}`, {
+    method: 'DELETE',
+  });
+}
+
+export function fetchAdminChannels(): Promise<AdminListPayload<AdminChannel>> {
+  return requestJson<AdminListPayload<AdminChannel>>('/admin/channels');
+}
+
+export function saveAdminChannel(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminChannel }> {
+  return requestJson<{ ok?: boolean; item?: AdminChannel }>('/admin/channels', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteAdminChannel(channelId: string): Promise<{ ok?: boolean; id?: string }> {
+  return requestJson<{ ok?: boolean; id?: string }>(`/admin/channels/${channelId}`, {
     method: 'DELETE',
   });
 }

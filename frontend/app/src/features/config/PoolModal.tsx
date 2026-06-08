@@ -26,13 +26,13 @@ export function PoolModal({
   const patch = (next: Partial<Pool>) => onChange(normalizePool({ ...p, ...next }));
   const patchPolicy = (next: Record<string, unknown>) => patch({ route_policy: { ...policy, ...next } });
   return (
-    <Modal title={title} onClose={onClose} footer={<><Button onClick={onTest}>测试线路</Button><Button onClick={onClose}>取消</Button><Button tone="primary" onClick={onSave}>保存连接池</Button></>}>
+    <Modal title={title} onClose={onClose} footer={<><Button onClick={onTest}>测试线路</Button><Button onClick={onClose}>取消</Button><Button tone="primary" onClick={onSave}>保存账号</Button></>}>
       <div className="form-grid modal-grid">
         <Field label="名称"><TextInput value={p.name || ''} onChange={(e) => patch({ name: e.target.value })} /></Field>
         <Field label="优先级"><NumberInput value={p.priority ?? 100} onChange={(e) => patch({ priority: Number(e.target.value) })} /></Field>
-        <Toggle label="启用连接池" checked={p.enabled !== false} onChange={(enabled) => patch({ enabled })} />
+        <Toggle label="启用账号" checked={p.enabled !== false} onChange={(enabled) => patch({ enabled })} />
         <Field label="上游地址" full><TextArea rows={3} value={textFromLines(p.urls)} onChange={(e) => patch({ urls: splitLines(e.target.value) })} /></Field>
-        <Field label="API Keys" full><TextArea rows={3} value={(p.keys || []).map((k) => k.key).join('\n')} onChange={(e) => patch({ keys: splitLines(e.target.value).map((key) => ({ key })) })} /></Field>
+        <Field label="API Key" full><TextArea rows={3} value={(p.keys || []).map((k) => k.key).join('\n')} onChange={(e) => patch({ keys: splitLines(e.target.value).map((key) => ({ key })) })} /></Field>
         <Field label="该线路支持模型" full><TextArea rows={4} value={p.supported_models_text || ''} onChange={(e) => patch({ supported_models_text: e.target.value })} /></Field>
         <Field label="该线路模型映射" full><TextArea rows={4} value={p.model_aliases_text || ''} onChange={(e) => patch({ model_aliases_text: e.target.value })} /></Field>
         <Field label="思考强度"><Select value={policy.reasoning_effort} onChange={(e) => patchPolicy({ reasoning_effort: e.target.value })}><option value="low">低</option><option value="medium">中</option><option value="high">高</option></Select></Field>

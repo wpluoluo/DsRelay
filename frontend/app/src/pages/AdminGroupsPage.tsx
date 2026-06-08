@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Ban, Eye, Pencil, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Ban, Bolt, DollarSign, Eye, Pencil, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { deleteAdminGroup, fetchAdminGroups, saveAdminGroup } from '../api';
 import { Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
 import { ActionButton, ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
@@ -20,6 +20,8 @@ type GroupDraft = {
 };
 
 type GroupColumnKey = 'platform' | 'users' | 'requests' | 'errors' | 'tokens' | 'input' | 'output' | 'status';
+type ExclusiveFilter = '' | 'exclusive' | 'public';
+type GroupExtraEntry = { user_id: string; user_name?: string; value: number };
 
 const EMPTY_GROUP: GroupDraft = {
   name: '',
@@ -40,16 +42,22 @@ export function AdminGroupsPage() {
   const [inspectGroup, setInspectGroup] = useState<AdminGroup | null>(null);
   const [toggleTarget, setToggleTarget] = useState<AdminGroup | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminGroup | null>(null);
+  const [sortModalOpen, setSortModalOpen] = useState(false);
+  const [sortDraft, setSortDraft] = useState<AdminGroup[]>([]);
+  const [rateGroup, setRateGroup] = useState<AdminGroup | null>(null);
+  const [rpmGroup, setRpmGroup] = useState<AdminGroup | null>(null);
   const savedState = readStorageJSON(STORAGE_KEY, {
     search: '',
     statusFilter: '',
     platformFilter: '',
+    exclusiveFilter: '' as ExclusiveFilter,
     pageSize: 20,
     visibleColumns: DEFAULT_VISIBLE_COLUMNS,
   });
   const [search, setSearch] = useState(savedState.search);
   const [statusFilter, setStatusFilter] = useState(savedState.statusFilter);
   const [platformFilter, setPlatformFilter] = useState(savedState.platformFilter || '');
+  const [exclusiveFilter, setExclusiveFilter] = useState<ExclusiveFilter>(savedState.exclusiveFilter || '');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
   const [visibleColumns, setVisibleColumns] = useState<Set<GroupColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
@@ -92,6 +100,8 @@ export function AdminGroupsPage() {
         if ((item.enabled !== false) !== enabledValue) return false;
       }
       if (platformFilter && (item.platform || '') !== platformFilter) return false;
+      if (exclusiveFilter === 'exclusive' && !item.is_exclusive) return false;
+      if (exclusiveFilter === 'public' && item.is_exclusive) return false;
       return true;
       })
       .sort((left, right) => {
@@ -99,18 +109,13 @@ export function AdminGroupsPage() {
         if (sortDelta !== 0) return sortDelta;
         return String(left.name || '').localeCompare(String(right.name || ''), 'zh-CN');
       });
-  }, [items, platformFilter, search, statusFilter]);
+  }, [exclusiveFilter, items, platformFilter, search, statusFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
   const pagedItems = useMemo(() => {
     const start = (page - 1) * pageSize;
     return filteredItems.slice(start, start + pageSize);
   }, [filteredItems, page, pageSize]);
-  const enabledCount = items.filter((item) => item.enabled !== false).length;
-  const requestTotal = items.reduce((sum, item) => sum + Number(item.request_count || 0), 0);
-  const errorTotal = items.reduce((sum, item) => sum + Number(item.error_count || 0), 0);
-  const accountTotal = items.reduce((sum, item) => sum + Number(item.account_count || 0), 0);
-  const exclusiveCount = items.filter((item) => item.is_exclusive).length;
   const platformOptions = useMemo(
     () => Array.from(new Set(items.map((item) => item.platform).filter((value): value is string => Boolean(value)))).sort((left, right) => left.localeCompare(right, 'zh-CN')),
     [items],
@@ -121,10 +126,11 @@ export function AdminGroupsPage() {
       search,
       statusFilter,
       platformFilter,
+      exclusiveFilter,
       pageSize,
       visibleColumns: Array.from(visibleColumns),
     });
-  }, [pageSize, platformFilter, search, statusFilter, visibleColumns]);
+  }, [exclusiveFilter, pageSize, platformFilter, search, statusFilter, visibleColumns]);
 
   function openCreate() {
     setDraft({ ...EMPTY_GROUP });
@@ -156,18 +162,54 @@ export function AdminGroupsPage() {
     });
   }
 
+  function openSortModal() {
+    setSortDraft(filteredItems.slice());
+    setSortModalOpen(true);
+  }
+
+  function moveSortItem(index: number, direction: number) {
+    const target = index + direction;
+    if (target < 0 || target >= sortDraft.length) return;
+    const next = sortDraft.slice();
+    [next[index], next[target]] = [next[target], next[index]];
+    setSortDraft(next);
+  }
+
+  async function saveSortOrder() {
+    await Promise.all(
+      sortDraft.map((group, index) =>
+        saveMutation.mutateAsync({
+          ...group,
+          sort_order: index * 10,
+        }),
+      ),
+    );
+    setSortModalOpen(false);
+    await groupsQuery.refetch();
+  }
+
+  function updateGroupExtra(group: AdminGroup, patch: Record<string, unknown>) {
+    saveMutation.mutate({
+      id: group.id,
+      name: group.name || '',
+      description: group.description || '',
+      platform: group.platform || '',
+      is_exclusive: group.is_exclusive === true,
+      rate_multiplier: Number(group.rate_multiplier || 1),
+      enabled: group.enabled !== false,
+      sort_order: group.sort_order || 0,
+      extra: {
+        ...(group.extra || {}),
+        ...patch,
+      },
+    });
+  }
+
   return (
     <section className="grid-page">
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>分组管理</strong>
-        </div>
-        <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>分组总数</span><strong>{formatNumber(items.length)}</strong><small>当前可管理分组</small></div>
-          <div className="sub2-inline-summary-item"><span>启用分组</span><strong>{formatNumber(enabledCount)}</strong><small>停用 {formatNumber(items.length - enabledCount)}</small></div>
-          <div className="sub2-inline-summary-item"><span>专属分组</span><strong>{formatNumber(exclusiveCount)}</strong><small>共享 {formatNumber(Math.max(0, items.length - exclusiveCount))}</small></div>
-          <div className="sub2-inline-summary-item"><span>用户覆盖</span><strong>{formatNumber(accountTotal)}</strong><small>分组下用户累计</small></div>
-          <div className="sub2-inline-summary-item"><span>请求 / 错误</span><strong>{formatNumber(requestTotal)} / {formatNumber(errorTotal)}</strong><small>筛选前全量</small></div>
         </div>
       </div>
       <TablePageLayout
@@ -176,6 +218,7 @@ export function AdminGroupsPage() {
             right={
               <ToolbarButtonRow>
                 <ActionButton onClick={() => groupsQuery.refetch()}><RefreshCw size={15} />刷新</ActionButton>
+                <ActionButton onClick={openSortModal}><ArrowUp size={15} />排序</ActionButton>
                 <ColumnMenu
                   label="列设置"
                   items={[
@@ -190,7 +233,7 @@ export function AdminGroupsPage() {
                   ]}
                 />
                 <ToolsMenu>
-                  <button type="button" onClick={() => { setSearch(''); setPlatformFilter(''); setStatusFilter(''); setPage(1); }}>
+                  <button type="button" onClick={() => { setSearch(''); setPlatformFilter(''); setStatusFilter(''); setExclusiveFilter(''); setPage(1); }}>
                     <span>清空筛选</span>
                   </button>
                   <button type="button" onClick={() => { setStatusFilter('enabled'); setPage(1); }}>
@@ -200,7 +243,7 @@ export function AdminGroupsPage() {
                     <span>切换 50 / 页</span>
                   </button>
                 </ToolsMenu>
-                <Button tone="primary" onClick={openCreate}><Plus size={15} />创建分组</Button>
+                <Button tone="primary" onClick={openCreate}><Plus size={15} />添加分组</Button>
               </ToolbarButtonRow>
             }
           >
@@ -213,6 +256,11 @@ export function AdminGroupsPage() {
               <option value="">全部状态</option>
               <option value="enabled">启用</option>
               <option value="disabled">停用</option>
+            </Select>
+            <Select value={exclusiveFilter} onChange={(event) => { setExclusiveFilter(event.target.value as ExclusiveFilter); setPage(1); }}>
+              <option value="">全部分组</option>
+              <option value="exclusive">专属分组</option>
+              <option value="public">公开分组</option>
             </Select>
           </FilterToolbar>
         }
@@ -261,6 +309,8 @@ export function AdminGroupsPage() {
                       <RowActions>
                         <RowAction icon={Eye} label="详情" onClick={() => setInspectGroup(item)} />
                         <RowAction icon={Pencil} label="编辑" onClick={() => openEdit(item)} />
+                        <RowAction icon={DollarSign} label="专属倍率" onClick={() => setRateGroup(item)} />
+                        <RowAction icon={Bolt} label="专属 RPM" onClick={() => setRpmGroup(item)} />
                         <RowAction icon={item.enabled === false ? ShieldCheck : Ban} label={item.enabled === false ? '启用' : '停用'} tone={item.enabled === false ? 'default' : 'warn'} onClick={() => toggleEnabled(item)} />
                         <RowAction icon={Trash2} label="删除" tone="danger" onClick={() => setDeleteTarget(item)} />
                       </RowActions>
@@ -270,7 +320,7 @@ export function AdminGroupsPage() {
                   <ListEmptyRow
                     colSpan={visibleColumns.size + 2}
                     title="暂无分组数据"
-                    action={<Button tone="primary" onClick={openCreate}>创建分组</Button>}
+                    action={<Button tone="primary" onClick={openCreate}>添加分组</Button>}
                   />
                 )}
               </tbody>
@@ -292,7 +342,7 @@ export function AdminGroupsPage() {
 
       {draft ? (
         <Modal
-          title={draft.id ? '编辑分组' : '创建分组'}
+          title={draft.id ? '编辑分组' : '添加分组'}
           size="lg"
           onClose={() => setDraft(null)}
           footer={
@@ -305,30 +355,9 @@ export function AdminGroupsPage() {
           }
         >
           <div className="admin-dialog">
-            <div className="admin-dialog-intro">
-              <strong>{draft.id ? '编辑分组' : '创建分组'}</strong>
-            </div>
-            <div className="admin-dialog-summary">
-              <div className="admin-dialog-summary-card">
-                <span>分组总数</span>
-                <strong>{formatNumber(items.length)}</strong>
-                <small>当前可管理分组</small>
-              </div>
-              <div className="admin-dialog-summary-card">
-                <span>启用分组</span>
-                <strong>{formatNumber(enabledCount)}</strong>
-                <small>专属 {formatNumber(exclusiveCount)}</small>
-              </div>
-              <div className="admin-dialog-summary-card">
-                <span>当前草稿</span>
-                <strong>{draft.name?.trim() || '待填写分组名'}</strong>
-                <small>{draft.platform?.trim() || '待填写平台'}</small>
-              </div>
-            </div>
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
                 <strong>基础信息</strong>
-                <span>先定义名称、平台、排序和启用状态</span>
               </div>
               <div className="admin-dialog-grid modal-grid">
                 <Field label="分组名称"><TextInput value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
@@ -437,7 +466,6 @@ export function AdminGroupsPage() {
               <div className="admin-dialog-summary-card">
                 <span>操作类型</span>
                 <strong>{toggleTarget.enabled === false ? '启用分组' : '停用分组'}</strong>
-                <small>{toggleTarget.enabled === false ? '重新进入可用范围' : '退出新业务配置'}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>平台 / 倍率</span>
@@ -445,7 +473,7 @@ export function AdminGroupsPage() {
                 <small>×{Number(toggleTarget.rate_multiplier || 1)}</small>
               </div>
               <div className="admin-dialog-summary-card">
-                <span>影响范围</span>
+                <span>类型</span>
                 <strong>{toggleTarget.is_exclusive ? '专属分组' : '共享分组'}</strong>
                 <small>{toggleTarget.id}</small>
               </div>
@@ -475,6 +503,151 @@ export function AdminGroupsPage() {
           </div>
         </Modal>
       ) : null}
+
+      {sortModalOpen ? (
+        <Modal
+          title="排序"
+          size="lg"
+          onClose={() => setSortModalOpen(false)}
+          footer={
+            <ModalActions>
+              <Button onClick={() => setSortModalOpen(false)}>取消</Button>
+              <Button tone="primary" disabled={saveMutation.isPending} onClick={saveSortOrder}>保存</Button>
+            </ModalActions>
+          }
+        >
+          <div className="admin-sort-list">
+            {sortDraft.map((group, index) => (
+              <div className="admin-sort-item" key={group.id}>
+                <div>
+                  <strong>{group.name}</strong>
+                  <small>{group.platform || '-'} · {group.sort_order || 0}</small>
+                </div>
+                <div className="button-row">
+                  <Button onClick={() => moveSortItem(index, -1)} disabled={index === 0}><ArrowUp size={14} />上移</Button>
+                  <Button onClick={() => moveSortItem(index, 1)} disabled={index === sortDraft.length - 1}><ArrowDown size={14} />下移</Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Modal>
+      ) : null}
+
+      {rateGroup ? (
+        <GroupEntriesModal
+          title="分组专属倍率管理"
+          group={rateGroup}
+          entries={extractEntries(rateGroup.extra?.user_rate_multipliers)}
+          valueLabel="倍率"
+          valueStep="0.001"
+          defaultValue={1}
+          onClose={() => setRateGroup(null)}
+          onSave={(entries) => { updateGroupExtra(rateGroup, { user_rate_multipliers: entries }); setRateGroup(null); }}
+        />
+      ) : null}
+
+      {rpmGroup ? (
+        <GroupEntriesModal
+          title="分组专属 RPM 管理"
+          group={rpmGroup}
+          entries={extractEntries(rpmGroup.extra?.user_rpm_overrides)}
+          valueLabel="RPM"
+          valueStep="1"
+          defaultValue={0}
+          onClose={() => setRpmGroup(null)}
+          onSave={(entries) => { updateGroupExtra(rpmGroup, { user_rpm_overrides: entries }); setRpmGroup(null); }}
+        />
+      ) : null}
     </section>
   );
+}
+
+function GroupEntriesModal({
+  title,
+  group,
+  entries,
+  valueLabel,
+  valueStep,
+  defaultValue,
+  onClose,
+  onSave,
+}: {
+  title: string;
+  group: AdminGroup;
+  entries: GroupExtraEntry[];
+  valueLabel: string;
+  valueStep: string;
+  defaultValue: number;
+  onClose: () => void;
+  onSave: (entries: GroupExtraEntry[]) => void;
+}) {
+  const [rows, setRows] = useState<GroupExtraEntry[]>(entries.length ? entries : []);
+  const updateRow = (index: number, patch: Partial<GroupExtraEntry>) => {
+    setRows((current) => current.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)));
+  };
+  const removeRow = (index: number) => {
+    setRows((current) => current.filter((_, itemIndex) => itemIndex !== index));
+  };
+  const normalizedRows = rows
+    .map((item) => ({
+      user_id: String(item.user_id || '').trim(),
+      user_name: String(item.user_name || '').trim(),
+      value: Number(item.value || 0),
+    }))
+    .filter((item) => item.user_id);
+
+  return (
+    <Modal
+      title={title}
+      size="lg"
+      onClose={onClose}
+      footer={
+        <ModalActions>
+          <Button onClick={onClose}>取消</Button>
+          <Button tone="primary" onClick={() => onSave(normalizedRows)}>保存</Button>
+        </ModalActions>
+      }
+    >
+      <div className="admin-dialog">
+        <div className="admin-dialog-intro">
+          <strong>{group.name}</strong>
+        </div>
+        <div className="admin-entry-list">
+          {rows.map((entry, index) => (
+            <div className="admin-entry-row" key={`${entry.user_id}-${index}`}>
+              <Field label="用户 ID">
+                <TextInput value={entry.user_id} onChange={(event) => updateRow(index, { user_id: event.target.value })} />
+              </Field>
+              <Field label="用户名称">
+                <TextInput value={entry.user_name || ''} onChange={(event) => updateRow(index, { user_name: event.target.value })} />
+              </Field>
+              <Field label={valueLabel}>
+                <TextInput type="number" step={valueStep} value={String(entry.value ?? defaultValue)} onChange={(event) => updateRow(index, { value: Number(event.target.value || 0) })} />
+              </Field>
+              <Button tone="danger" onClick={() => removeRow(index)}>删除</Button>
+            </div>
+          ))}
+          <Button onClick={() => setRows((current) => [...current, { user_id: '', user_name: '', value: defaultValue }])}>
+            <Plus size={15} />
+            添加规则
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function extractEntries(value: unknown): GroupExtraEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value.reduce<GroupExtraEntry[]>((entries, item) => {
+      if (!item || typeof item !== 'object') return entries;
+      const record = item as Record<string, unknown>;
+      const entry = {
+        user_id: String(record.user_id || '').trim(),
+        user_name: String(record.user_name || '').trim(),
+        value: Number(record.value || 0),
+      };
+      if (entry.user_id) entries.push(entry);
+      return entries;
+    }, []);
 }
