@@ -1,13 +1,13 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { ArrowRight, Coins, FolderTree, KeyRound, ListChecks, Receipt, Users } from 'lucide-react';
+import { ArrowRight, Coins, FolderTree, ListChecks, Receipt, Users } from 'lucide-react';
 import { fetchAdminBilling, fetchAdminOverview } from '../api';
 import { Empty, Panel, PanelHead } from '../components';
-import type { DashboardState, ProxyKeyPayload } from '../types';
+import type { DashboardState } from '../types';
 import { formatNumber, formatTokenCount, formatUsdCost } from '../utils';
 
-export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyKeyPayload }) {
+export function Overview({ state }: { state: DashboardState }) {
   const overviewQuery = useQuery({ queryKey: ['admin-overview'], queryFn: fetchAdminOverview, refetchInterval: 10000 });
   const billingQuery = useQuery({ queryKey: ['admin-billing-overview'], queryFn: () => fetchAdminBilling(), refetchInterval: 15000 });
   const overview = overviewQuery.data || {};
@@ -52,7 +52,6 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>仪表盘</strong>
-          <span>对齐 SUB2 的管理员总览口径，聚焦账户、分组、请求和计费核心数据。</span>
         </div>
         <div className="overview-command-actions">
           <Link to="/admin/accounts" className="btn">账号管理</Link>
@@ -62,14 +61,13 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
       </div>
 
       <div className="dashboard-stats-grid">
-        <DashboardStat icon={<KeyRound size={18} />} label="API Key" value={formatNumber(keys?.managed_key_count ?? 0)} sub={`${formatNumber(keys?.managed_enabled_count ?? 0)} 个启用`} tone="blue" />
         <DashboardStat icon={<Users size={18} />} label="账户" value={formatNumber(overview.account_count ?? 0)} sub={`Top ${formatNumber(topAccounts.length)} 已加载`} tone="green" />
         <DashboardStat icon={<FolderTree size={18} />} label="分组" value={formatNumber(overview.group_count ?? 0)} sub={`Top ${formatNumber(topGroups.length)} 已加载`} tone="amber" />
         <DashboardStat icon={<ListChecks size={18} />} label="请求" value={formatNumber(summary.request_count ?? overview.request_count ?? 0)} sub={`错误 ${formatNumber(summary.error_count ?? overview.error_count ?? 0)}`} tone="violet" />
+        <DashboardStat icon={<Coins size={18} />} label="总 Token" value={formatTokenCount(summary.total_tokens ?? overview.total_tokens ?? 0)} sub={`输入 ${formatNumber(summary.input_bytes ?? overview.input_bytes ?? 0)} · 输出 ${formatNumber(summary.output_bytes ?? overview.output_bytes ?? 0)}`} tone="indigo" />
       </div>
 
       <div className="dashboard-stats-grid">
-        <DashboardStat icon={<Coins size={18} />} label="总 Token" value={formatTokenCount(summary.total_tokens ?? overview.total_tokens ?? 0)} sub={`输入 ${formatNumber(summary.input_bytes ?? overview.input_bytes ?? 0)} · 输出 ${formatNumber(summary.output_bytes ?? overview.output_bytes ?? 0)}`} tone="indigo" />
         <DashboardStat icon={<Coins size={18} />} label="标准成本" value={formatUsdCost(summary.total_cost ?? 0)} sub="按标准口径累计" tone="slate" />
         <DashboardStat icon={<Coins size={18} />} label="实际成本" value={formatUsdCost(summary.actual_cost ?? 0)} sub="按实际结算累计" tone="green" />
         <DashboardStat icon={<Coins size={18} />} label="账户成本" value={formatUsdCost(summary.account_cost ?? 0)} sub={`覆盖请求 ${formatNumber(summary.covered_request_count ?? 0)}`} tone="rose" />

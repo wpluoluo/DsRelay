@@ -83,7 +83,6 @@ export function PurchaseCenterPage() {
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>充值/订阅</strong>
-          <span>对齐 SUB2 个人购买页，面向当前用户创建订单、选择计划并追踪最近消费。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.source_type || '请选择用户'}</small></div>

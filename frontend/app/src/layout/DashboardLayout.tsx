@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
 import { ChevronDown, ChevronLeft, RefreshCw } from 'lucide-react';
-import { fetchDashboardState, fetchProxyKeys, saveConfig, testPool } from '../api';
+import { fetchDashboardState, saveConfig, testPool } from '../api';
 import { Badge, Button } from '../components';
 import { PoolModal } from '../features/config/PoolModal';
 import { configFromState, normalizePool } from '../features/config/model';
@@ -28,12 +28,6 @@ export function DashboardLayout() {
     queryKey: ['dashboard-state'],
     queryFn: fetchDashboardState,
     refetchInterval: 2500,
-  });
-
-  const keyQuery = useQuery({
-    queryKey: ['proxy-keys'],
-    queryFn: fetchProxyKeys,
-    refetchInterval: 8000,
   });
 
   useEffect(() => {
@@ -106,7 +100,6 @@ export function DashboardLayout() {
   const contextValue = {
     state,
     stateQuery,
-    keyQuery,
     draft,
     pools,
     configTab,
@@ -168,7 +161,6 @@ export function DashboardLayout() {
             <div className="topbar-main">
               <div className="topbar-title">
                 <h1>DsRelay</h1>
-                <p>对齐 SUB2 的导航与入口层级</p>
               </div>
             </div>
             <div className="hero-actions">

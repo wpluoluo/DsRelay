@@ -375,7 +375,6 @@ export function AdminGroupsPage() {
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
                 <strong>基础属性</strong>
-                <span>排序、倍率与基础说明</span>
               </div>
               <div className="admin-dialog-grid">
                 <Field label="排序"><TextInput readOnly value={String(inspectGroup.sort_order || 0)} /></Field>

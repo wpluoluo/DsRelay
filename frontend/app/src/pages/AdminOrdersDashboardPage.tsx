@@ -94,23 +94,6 @@ export function AdminOrdersDashboardPage() {
                 </table>
               </div>
             </Panel>
-            <Panel className="dashboard-card">
-              <PanelHead title="概览说明" />
-              <div className="overview-alert-list">
-                <div className="overview-alert info">
-                  <strong>支付概览</strong>
-                  <span>这里只看支付链路的总量、状态和最近通道分布，不在这里直接履约或改状态。</span>
-                </div>
-                <div className="overview-alert info">
-                  <strong>订单管理</strong>
-                  <span>创建订单、标记支付、标记失败、查看载荷等动作，都放在“订单管理”三级页里处理。</span>
-                </div>
-                <div className="overview-alert info">
-                  <strong>订阅套餐</strong>
-                  <span>套餐、价格、有效期和额度规则，继续放在“订阅套餐”页单独维护。</span>
-                </div>
-              </div>
-            </Panel>
           </div>
         }
       />

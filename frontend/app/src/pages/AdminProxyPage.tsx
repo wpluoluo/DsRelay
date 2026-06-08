@@ -6,13 +6,11 @@ import { formatNumber } from '../utils';
 export function AdminProxyPage() {
   const dashboard = useDashboard();
   const routes = dashboard.state.route_observability || [];
-  const keyPayload = dashboard.keyQuery.data;
 
   return (
     <section className="grid-page">
       {buildPageIntro('/admin/proxies')}
       <div className="sub2-inline-summary">
-        <div className="sub2-inline-summary-item"><span>代理入口 Key</span><strong>{formatNumber((keyPayload?.managed_enabled_count || 0) + (keyPayload?.env_key_count || 0))}</strong><small>托管 {formatNumber(keyPayload?.managed_key_count || 0)}</small></div>
         <div className="sub2-inline-summary-item"><span>线路观测</span><strong>{formatNumber(routes.length)}</strong><small>当前可见线路</small></div>
         <div className="sub2-inline-summary-item"><span>当前状态</span><strong>{dashboard.status || '待保存'}</strong><small>运行态摘要</small></div>
       </div>

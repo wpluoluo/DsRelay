@@ -249,7 +249,6 @@ export function AdminBillingPage() {
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>使用记录</strong>
-          <span>基于真实请求、订阅和订单查看用量与消费归因，对齐 SUB2 的使用记录入口。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>请求总数</span><strong>{formatNumber(summaryRequestCount)}</strong><small>当前页 {formatNumber(filteredRowsForPager.length)}</small></div>

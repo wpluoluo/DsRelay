@@ -109,7 +109,6 @@ export function AccountUsagePage() {
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>使用记录</strong>
-          <span>对齐 SUB2 用户使用记录，围绕时间筛选、Token、缓存和消费汇总查看请求明细。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>当前用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '平台用户'}</small></div>

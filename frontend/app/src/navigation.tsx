@@ -175,7 +175,6 @@ export function buildPageIntro(path: string): ReactNode {
     <div className="sub2-page-head">
       <div className="sub2-page-title">
         <strong>{current.title}</strong>
-        <span>{current.description}</span>
       </div>
     </div>
   );

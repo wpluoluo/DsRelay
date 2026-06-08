@@ -96,7 +96,6 @@ export function AdminApiKeysPage() {
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>用户 API Key</strong>
-          <span>按用户归属维护调用 Key、订阅覆盖和启停状态，避免再把 Key 当成用户对象本身。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>Key 总数</span><strong>{formatNumber(items.length)}</strong><small>当前列表全量</small></div>
@@ -357,7 +356,6 @@ export function AdminApiKeysPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{inspectKey.name}</strong>
-              <span>查看用户 Key 的归属、订阅覆盖和时间信息，方便快速核验问题。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">

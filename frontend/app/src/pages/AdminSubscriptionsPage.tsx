@@ -125,7 +125,6 @@ export function AdminSubscriptionsPage() {
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>用户订阅</strong>
-          <span>按订阅处理分配、延期、重置与撤销，保持和 SUB2 一致的列表工作流。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>订阅数</span><strong>{formatNumber(filteredItems.length)}</strong><small>当前筛选范围</small></div>

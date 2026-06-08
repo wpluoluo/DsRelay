@@ -32,8 +32,8 @@ import { PurchaseCenterPage } from './pages/PurchaseCenterPage';
 import { useDashboard } from './state/dashboardContext';
 
 function AdminDashboardRoute() {
-  const { state, keyQuery } = useDashboard();
-  return <Overview state={state} keys={keyQuery.data} />;
+  const { state } = useDashboard();
+  return <Overview state={state} />;
 }
 
 function AdminUsageRoute() {

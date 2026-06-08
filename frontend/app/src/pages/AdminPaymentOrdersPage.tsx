@@ -115,7 +115,6 @@ export function AdminPaymentOrdersPage() {
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>订单管理</strong>
-          <span>围绕订单状态、履约结果和补单动作处理支付链路，保持和 SUB2 一致的后台操作入口。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>订单总数</span><strong>{items.length}</strong><small>支付流水总量</small></div>
@@ -279,7 +278,6 @@ export function AdminPaymentOrdersPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>人工创建订单</strong>
-              <span>用于后台补单、测试拉起或线下确认后的人工收款。创建后进入统一支付和履约链。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">

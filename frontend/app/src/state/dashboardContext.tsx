@@ -1,12 +1,11 @@
 import { createContext, useContext } from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
 import type { ConfigTab } from '../features/config/model';
-import type { DashboardState, Pool, ProxyKeyPayload, RuntimeConfig } from '../types';
+import type { DashboardState, Pool, RuntimeConfig } from '../types';
 
 export type DashboardContextValue = {
   state: DashboardState;
   stateQuery: UseQueryResult<DashboardState, Error>;
-  keyQuery: UseQueryResult<ProxyKeyPayload, Error>;
   draft: RuntimeConfig;
   pools: Pool[];
   configTab: ConfigTab;

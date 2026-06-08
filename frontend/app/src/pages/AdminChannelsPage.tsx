@@ -15,7 +15,6 @@ export function AdminChannelsPricingPage() {
       <Panel>
         <PanelHead
           title={<><Tag size={18} />渠道定价</>}
-          action={<span className="subtle">按渠道维护优先级、模型映射、协议和地址。</span>}
         />
         <div className="section-stack">
           <div className="sub2-inline-summary">
@@ -45,7 +44,6 @@ export function AdminChannelsMonitorPage() {
       <Panel>
         <PanelHead
           title={<><Activity size={18} />渠道监控</>}
-          action={<span className="subtle">先对齐 SUB2 的监控入口，当前承接基础渠道状态观察。</span>}
         />
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>启用渠道</span><strong>{formatNumber(enabledCount)}</strong><small>当前参与调度</small></div>
