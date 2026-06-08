@@ -15,7 +15,7 @@ import type {
   AdminSubscriptionPlan,
 } from '../types';
 
-export type UserCenterContextValue = {
+export type AccountCenterContextValue = {
   accounts: AdminAccount[];
   selectedAccountId: string;
   selectedAccount?: AdminAccount;
@@ -30,9 +30,9 @@ export type UserCenterContextValue = {
   loading: boolean;
 };
 
-const UserCenterContext = createContext<UserCenterContextValue | null>(null);
+const AccountCenterContext = createContext<AccountCenterContextValue | null>(null);
 
-export function UserCenterProvider({ children }: { children: React.ReactNode }) {
+export function AccountCenterProvider({ children }: { children: React.ReactNode }) {
   const accountsQuery = useQuery({ queryKey: ['admin-accounts'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
   const plansQuery = useQuery({ queryKey: ['admin-subscription-plans'], queryFn: fetchAdminSubscriptionPlans, refetchInterval: 10000 });
   const channelsQuery = useQuery({ queryKey: ['admin-payment-channels'], queryFn: fetchAdminPaymentChannels, refetchInterval: 10000 });
@@ -71,7 +71,7 @@ export function UserCenterProvider({ children }: { children: React.ReactNode }) 
     });
   }, [channels, visiblePlans]);
 
-  const value = useMemo<UserCenterContextValue>(() => ({
+  const value = useMemo<AccountCenterContextValue>(() => ({
     accounts,
     selectedAccountId,
     selectedAccount,
@@ -109,11 +109,11 @@ export function UserCenterProvider({ children }: { children: React.ReactNode }) 
     subscriptionsQuery,
   ]);
 
-  return <UserCenterContext.Provider value={value}>{children}</UserCenterContext.Provider>;
+  return <AccountCenterContext.Provider value={value}>{children}</AccountCenterContext.Provider>;
 }
 
-export function useUserCenter() {
-  const value = useContext(UserCenterContext);
-  if (!value) throw new Error('User center context is not available');
+export function useAccountCenter() {
+  const value = useContext(AccountCenterContext);
+  if (!value) throw new Error('Account center context is not available');
   return value;
 }

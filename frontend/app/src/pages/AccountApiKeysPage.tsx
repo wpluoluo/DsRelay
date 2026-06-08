@@ -5,11 +5,11 @@ import { createAdminApiKey, fetchAdminApiKeys, setAdminApiKeyEnabled } from '../
 import { Badge, Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
 import { EmptyState, FilterToolbar, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow } from '../components/admin';
 import { queryClient } from '../state/queryClient';
-import { useUserCenter } from '../state/userCenterContext';
+import { useAccountCenter } from '../state/accountCenterContext';
 import { formatNumber, maskEmpty } from '../utils';
 
-export function UserApiKeysPage() {
-  const { selectedAccountId, selectedAccount, accounts } = useUserCenter();
+export function AccountApiKeysPage() {
+  const { selectedAccountId, selectedAccount, accounts } = useAccountCenter();
   const keysQuery = useQuery({ queryKey: ['admin-api-keys'], queryFn: fetchAdminApiKeys, refetchInterval: 10000 });
   const [draft, setDraft] = useState<{ account_id: string; name: string } | null>(null);
   const [generatedKey, setGeneratedKey] = useState('');

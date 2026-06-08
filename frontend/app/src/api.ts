@@ -85,46 +85,46 @@ export function fetchAdminProtocols(): Promise<AdminListPayload<AdminProtocolPro
 }
 
 export function fetchAdminAccounts(): Promise<AdminListPayload<AdminAccount>> {
-  return requestJson<AdminListPayload<AdminAccount>>('/admin/users');
+  return requestJson<AdminListPayload<AdminAccount>>('/admin/accounts');
 }
 
 export function saveAdminAccount(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminAccount }> {
-  return requestJson<{ ok?: boolean; item?: AdminAccount }>('/admin/users', {
+  return requestJson<{ ok?: boolean; item?: AdminAccount }>('/admin/accounts', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
 export function setAdminAccountBalance(accountId: string, balance_cents: number): Promise<{ ok?: boolean; item?: AdminAccount }> {
-  return requestJson<{ ok?: boolean; item?: AdminAccount }>(`/admin/users/${accountId}/balance`, {
+  return requestJson<{ ok?: boolean; item?: AdminAccount }>(`/admin/accounts/${accountId}/balance`, {
     method: 'POST',
     body: JSON.stringify({ balance_cents }),
   });
 }
 
 export function setAdminAccountConcurrency(accountId: string, concurrency_limit: number): Promise<{ ok?: boolean; item?: AdminAccount }> {
-  return requestJson<{ ok?: boolean; item?: AdminAccount }>(`/admin/users/${accountId}/concurrency`, {
+  return requestJson<{ ok?: boolean; item?: AdminAccount }>(`/admin/accounts/${accountId}/concurrency`, {
     method: 'POST',
     body: JSON.stringify({ concurrency_limit }),
   });
 }
 
 export function setAdminAccountAllowedGroups(accountId: string, allowed_group_ids: string[]): Promise<{ ok?: boolean; item?: AdminAccount }> {
-  return requestJson<{ ok?: boolean; item?: AdminAccount }>(`/admin/users/${accountId}/allowed-groups`, {
+  return requestJson<{ ok?: boolean; item?: AdminAccount }>(`/admin/accounts/${accountId}/allowed-groups`, {
     method: 'POST',
     body: JSON.stringify({ allowed_group_ids }),
   });
 }
 
 export function setAdminAccountMemberships(accountId: string, group_ids: string[]): Promise<{ ok?: boolean; item?: AdminAccount }> {
-  return requestJson<{ ok?: boolean; item?: AdminAccount }>(`/admin/users/${accountId}/memberships`, {
+  return requestJson<{ ok?: boolean; item?: AdminAccount }>(`/admin/accounts/${accountId}/memberships`, {
     method: 'POST',
     body: JSON.stringify({ group_ids }),
   });
 }
 
 export function setAdminAccountRoleStatus(accountId: string, payload: { role?: string; status?: string; enabled?: boolean }): Promise<{ ok?: boolean; item?: AdminAccount }> {
-  return requestJson<{ ok?: boolean; item?: AdminAccount }>(`/admin/users/${accountId}/role-status`, {
+  return requestJson<{ ok?: boolean; item?: AdminAccount }>(`/admin/accounts/${accountId}/role-status`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });

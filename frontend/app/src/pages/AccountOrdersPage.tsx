@@ -5,11 +5,11 @@ import { updateAdminPaymentOrderStatus } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
 import { EmptyState, FilterToolbar, Pager, RowAction, RowActions, TablePageLayout } from '../components/admin';
 import { queryClient } from '../state/queryClient';
-import { useUserCenter } from '../state/userCenterContext';
+import { useAccountCenter } from '../state/accountCenterContext';
 import { formatNumber, formatUsdCost } from '../utils';
 
-export function UserOrdersPage() {
-  const { selectedAccount, selectedAccountId, orders, reload } = useUserCenter();
+export function AccountOrdersPage() {
+  const { selectedAccount, selectedAccountId, orders, reload } = useAccountCenter();
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);

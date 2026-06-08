@@ -4,11 +4,11 @@ import { Link } from '@tanstack/react-router';
 import { Activity, ArrowRight, CreditCard, Gift, KeyRound, ListChecks } from 'lucide-react';
 import { fetchAdminApiKeys, fetchAdminUsage } from '../api';
 import { Empty, Panel, PanelHead } from '../components';
-import { useUserCenter } from '../state/userCenterContext';
+import { useAccountCenter } from '../state/accountCenterContext';
 import { formatNumber, formatTokenCount, formatUsdCost } from '../utils';
 
-export function UserDashboardPage() {
-  const { selectedAccount, selectedAccountId, orders, subscriptions, visiblePlans, visibleChannels } = useUserCenter();
+export function AccountDashboardPage() {
+  const { selectedAccount, selectedAccountId, orders, subscriptions, visiblePlans, visibleChannels } = useAccountCenter();
   const usageQuery = useQuery({ queryKey: ['admin-usage'], queryFn: () => fetchAdminUsage(), refetchInterval: 10000 });
   const keysQuery = useQuery({ queryKey: ['admin-api-keys'], queryFn: fetchAdminApiKeys, refetchInterval: 10000 });
   const currentOrders = orders.filter((item) => !selectedAccountId || item.account_id === selectedAccountId);
@@ -84,13 +84,13 @@ export function UserDashboardPage() {
             <QuickAction to="/keys" icon={<KeyRound size={20} />} title="创建 API Key" desc="查看和管理当前账户 Key" tone="blue" />
             <QuickAction to="/usage" icon={<ListChecks size={20} />} title="查看使用记录" desc="检查详细请求记录和缓存情况" tone="green" />
             <QuickAction to="/purchase" icon={<CreditCard size={20} />} title="购买订阅" desc="创建订单并选择计划、通道" tone="amber" />
-            <QuickAction to="/user-orders" icon={<Gift size={20} />} title="查看订单" desc="跟踪支付状态和履约结果" tone="violet" />
+            <QuickAction to="/account-orders" icon={<Gift size={20} />} title="查看订单" desc="跟踪支付状态和履约结果" tone="violet" />
           </div>
         </Panel>
       </div>
 
       <Panel className="dashboard-card">
-        <PanelHead title="当前订阅" action={<Link to="/user-subscriptions" className="panel-link">查看全部</Link>} />
+        <PanelHead title="当前订阅" action={<Link to="/account-subscriptions" className="panel-link">查看全部</Link>} />
         <div className="user-dashboard-subscriptions">
           {currentSubscriptions.length ? currentSubscriptions.slice(0, 4).map((item) => (
             <div className="channel-card" key={item.id}>

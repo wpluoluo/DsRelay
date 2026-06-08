@@ -14,11 +14,11 @@ import { LogsView } from './pages/LogsView';
 import { Overview } from './pages/Overview';
 import { PurchaseCenterPage } from './pages/PurchaseCenterPage';
 import { ProxyKeysPage } from './pages/ProxyKeysPage';
-import { UserApiKeysPage } from './pages/UserApiKeysPage';
-import { UserDashboardPage } from './pages/UserDashboardPage';
-import { UserOrdersPage } from './pages/UserOrdersPage';
-import { UserSubscriptionsPage } from './pages/UserSubscriptionsPage';
-import { UserUsagePage } from './pages/UserUsagePage';
+import { AccountApiKeysPage } from './pages/AccountApiKeysPage';
+import { AccountDashboardPage } from './pages/AccountDashboardPage';
+import { AccountOrdersPage } from './pages/AccountOrdersPage';
+import { AccountSubscriptionsPage } from './pages/AccountSubscriptionsPage';
+import { AccountUsagePage } from './pages/AccountUsagePage';
 import { useDashboard } from './state/dashboardContext';
 
 function OverviewRoute() {
@@ -31,20 +31,20 @@ function RequestsRoute() {
   return <RequestsView state={state} />;
 }
 
-function UserUsageRoute() {
-  return <UserUsagePage />;
+function AccountUsageRoute() {
+  return <AccountUsagePage />;
 }
 
-function UserDashboardRoute() {
-  return <UserDashboardPage />;
+function AccountDashboardRoute() {
+  return <AccountDashboardPage />;
 }
 
-function UserOrdersRoute() {
-  return <UserOrdersPage />;
+function AccountOrdersRoute() {
+  return <AccountOrdersPage />;
 }
 
-function UserSubscriptionsRoute() {
-  return <UserSubscriptionsPage />;
+function AccountSubscriptionsRoute() {
+  return <AccountSubscriptionsPage />;
 }
 
 function LogsRoute() {
@@ -72,14 +72,14 @@ function ConfigRoute() {
 }
 
 function KeysRoute() {
-  return <UserApiKeysPage />;
+  return <AccountApiKeysPage />;
 }
 
 function ProxyKeysRoute() {
   return <ProxyKeysPage />;
 }
 
-function UsersRoute() {
+function AccountsRoute() {
   return <AdminAccountsPage />;
 }
 
@@ -118,17 +118,17 @@ function PurchaseCenterRoute() {
 const rootRoute = createRootRoute({ component: DashboardLayout });
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: OverviewRoute });
 const requestsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/requests', component: RequestsRoute });
-const userUsageRoute = createRoute({ getParentRoute: () => rootRoute, path: '/usage', component: UserUsageRoute });
-const userDashboardRoute = createRoute({ getParentRoute: () => rootRoute, path: '/user-dashboard', component: UserDashboardRoute });
-const userOrdersRoute = createRoute({ getParentRoute: () => rootRoute, path: '/user-orders', component: UserOrdersRoute });
-const userSubscriptionsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/user-subscriptions', component: UserSubscriptionsRoute });
+const accountUsageRoute = createRoute({ getParentRoute: () => rootRoute, path: '/usage', component: AccountUsageRoute });
+const accountDashboardRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account-dashboard', component: AccountDashboardRoute });
+const accountOrdersRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account-orders', component: AccountOrdersRoute });
+const accountSubscriptionsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account-subscriptions', component: AccountSubscriptionsRoute });
 const logsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/logs', component: LogsRoute });
 const keysRoute = createRoute({ getParentRoute: () => rootRoute, path: '/keys', component: KeysRoute });
 const proxyKeysRoute = createRoute({ getParentRoute: () => rootRoute, path: '/proxy-keys', component: ProxyKeysRoute });
-const usersRoute = createRoute({ getParentRoute: () => rootRoute, path: '/users', component: UsersRoute });
+const accountsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/accounts', component: AccountsRoute });
 const groupsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/groups', component: GroupsRoute });
 const billingRoute = createRoute({ getParentRoute: () => rootRoute, path: '/billing', component: BillingRoute });
-const adminApiKeysRoute = createRoute({ getParentRoute: () => rootRoute, path: '/user-api-keys', component: AdminApiKeysRoute });
+const adminApiKeysRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account-api-keys', component: AdminApiKeysRoute });
 const subscriptionPlansRoute = createRoute({ getParentRoute: () => rootRoute, path: '/subscription-plans', component: SubscriptionPlansRoute });
 const subscriptionsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/subscriptions', component: SubscriptionsRoute });
 const paymentChannelsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/payment-channels', component: PaymentChannelsRoute });
@@ -139,14 +139,14 @@ const configRoute = createRoute({ getParentRoute: () => rootRoute, path: '/confi
 const routeTree = rootRoute.addChildren([
   indexRoute,
   requestsRoute,
-  userDashboardRoute,
-  userOrdersRoute,
-  userSubscriptionsRoute,
-  userUsageRoute,
+  accountDashboardRoute,
+  accountOrdersRoute,
+  accountSubscriptionsRoute,
+  accountUsageRoute,
   logsRoute,
   keysRoute,
   proxyKeysRoute,
-  usersRoute,
+  accountsRoute,
   groupsRoute,
   billingRoute,
   adminApiKeysRoute,

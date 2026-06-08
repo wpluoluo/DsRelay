@@ -18,7 +18,7 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
 
   const operationCards = useMemo(() => ([
     {
-      to: '/users',
+      to: '/accounts',
       icon: <Users size={20} />,
       title: '账户管理',
       desc: '管理账户状态、角色、余额和订阅关系',
@@ -55,7 +55,7 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
           <span>对齐 SUB2 的管理员总览口径，聚焦账户、分组、请求和计费核心数据。</span>
         </div>
         <div className="overview-command-actions">
-          <Link to="/users" className="btn">账户管理</Link>
+          <Link to="/accounts" className="btn">账户管理</Link>
           <Link to="/groups" className="btn">分组管理</Link>
           <Link to="/billing" className="btn btn-primary">计费管理</Link>
         </div>
@@ -98,7 +98,7 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
 
       <div className="dashboard-charts-grid">
         <Panel className="dashboard-card">
-          <PanelHead title="重点账户" action={<Link to="/users" className="panel-link">查看全部 <ArrowRight size={14} /></Link>} />
+          <PanelHead title="重点账户" action={<Link to="/accounts" className="panel-link">查看全部 <ArrowRight size={14} /></Link>} />
           <div className="recent-usage-list">
             {topAccounts.length ? topAccounts.map((item) => (
               <div className="recent-usage-item" key={item.id}>

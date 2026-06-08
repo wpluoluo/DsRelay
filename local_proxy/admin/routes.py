@@ -8,47 +8,47 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
     def admin_overview():
         return jsonify(analytics_service.dashboard_summary())
 
-    @app.get("/admin/users")
+    @app.get("/admin/accounts")
     @admin_required
     def admin_accounts():
         return jsonify(analytics_service.list_accounts())
 
-    @app.post("/admin/users")
+    @app.post("/admin/accounts")
     @admin_required
     def admin_accounts_upsert():
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.upsert_account(payload))
 
-    @app.get("/admin/users/<account_id>")
+    @app.get("/admin/accounts/<account_id>")
     @admin_required
     def admin_account_get(account_id: str):
         return jsonify(analytics_service.get_account(account_id))
 
-    @app.post("/admin/users/<account_id>/balance")
+    @app.post("/admin/accounts/<account_id>/balance")
     @admin_required
     def admin_account_balance(account_id: str):
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.set_account_balance(account_id, payload))
 
-    @app.post("/admin/users/<account_id>/concurrency")
+    @app.post("/admin/accounts/<account_id>/concurrency")
     @admin_required
     def admin_account_concurrency(account_id: str):
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.set_account_concurrency(account_id, payload))
 
-    @app.post("/admin/users/<account_id>/allowed-groups")
+    @app.post("/admin/accounts/<account_id>/allowed-groups")
     @admin_required
     def admin_account_allowed_groups(account_id: str):
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.set_account_allowed_groups(account_id, payload))
 
-    @app.post("/admin/users/<account_id>/memberships")
+    @app.post("/admin/accounts/<account_id>/memberships")
     @admin_required
     def admin_account_memberships(account_id: str):
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.set_account_membership_groups(account_id, payload))
 
-    @app.post("/admin/users/<account_id>/role-status")
+    @app.post("/admin/accounts/<account_id>/role-status")
     @admin_required
     def admin_account_role_status(account_id: str):
         payload = request.get_json(silent=True) or {}

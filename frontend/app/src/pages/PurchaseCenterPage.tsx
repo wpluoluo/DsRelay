@@ -4,7 +4,7 @@ import { CreditCard, Eye, KeyRound, ShoppingCart, Ticket, UserRound } from 'luci
 import { createAdminPaymentOrder } from '../api';
 import { Badge, Button, Empty, Field, Metric, Modal, ModalActions, Panel, PanelHead, Select, TextArea, TextInput } from '../components';
 import { queryClient } from '../state/queryClient';
-import { useUserCenter } from '../state/userCenterContext';
+import { useAccountCenter } from '../state/accountCenterContext';
 import type { AdminAccountSubscription, AdminPaymentOrder } from '../types';
 import { formatNumber, formatUsdCost } from '../utils';
 
@@ -36,7 +36,7 @@ export function PurchaseCenterPage() {
     visiblePlans,
     visibleChannels,
     setSelectedAccountId,
-  } = useUserCenter();
+  } = useAccountCenter();
   const [draft, setDraft] = useState<PurchaseDraft>(DEFAULT_DRAFT);
   const [createdOrder, setCreatedOrder] = useState<AdminPaymentOrder | null>(null);
   const [inspectOrder, setInspectOrder] = useState<AdminPaymentOrder | null>(null);

@@ -2,11 +2,11 @@ import { Link } from '@tanstack/react-router';
 import { CreditCard, Eye, Ticket } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Button, Empty, Field, Modal, ModalActions, Panel, PanelHead, Select, TextInput } from '../components';
-import { useUserCenter } from '../state/userCenterContext';
+import { useAccountCenter } from '../state/accountCenterContext';
 import { formatNumber, formatUsdCost } from '../utils';
 
-export function UserSubscriptionsPage() {
-  const { selectedAccount, selectedAccountId, subscriptions } = useUserCenter();
+export function AccountSubscriptionsPage() {
+  const { selectedAccount, selectedAccountId, subscriptions } = useAccountCenter();
   const [statusFilter, setStatusFilter] = useState('');
   const [inspectSubscription, setInspectSubscription] = useState<any | null>(null);
   const rows = useMemo(

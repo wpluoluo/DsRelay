@@ -5,12 +5,12 @@ import { fetchAdminApiKeys, fetchAdminUsage } from '../api';
 import { Button, Select, TextInput } from '../components';
 import { EmptyState, FilterToolbar, Pager, SearchField, TablePageLayout, ToolbarButtonRow } from '../components/admin';
 import { RequestRow } from '../features/requests/RequestsView';
-import { useUserCenter } from '../state/userCenterContext';
+import { useAccountCenter } from '../state/accountCenterContext';
 import type { RequestEntry } from '../types';
 import { formatMs, formatNumber, formatTokenCount, formatUsdCost } from '../utils';
 
-export function UserUsagePage() {
-  const { selectedAccount, selectedAccountId } = useUserCenter();
+export function AccountUsagePage() {
+  const { selectedAccount, selectedAccountId } = useAccountCenter();
   const usageQuery = useQuery({ queryKey: ['admin-usage'], queryFn: () => fetchAdminUsage(), refetchInterval: 10000 });
   const keysQuery = useQuery({ queryKey: ['admin-api-keys'], queryFn: fetchAdminApiKeys, refetchInterval: 10000 });
   const [filters, setFilters] = useState({ start: '', end: '', model: '', status: 'all', apiKeyId: '' });

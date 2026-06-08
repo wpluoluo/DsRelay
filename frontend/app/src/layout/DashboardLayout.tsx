@@ -9,7 +9,7 @@ import { configFromState, normalizePool } from '../features/config/model';
 import type { ConfigTab } from '../features/config/model';
 import { DashboardProvider } from '../state/dashboardContext';
 import { queryClient } from '../state/queryClient';
-import { UserCenterProvider } from '../state/userCenterContext';
+import { AccountCenterProvider } from '../state/accountCenterContext';
 import type { Pool, PoolTestResult, RuntimeConfig } from '../types';
 
 export function DashboardLayout() {
@@ -60,7 +60,7 @@ export function DashboardLayout() {
   const pools = (draft.pools || []).map(normalizePool);
   const [menuOpen, setMenuOpen] = useState<Record<string, boolean>>({
     console: true,
-    userCenter: true,
+    accountCenter: true,
     admin: true,
   });
 
@@ -135,13 +135,13 @@ export function DashboardLayout() {
             </NavGroup>
             <NavGroup
               title="账户中心"
-              open={menuOpen.userCenter}
-              onToggle={() => setMenuOpen((current) => ({ ...current, userCenter: !current.userCenter }))}
+              open={menuOpen.accountCenter}
+              onToggle={() => setMenuOpen((current) => ({ ...current, accountCenter: !current.accountCenter }))}
             >
-              <NavLink to="/user-dashboard" icon={<LayoutDashboard size={18} />} label="控制台" />
+              <NavLink to="/account-dashboard" icon={<LayoutDashboard size={18} />} label="控制台" />
               <NavLink to="/purchase" icon={<CreditCard size={18} />} label="购买与订阅" />
-              <NavLink to="/user-orders" icon={<CreditCard size={18} />} label="支付订单" />
-              <NavLink to="/user-subscriptions" icon={<Ticket size={18} />} label="我的订阅" />
+              <NavLink to="/account-orders" icon={<CreditCard size={18} />} label="支付订单" />
+              <NavLink to="/account-subscriptions" icon={<Ticket size={18} />} label="我的订阅" />
               <NavLink to="/keys" icon={<KeyRound size={18} />} label="账户 API Key" />
               <NavLink to="/usage" icon={<BarChart3 size={18} />} label="使用记录" />
             </NavGroup>
@@ -150,9 +150,9 @@ export function DashboardLayout() {
               open={menuOpen.admin}
               onToggle={() => setMenuOpen((current) => ({ ...current, admin: !current.admin }))}
             >
-              <NavLink to="/users" icon={<Users size={18} />} label="账户管理" />
+              <NavLink to="/accounts" icon={<Users size={18} />} label="账户管理" />
               <NavLink to="/groups" icon={<FolderTree size={18} />} label="分组管理" />
-              <NavLink to="/user-api-keys" icon={<KeyRound size={18} />} label="业务 API Key" />
+              <NavLink to="/account-api-keys" icon={<KeyRound size={18} />} label="业务 API Key" />
               <NavLink to="/billing" icon={<Coins size={18} />} label="计费管理" />
               <NavLink to="/subscription-plans" icon={<Ticket size={18} />} label="订阅计划" />
               <NavLink to="/subscriptions" icon={<Ticket size={18} />} label="账户订阅" />
@@ -177,9 +177,9 @@ export function DashboardLayout() {
             </div>
           </header>
 
-          <UserCenterProvider>
+          <AccountCenterProvider>
             <Outlet />
-          </UserCenterProvider>
+          </AccountCenterProvider>
         </main>
 
         {poolDraft ? (
