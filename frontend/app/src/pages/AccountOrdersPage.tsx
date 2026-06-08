@@ -1,15 +1,16 @@
 import { useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Eye, RefreshCw, XCircle } from 'lucide-react';
+import { Eye, RefreshCw, ReceiptText, Wallet, XCircle } from 'lucide-react';
 import { updateAdminPaymentOrderStatus } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
-import { EmptyState, FilterToolbar, Pager, RowAction, RowActions, TablePageLayout } from '../components/admin';
+import { EmptyState, FilterToolbar, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow } from '../components/admin';
 import { queryClient } from '../state/queryClient';
 import { useAccountCenter } from '../state/accountCenterContext';
-import { formatNumber, formatUsdCost } from '../utils';
+import { formatNumber, formatUsdCost, maskEmpty } from '../utils';
 
 export function AccountOrdersPage() {
   const { selectedAccount, selectedAccountId, orders, reload } = useAccountCenter();
+  const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -28,38 +29,59 @@ export function AccountOrdersPage() {
   });
 
   const filtered = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
     return orders.filter((item) => {
       if (selectedAccountId && item.account_id !== selectedAccountId) return false;
       if (status && item.status !== status) return false;
-      return true;
+      if (!keyword) return true;
+      const haystack = [
+        item.id,
+        item.plan_name,
+        item.plan_id,
+        item.channel_name,
+        item.channel_id,
+        item.provider,
+        item.provider_order_id,
+        item.resume_token,
+      ]
+        .map((value) => String(value || '').toLowerCase())
+        .join(' ');
+      return haystack.includes(keyword);
     });
-  }, [orders, selectedAccountId, status]);
+  }, [orders, search, selectedAccountId, status]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const rows = filtered.slice((page - 1) * pageSize, page * pageSize);
   const pendingCount = filtered.filter((item) => item.status === 'pending').length;
   const paidCount = filtered.filter((item) => item.status === 'paid').length;
+  const failedCount = filtered.filter((item) => item.status === 'failed').length;
+  const totalAmount = filtered.reduce((sum, item) => sum + Number(item.final_price_cents ?? item.amount_cents ?? 0), 0);
 
   return (
     <section className="grid-page">
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>我的订单</strong>
-          <span>对齐 SUB2 个人订单页的入口逻辑，聚焦筛选、刷新和状态查看。</span>
+          <span>按 SUB2 个人订单的结构展示筛选、状态与详情，保持业务账户视角。</span>
         </div>
         <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>当前账户</span><strong>{selectedAccount?.name || '未选择账户'}</strong><small>{selectedAccount?.source_type || '请选择账户'}</small></div>
+          <div className="sub2-inline-summary-item"><span>当前账户</span><strong>{selectedAccount?.name || '未选择账户'}</strong><small>{selectedAccount?.group_name || selectedAccount?.source_type || '业务账户'}</small></div>
           <div className="sub2-inline-summary-item"><span>订单总数</span><strong>{formatNumber(filtered.length)}</strong><small>当前筛选范围</small></div>
           <div className="sub2-inline-summary-item"><span>待支付</span><strong>{formatNumber(pendingCount)}</strong><small>已支付 {formatNumber(paidCount)}</small></div>
-          <div className="sub2-inline-summary-item"><span>累计金额</span><strong>{formatUsdCost(filtered.reduce((sum, item) => sum + Number(item.final_price_cents ?? item.amount_cents ?? 0), 0) / 100, 2)}</strong><small>按订单金额聚合</small></div>
+          <div className="sub2-inline-summary-item"><span>失败订单</span><strong>{formatNumber(failedCount)}</strong><small>累计金额 {formatUsdCost(totalAmount / 100, 2)}</small></div>
         </div>
       </div>
 
       <TablePageLayout
         filters={(
           <FilterToolbar
-            right={<Button onClick={() => void reload()}><RefreshCw size={15} />刷新</Button>}
+            right={(
+              <ToolbarButtonRow>
+                <Button onClick={() => void reload()}><RefreshCw size={15} />刷新</Button>
+              </ToolbarButtonRow>
+            )}
           >
+            <SearchField value={search} placeholder="搜索订单 / 计划 / 通道 / 上游单号" onChange={(value) => { setSearch(value); setPage(1); }} />
             <Select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}>
               <option value="">全部状态</option>
               <option value="pending">待支付</option>
@@ -79,7 +101,7 @@ export function AccountOrdersPage() {
                   <th>通道</th>
                   <th>金额</th>
                   <th>状态</th>
-                  <th>拉起参数</th>
+                  <th>履约</th>
                   <th>操作</th>
                 </tr>
               </thead>
@@ -91,7 +113,7 @@ export function AccountOrdersPage() {
                     <td><div className="sub2-cell-stack"><strong>{item.channel_name || item.channel_id || item.provider || '-'}</strong><small>{item.provider_order_id || item.resume_token || '-'}</small></div></td>
                     <td><strong className="sub2-number-cell">{formatUsdCost(Number(item.final_price_cents ?? item.amount_cents ?? 0) / 100, 2)}</strong></td>
                     <td><Badge tone={item.status === 'paid' ? 'ok' : item.status === 'pending' ? 'warn' : 'bad'}>{item.status || '-'}</Badge></td>
-                    <td><code>{compactPayload(item.provider_payload)}</code></td>
+                    <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.subscription_id || '-'}</strong><small>{Array.isArray(item.fulfillment_logs) ? `${item.fulfillment_logs.length} 条日志` : '0 条日志'}</small></div></td>
                     <td>
                       <RowActions>
                         <RowAction icon={Eye} label="详情" onClick={() => setInspectOrder(item)} />
@@ -104,7 +126,7 @@ export function AccountOrdersPage() {
                 )) : (
                   <tr>
                     <td colSpan={7}>
-                      <EmptyState title="暂无订单" description="当前账户还没有订单记录。" />
+                      <EmptyState title="暂无订单" description="当前账户在筛选条件下没有订单记录。" />
                     </td>
                   </tr>
                 )}
@@ -128,14 +150,14 @@ export function AccountOrdersPage() {
           title="取消订单"
           size="md"
           onClose={() => setCancelTarget(null)}
-          footer={
+          footer={(
             <ModalActions>
               <Button onClick={() => setCancelTarget(null)}>返回</Button>
               <Button tone="danger" disabled={cancelMutation.isPending} onClick={() => cancelMutation.mutate(cancelTarget.id)}>
                 确认取消
               </Button>
             </ModalActions>
-          }
+          )}
         >
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
@@ -195,8 +217,8 @@ export function AccountOrdersPage() {
             <div className="admin-dialog-grid">
               <Field label="订单号"><TextInput readOnly value={inspectOrder.id} /></Field>
               <Field label="通道"><TextInput readOnly value={inspectOrder.channel_name || inspectOrder.channel_id || inspectOrder.provider || '-'} /></Field>
-              <Field label="上游订单号"><TextInput readOnly value={inspectOrder.provider_order_id || '-'} /></Field>
-              <Field label="恢复标记"><TextInput readOnly value={inspectOrder.resume_token || '-'} /></Field>
+              <Field label="上游订单号"><TextInput readOnly value={maskEmpty(inspectOrder.provider_order_id)} /></Field>
+              <Field label="恢复标记"><TextInput readOnly value={maskEmpty(inspectOrder.resume_token)} /></Field>
             </div>
             <Field label="拉起参数" full>
               <TextArea readOnly rows={10} value={JSON.stringify(inspectOrder.provider_payload || {}, null, 2)} />
@@ -206,10 +228,4 @@ export function AccountOrdersPage() {
       ) : null}
     </section>
   );
-}
-
-function compactPayload(payload: Record<string, unknown> | undefined) {
-  const text = JSON.stringify(payload || {});
-  if (text.length <= 96) return text;
-  return `${text.slice(0, 92)}...`;
 }

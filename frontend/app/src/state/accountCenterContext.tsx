@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   fetchAdminPaymentChannels,
@@ -45,6 +45,12 @@ export function AccountCenterProvider({ children }: { children: React.ReactNode 
   const orders = ordersQuery.data?.items || [];
   const subscriptions = subscriptionsQuery.data?.items || [];
   const [selectedAccountId, setSelectedAccountId] = useState('');
+
+  useEffect(() => {
+    if (!selectedAccountId && accounts.length) {
+      setSelectedAccountId(accounts[0].id);
+    }
+  }, [accounts, selectedAccountId]);
 
   const selectedAccount = useMemo(() => accounts.find((item) => item.id === selectedAccountId), [selectedAccountId, accounts]);
 

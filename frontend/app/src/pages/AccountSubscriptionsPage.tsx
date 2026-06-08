@@ -14,19 +14,25 @@ export function AccountSubscriptionsPage() {
     [selectedAccountId, statusFilter, subscriptions],
   );
   const activeRows = rows.filter((item) => item.status === 'active');
+  const expiringSoon = rows.filter((item) => {
+    const expiresAt = Number(item.expires_at || 0);
+    if (!expiresAt) return false;
+    const days = Math.ceil((expiresAt * 1000 - Date.now()) / 86400000);
+    return days >= 0 && days <= 7;
+  });
 
   return (
     <section className="grid-page">
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>我的订阅</strong>
-          <span>参考 SUB2 订阅页，把当前业务账户的分组、有效期和状态集中展示。</span>
+          <span>保持 SUB2 账户订阅的卡片式浏览方式，集中查看套餐、周期与额度使用。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>当前账户</span><strong>{selectedAccount?.name || '未选择账户'}</strong><small>{selectedAccount?.group_name || selectedAccount?.source_type || '请选择账户'}</small></div>
           <div className="sub2-inline-summary-item"><span>订阅总数</span><strong>{formatNumber(rows.length)}</strong><small>有效 {formatNumber(activeRows.length)}</small></div>
+          <div className="sub2-inline-summary-item"><span>即将到期</span><strong>{formatNumber(expiringSoon.length)}</strong><small>7 天内</small></div>
           <div className="sub2-inline-summary-item"><span>套餐金额</span><strong>{formatUsdCost(rows.reduce((sum, item) => sum + Number(item.price_cents || 0), 0) / 100, 2)}</strong><small>按订阅价格累计</small></div>
-          <div className="sub2-inline-summary-item"><span>待续费</span><strong>{formatNumber(rows.filter((item) => item.status !== 'active').length)}</strong><small>过期或停用订阅</small></div>
         </div>
       </div>
 
@@ -36,6 +42,7 @@ export function AccountSubscriptionsPage() {
           <option value="active">有效</option>
           <option value="expired">过期</option>
           <option value="cancelled">停用</option>
+          <option value="revoked">撤销</option>
         </Select>
       </div>
 
@@ -44,12 +51,12 @@ export function AccountSubscriptionsPage() {
           <Panel className="dashboard-card" key={item.id}>
             <PanelHead
               title={<><Ticket size={18} />{item.plan_name || item.plan_id}</>}
-              action={
+              action={(
                 <div className="button-row">
                   <Button onClick={() => setInspectSubscription(item)}><Eye size={14} />详情</Button>
-                  <Link to="/purchase" className="btn btn-primary"><CreditCard size={14} />立即续费</Link>
+                  <Link to="/purchase" className="btn btn-primary"><CreditCard size={14} />续费</Link>
                 </div>
-              }
+              )}
             />
             <div className="section-stack">
               <div className="metric-line"><span>订阅 ID</span><strong>{item.id}</strong></div>
@@ -98,9 +105,9 @@ export function AccountSubscriptionsPage() {
               </div>
             </div>
             <div className="admin-dialog-grid">
-              <Field label="日限额"><TextInput readOnly value={String(inspectSubscription.daily_limit || 0)} /></Field>
-              <Field label="周限额"><TextInput readOnly value={String(inspectSubscription.weekly_limit || 0)} /></Field>
-              <Field label="月限额"><TextInput readOnly value={String(inspectSubscription.monthly_limit || 0)} /></Field>
+              <Field label="日限额"><TextInput readOnly value={`${inspectSubscription.daily_used || 0} / ${inspectSubscription.daily_limit || 0}`} /></Field>
+              <Field label="周限额"><TextInput readOnly value={`${inspectSubscription.weekly_used || 0} / ${inspectSubscription.weekly_limit || 0}`} /></Field>
+              <Field label="月限额"><TextInput readOnly value={`${inspectSubscription.monthly_used || 0} / ${inspectSubscription.monthly_limit || 0}`} /></Field>
               <Field label="到期时间"><TextInput readOnly value={formatDateTime(inspectSubscription.expires_at)} /></Field>
             </div>
           </div>

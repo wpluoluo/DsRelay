@@ -56,6 +56,7 @@ export function AccountApiKeysPage() {
   const pagedRows = rows.slice((page - 1) * pageSize, page * pageSize);
   const activeRows = rows.filter((item) => item.enabled !== false);
   const coveredRows = rows.filter((item) => item.subscription_active);
+  const uncoveredRows = rows.filter((item) => !item.subscription_active);
 
   async function copyText(value: string, keyId?: string) {
     try {
@@ -75,12 +76,12 @@ export function AccountApiKeysPage() {
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>我的 API Key</strong>
-          <span>管理当前业务账户的调用 Key。这里的归属对象是业务账户，不是后台登录用户。</span>
+          <span>管理当前业务账户的调用 Key。保持 SUB2 的筛选、动作和接入说明结构。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>当前账户</span><strong>{selectedAccount?.name || '未选择账户'}</strong><small>{selectedAccount?.group_name || selectedAccount?.source_type || '请选择账户'}</small></div>
           <div className="sub2-inline-summary-item"><span>Key 数量</span><strong>{formatNumber(rows.length)}</strong><small>启用 {formatNumber(activeRows.length)}</small></div>
-          <div className="sub2-inline-summary-item"><span>订阅覆盖</span><strong>{formatNumber(coveredRows.length)}</strong><small>未覆盖 {formatNumber(rows.length - coveredRows.length)}</small></div>
+          <div className="sub2-inline-summary-item"><span>订阅覆盖</span><strong>{formatNumber(coveredRows.length)}</strong><small>未覆盖 {formatNumber(uncoveredRows.length)}</small></div>
           <div className="sub2-inline-summary-item"><span>最近生成</span><strong>{generatedKey ? '已生成' : '无'}</strong><small>{generatedKey ? '原始 Key 待复制' : '暂无新 Key'}</small></div>
         </div>
       </div>
@@ -126,6 +127,7 @@ export function AccountApiKeysPage() {
                   <th>账户</th>
                   <th>订阅</th>
                   <th>Key 预览</th>
+                  <th>最近使用</th>
                   <th>状态</th>
                   <th>操作</th>
                 </tr>
@@ -144,6 +146,7 @@ export function AccountApiKeysPage() {
                         </button>
                       </div>
                     </td>
+                    <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{formatTimestamp(item.last_used_at)}</strong><small>{item.updated_at ? `更新 ${formatTimestamp(item.updated_at)}` : '暂无更新'}</small></div></td>
                     <td><Badge tone={item.enabled === false ? 'warn' : 'ok'}>{item.enabled === false ? '停用' : '启用'}</Badge></td>
                     <td>
                       <RowActions>
@@ -155,7 +158,7 @@ export function AccountApiKeysPage() {
                   </tr>
                 )) : (
                   <tr>
-                    <td colSpan={6}>
+                    <td colSpan={7}>
                       <EmptyState title="暂无 API Key" description="当前账户还没有可用的账户 API Key。" />
                     </td>
                   </tr>

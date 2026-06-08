@@ -32,7 +32,7 @@ export function AccountUsagePage() {
         if (start && started && started < start) return false;
         if (end && started && started > end) return false;
         if (modelNeedle) {
-          const hay = `${row.model || ''} ${row.resolved_model || ''} ${row.route_url || ''}`.toLowerCase();
+          const hay = `${row.model || ''} ${row.resolved_model || ''} ${(row as any).inbound_endpoint || ''} ${row.route_url || ''}`.toLowerCase();
           if (!hay.includes(modelNeedle)) return false;
         }
         if (filters.status === 'success' && (row.error || Number(row.status_code || 0) >= 400)) return false;
@@ -45,6 +45,7 @@ export function AccountUsagePage() {
         logical_model: row.model || row.resolved_model || '-',
         pool_name: row.pool_name || row.group_name || row.plan_name || '-',
         upstream_url: row.route_url || '',
+        route_url: (row as any).inbound_endpoint || row.route_url || '',
         cache_read_input_tokens: Number(row.cache_read_tokens || 0),
         cache_creation_input_tokens: Number(row.cache_write_tokens || 0),
         local_response_cache_status: row.local_cache_status || 'miss',
@@ -92,7 +93,7 @@ export function AccountUsagePage() {
         String(Number(row.actual_cost || 0) || Number(row.total_cost || 0) || 0),
         String(row.duration_ms || 0),
         !row.error && Number(row.status_code || 0) < 400 ? '成功' : (row.error || row.status_code || '-'),
-        row.route_url || '-',
+        (row as any).inbound_endpoint || row.route_url || '-',
       ].join('\t')),
     ].join('\n');
     const blob = new Blob([lines], { type: 'text/tab-separated-values;charset=utf-8;' });
@@ -106,30 +107,20 @@ export function AccountUsagePage() {
 
   return (
     <section className="grid-page">
+      <div className="sub2-page-head">
+        <div className="sub2-page-title">
+          <strong>使用记录</strong>
+          <span>对齐 SUB2 账户使用记录，围绕时间筛选、Token、缓存和消费汇总查看请求明细。</span>
+        </div>
+        <div className="sub2-inline-summary">
+          <div className="sub2-inline-summary-item"><span>当前账户</span><strong>{selectedAccount?.name || '未选择账户'}</strong><small>{selectedAccount?.group_name || selectedAccount?.source_type || '业务账户'}</small></div>
+          <div className="sub2-inline-summary-item"><span>记录数</span><strong>{formatNumber(stats.requests)}</strong><small>当前筛选范围</small></div>
+          <div className="sub2-inline-summary-item"><span>总 Token</span><strong>{formatTokenCount(stats.tokens)}</strong><small>请求 {formatTokenCount(stats.promptTokens)} / 回复 {formatTokenCount(stats.completionTokens)}</small></div>
+          <div className="sub2-inline-summary-item"><span>总消费</span><strong>{formatUsdCost(stats.actualCost)}</strong><small>标准 {formatUsdCost(stats.totalCost)} / 平均耗时 {formatMs(averageDuration)}</small></div>
+        </div>
+      </div>
+
       <TablePageLayout
-        actions={(
-          <div className="dashboard-stats-grid">
-            <UsageStatCard label="记录数" value={formatNumber(stats.requests)} sub="当前筛选范围" tone="blue" />
-            <UsageStatCard
-              label="总 Token"
-              value={formatTokenCount(stats.tokens)}
-              sub={`请求 ${formatTokenCount(stats.promptTokens)} / 回复 ${formatTokenCount(stats.completionTokens)}`}
-              tone="amber"
-            />
-            <UsageStatCard
-              label="总消费"
-              value={formatUsdCost(stats.actualCost)}
-              sub={`实际 / 标准 ${formatUsdCost(stats.totalCost)}`}
-              tone="green"
-            />
-            <UsageStatCard
-              label="平均耗时"
-              value={formatMs(averageDuration)}
-              sub={`缓存读 ${formatTokenCount(stats.cacheReadTokens)} / 写 ${formatTokenCount(stats.cacheWriteTokens)}`}
-              tone="violet"
-            />
-          </div>
-        )}
         filters={(
           <FilterToolbar
             right={(
@@ -139,7 +130,7 @@ export function AccountUsagePage() {
               </ToolbarButtonRow>
             )}
           >
-            <SearchField value={filters.model} placeholder="搜索模型 / 线路" onChange={(value) => { setFilters((current) => ({ ...current, model: value })); setPage(1); }} />
+            <SearchField value={filters.model} placeholder="搜索模型 / 入口 / 线路" onChange={(value) => { setFilters((current) => ({ ...current, model: value })); setPage(1); }} />
             <Select value={filters.apiKeyId} onChange={(event) => { setFilters((current) => ({ ...current, apiKeyId: event.target.value })); setPage(1); }}>
               <option value="">全部 API Key</option>
               {(keysQuery.data?.items || []).filter((item) => !selectedAccountId || item.account_id === selectedAccountId).map((item) => (
@@ -203,18 +194,5 @@ export function AccountUsagePage() {
         ) : null}
       />
     </section>
-  );
-}
-
-function UsageStatCard({ label, value, sub, tone }: { label: string; value: string; sub: string; tone: string }) {
-  return (
-    <div className="dashboard-stat">
-      <div className={`dashboard-stat-icon ${tone}`} />
-      <div className="dashboard-stat-body">
-        <span>{label}</span>
-        <strong>{value}</strong>
-        <small>{sub}</small>
-      </div>
-    </div>
   );
 }
