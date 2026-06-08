@@ -26,7 +26,6 @@ export function AccountSubscriptionsPage() {
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>我的订阅</strong>
-          <span>保持 SUB2 用户订阅的卡片式浏览方式，集中查看套餐、周期与额度使用。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>当前用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '请选择用户'}</small></div>
@@ -85,7 +84,6 @@ export function AccountSubscriptionsPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{inspectSubscription.plan_name || inspectSubscription.plan_id}</strong>
-              <span>查看当前订阅的状态、分组、价格和周期额度。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
@@ -96,7 +94,7 @@ export function AccountSubscriptionsPage() {
               <div className="admin-dialog-summary-card">
                 <span>分组</span>
                 <strong>{inspectSubscription.group_name || inspectSubscription.group_id || '-'}</strong>
-                <small>{inspectSubscription.account_name || inspectSubscription.account_id || '-'}</small>
+                <small>{inspectSubscription.id}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>价格</span>

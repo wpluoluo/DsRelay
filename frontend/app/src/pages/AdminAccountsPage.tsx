@@ -48,7 +48,6 @@ export function AdminAccountsPage() {
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>账号管理</strong>
-          <span>这里管理的是上游资源账号与线路资源，不是平台用户。用户对象保留在“用户管理”。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>资源账号</span><strong>{formatNumber(items.length)}</strong><small>当前线路总数</small></div>
@@ -174,7 +173,6 @@ export function AdminAccountsPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{inspectAccount.provider_name || inspectAccount.route_url || inspectAccount.id}</strong>
-              <span>这里展示的是线路资源观测结果，不承载平台用户编辑动作。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
@@ -205,9 +203,6 @@ export function AdminAccountsPage() {
             </div>
             <div className="admin-dialog-note">
               <Server size={14} /> 模型观测：{inspectAccount.models?.join(' / ') || '未观测到模型'}
-            </div>
-            <div className="admin-dialog-note">
-              <ShieldCheck size={14} /> 用户、订阅、订单和 API Key 的业务归属请回到“用户管理 / 订阅管理 / 订单管理 / API Key”。
             </div>
           </div>
         </Modal>

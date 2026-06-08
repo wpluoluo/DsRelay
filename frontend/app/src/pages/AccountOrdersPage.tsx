@@ -62,7 +62,6 @@ export function AccountOrdersPage() {
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>我的订单</strong>
-          <span>按 SUB2 个人订单的结构展示筛选、状态与详情，保持用户中心视角。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>当前用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '-'}</small></div>
@@ -195,7 +194,6 @@ export function AccountOrdersPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{inspectOrder.id}</strong>
-              <span>这里可以核对订单状态、金额、通道和拉起参数。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">

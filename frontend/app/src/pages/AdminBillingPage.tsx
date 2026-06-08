@@ -409,7 +409,6 @@ export function AdminBillingPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{inspectUsage.request_id}</strong>
-              <span>查看这次请求的用量归因、线路、缓存与异常信息。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
@@ -431,7 +430,6 @@ export function AdminBillingPage() {
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
                 <strong>请求信息</strong>
-                <span>这里展示计费最关键的时间、线路和订阅归因</span>
               </div>
               <div className="admin-dialog-grid">
                 <Field label="开始时间"><TextInput readOnly value={inspectUsage.started_at || '-'} /></Field>
@@ -445,7 +443,6 @@ export function AdminBillingPage() {
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
                 <strong>用量与缓存</strong>
-                <span>请求量、响应量和缓存标记都在这里汇总</span>
               </div>
               <div className="admin-dialog-grid">
                 <Field label="总 Token"><TextInput readOnly value={String(inspectUsage.total_tokens || 0)} /></Field>
@@ -621,7 +618,6 @@ function AggregateBillingDetail({
       <div className="admin-dialog-section">
         <div className="admin-dialog-section-head">
           <strong>核心指标</strong>
-          <span>和当前列表中的汇总保持一致，但集中展示便于核账</span>
         </div>
         <div className="admin-dialog-grid">
           <Field label="请求字节"><TextInput readOnly value={String(Number((row as any).input_bytes || 0))} /></Field>

@@ -95,7 +95,7 @@ export function PurchaseCenterPage() {
 
       <div className="dashboard-main-grid purchase-grid">
         <Panel className="dashboard-card">
-          <PanelHead title={<><ShoppingCart size={18} />购买中心</>} action={<span className="subtle">创建订单并核对拉起参数</span>} />
+          <PanelHead title={<><ShoppingCart size={18} />购买中心</>} />
           <div className="section-stack">
             <div className="form-grid">
               <Field label="用户">
@@ -116,7 +116,7 @@ export function PurchaseCenterPage() {
                   {visibleChannels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
                 </Select>
               </Field>
-              <Field label="金额(分)" note="跟随订阅计划价格自动带出。">
+              <Field label="金额(分)">
                 <TextInput type="number" value={String(draft.amount_cents)} readOnly />
               </Field>
             </div>
@@ -221,7 +221,6 @@ export function PurchaseCenterPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{createdOrder.id}</strong>
-              <span>订单已经创建完成，下面是当前可直接用于支付拉起的参数。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
@@ -271,7 +270,6 @@ export function PurchaseCenterPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
                 <strong>{selectedUser?.name || '未选择用户'}</strong>
-                <span>确认按当前计划、通道和金额创建订单。创建后会进入统一支付与履约链路。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
@@ -304,7 +302,6 @@ export function PurchaseCenterPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{inspectOrder.id}</strong>
-              <span>查看当前订单的用户、计划、金额和支付拉起参数。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
