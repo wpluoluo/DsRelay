@@ -68,7 +68,7 @@ export const routeMeta = {
   '/admin/orders': meta('订单管理', '查看订单状态、履约结果与人工补单。'),
   '/admin/orders/plans': meta('订阅套餐', '维护订阅计划、价格、有效期和额度。'),
   '/admin/usage': meta('使用记录', '按请求、账户、分组和计划查看使用明细。'),
-  '/admin/settings': meta('系统设置', '收拢代理配置、全局策略和入口 Key 设置。'),
+  '/admin/settings': meta('系统设置', '收拢代理配置与全局策略设置。'),
   '/keys': meta('API 密钥', '管理当前用户名下的 API 密钥。'),
   '/usage': meta('使用记录', '查看当前用户的请求、缓存和消费明细。'),
   '/available-channels': meta('可用渠道', '查看当前用户可使用的计划、分组和通道范围。'),

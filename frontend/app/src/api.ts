@@ -17,7 +17,6 @@ import type {
   AdminAccountSubscription,
   DashboardState,
   PoolTestResult,
-  ProxyKeyPayload,
   RuntimeConfig,
 } from './types';
 
@@ -59,17 +58,6 @@ export function clearRequests(): Promise<{ ok: boolean; message?: string }> {
 
 export function clearRequestCache(): Promise<{ ok: boolean; message?: string }> {
   return requestJson('/debug/request-cache/clear', { method: 'POST' });
-}
-
-export function fetchProxyKeys(): Promise<ProxyKeyPayload> {
-  return requestJson<ProxyKeyPayload>('/debug/proxy-keys');
-}
-
-export function mutateProxyKey(payload: Record<string, unknown>): Promise<ProxyKeyPayload> {
-  return requestJson<ProxyKeyPayload>('/debug/proxy-keys', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
 }
 
 export function testPool(poolIndex: number, poolName?: string): Promise<PoolTestResult> {

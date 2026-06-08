@@ -32,10 +32,6 @@ export type RuntimeConfig = {
   pools?: Pool[];
   pools_count?: number;
   pools_enabled_count?: number;
-  proxy_api_keys?: ProxyKey[];
-  proxy_api_key_count?: number;
-  proxy_api_key_env_count?: number;
-  proxy_api_key_enabled_count?: number;
   request_timeout?: number;
   stream_first_event_timeout_seconds?: number;
   force_upstream_chat_stream?: boolean;
@@ -80,10 +76,6 @@ export type RuntimeSnapshot = {
   image_generation?: Record<string, unknown>;
   model_routing?: Record<string, any>;
   route_policies?: Record<string, RoutePolicy>;
-  proxy_api_key_count?: number;
-  proxy_api_key_env_count?: number;
-  proxy_api_key_managed_count?: number;
-  proxy_api_key_managed_enabled_count?: number;
   config_source?: string;
   db_label?: string;
   config_path?: string;
@@ -176,24 +168,6 @@ export type DashboardState = {
   route_observability?: RouteObservability[];
   pools_count?: number;
   pools_enabled_count?: number;
-};
-
-export type ProxyKey = {
-  id?: string;
-  name?: string;
-  preview?: string;
-  enabled?: boolean;
-  created_at?: string;
-  updated_at?: string;
-};
-
-export type ProxyKeyPayload = {
-  ok?: boolean;
-  keys?: ProxyKey[];
-  generated_key?: string;
-  env_key_count?: number;
-  managed_key_count?: number;
-  managed_enabled_count?: number;
 };
 
 export type PoolTestResult = {
