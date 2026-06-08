@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Copy, Edit, Eye, KeyRound, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
-import { createAdminApiKey, deleteAdminApiKey, fetchAdminUsage, setAdminApiKeyEnabled, updateAdminApiKey } from '../api';
+import { Copy, Edit, Eye, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { createAdminApiKey, deleteAdminApiKey, fetchAdminGroups, fetchAdminUsage, setAdminApiKeyEnabled, updateAdminApiKey } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
 import {
   ColumnMenu,
@@ -17,30 +17,33 @@ import {
 } from '../components/admin';
 import { queryClient } from '../state/queryClient';
 import { useAccountCenter } from '../state/accountCenterContext';
-import type { AdminApiKey } from '../types';
-import { buildBusinessUserPayload, copyTextToClipboard, formatNumber, formatTokenCount, formatUsdCost, getBusinessUserId, getBusinessUserName, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
+import type { AdminApiKey, AdminGroup, AdminUser } from '../types';
+import { buildBusinessUserPayload, copyTextToClipboard, formatNumber, formatTokenCount, formatUsdCost, getBusinessUserId, getBusinessUserName, readStorageJSON, writeStorageJSON } from '../utils';
 
 type KeyDraft = {
   id?: string;
   user_id: string;
+  group_id: string;
   name: string;
   enabled: boolean;
 };
 
 type StatusFilter = '' | 'enabled' | 'disabled';
 type SubscriptionFilter = '' | 'active' | 'inactive';
-type ColumnKey = 'owner' | 'subscription' | 'preview' | 'usage' | 'lastUsed' | 'status';
+type ColumnKey = 'owner' | 'group' | 'subscription' | 'preview' | 'usage' | 'lastUsed' | 'status';
 
-const DEFAULT_VISIBLE_COLUMNS: ColumnKey[] = ['owner', 'subscription', 'preview', 'usage', 'lastUsed', 'status'];
+const DEFAULT_VISIBLE_COLUMNS: ColumnKey[] = ['owner', 'group', 'subscription', 'preview', 'usage', 'lastUsed', 'status'];
 const STORAGE_KEY = 'account-api-keys-view-state';
 
 export function AccountApiKeysPage() {
   const { selectedUserId, selectedUser, users, apiKeys, reload } = useAccountCenter();
   const usageQuery = useQuery({ queryKey: ['admin-usage'], queryFn: () => fetchAdminUsage(), refetchInterval: 10000 });
+  const groupsQuery = useQuery({ queryKey: ['admin-groups'], queryFn: fetchAdminGroups, refetchInterval: 10000 });
   const savedState = readStorageJSON(STORAGE_KEY, {
     search: '',
     statusFilter: '' as StatusFilter,
     subscriptionFilter: '' as SubscriptionFilter,
+    groupFilter: '',
     pageSize: 20,
     visibleColumns: DEFAULT_VISIBLE_COLUMNS,
   });
@@ -51,12 +54,14 @@ export function AccountApiKeysPage() {
   const [search, setSearch] = useState(savedState.search);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(savedState.statusFilter || '');
   const [subscriptionFilter, setSubscriptionFilter] = useState<SubscriptionFilter>(savedState.subscriptionFilter || '');
+  const [groupFilter, setGroupFilter] = useState(savedState.groupFilter || '');
   const [inspectKey, setInspectKey] = useState<AdminApiKey | null>(null);
   const [toggleTarget, setToggleTarget] = useState<AdminApiKey | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminApiKey | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
+  const groups = groupsQuery.data?.items || [];
 
   const createMutation = useMutation({
     mutationFn: createAdminApiKey,
@@ -101,12 +106,14 @@ export function AccountApiKeysPage() {
       }
       if (subscriptionFilter === 'active' && !item.subscription_active) return false;
       if (subscriptionFilter === 'inactive' && item.subscription_active) return false;
+      if (groupFilter && keyGroupId(item) !== groupFilter) return false;
       if (!keyword) return true;
       const hay = [
         item.name,
         getBusinessUserName(item),
         getBusinessUserId(item),
         item.key_preview,
+        keyGroupName(item, groups),
         item.active_plan_name,
         item.active_group_name,
       ]
@@ -114,7 +121,7 @@ export function AccountApiKeysPage() {
         .join(' ');
       return hay.includes(keyword);
     });
-  }, [apiKeys, search, selectedUserId, statusFilter, subscriptionFilter]);
+  }, [apiKeys, groupFilter, groups, search, selectedUserId, statusFilter, subscriptionFilter]);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   const pagedRows = rows.slice((page - 1) * pageSize, page * pageSize);
@@ -145,19 +152,23 @@ export function AccountApiKeysPage() {
       search,
       statusFilter,
       subscriptionFilter,
+      groupFilter,
       pageSize,
       visibleColumns: Array.from(visibleColumns),
     });
-  }, [pageSize, search, statusFilter, subscriptionFilter, visibleColumns]);
+  }, [groupFilter, pageSize, search, statusFilter, subscriptionFilter, visibleColumns]);
 
   function openCreate() {
-    setDraft({ user_id: selectedUserId || users[0]?.id || '', name: '', enabled: true });
+    const userId = selectedUserId || users[0]?.id || '';
+    setDraft({ user_id: userId, group_id: defaultKeyGroupId(userId, users, groups), name: '', enabled: true });
   }
 
   function openEdit(item: AdminApiKey) {
+    const userId = getBusinessUserId(item) || selectedUserId || '';
     setDraft({
       id: item.id,
-      user_id: getBusinessUserId(item) || selectedUserId || '',
+      user_id: userId,
+      group_id: keyGroupId(item),
       name: item.name || '',
       enabled: item.enabled !== false,
     });
@@ -165,7 +176,7 @@ export function AccountApiKeysPage() {
 
   function submitDraft() {
     if (!draft) return;
-    const payload = buildBusinessUserPayload(draft.user_id, { name: draft.name, enabled: draft.enabled });
+    const payload = buildBusinessUserPayload(draft.user_id, { name: draft.name, enabled: draft.enabled, group_id: draft.group_id });
     if (draft.id) {
       updateMutation.mutate({ keyId: draft.id, payload });
       return;
@@ -224,6 +235,7 @@ export function AccountApiKeysPage() {
                   label="列设置"
                   items={[
                     { key: 'owner', label: '归属用户', checked: visibleColumns.has('owner'), onToggle: () => toggleColumn('owner') },
+                    { key: 'group', label: 'Key 分组', checked: visibleColumns.has('group'), onToggle: () => toggleColumn('group') },
                     { key: 'subscription', label: '订阅', checked: visibleColumns.has('subscription'), onToggle: () => toggleColumn('subscription') },
                     { key: 'preview', label: 'Key 预览', checked: visibleColumns.has('preview'), onToggle: () => toggleColumn('preview') },
                     { key: 'usage', label: '使用记录', checked: visibleColumns.has('usage'), onToggle: () => toggleColumn('usage') },
@@ -232,7 +244,7 @@ export function AccountApiKeysPage() {
                   ]}
                 />
                 <ToolsMenu>
-                  <button type="button" onClick={() => { setSearch(''); setStatusFilter(''); setSubscriptionFilter(''); setPage(1); }}>
+                  <button type="button" onClick={() => { setSearch(''); setStatusFilter(''); setSubscriptionFilter(''); setGroupFilter(''); setPage(1); }}>
                     <span>清空筛选</span>
                   </button>
                   <button type="button" onClick={() => { setSubscriptionFilter('active'); setPage(1); }}>
@@ -245,11 +257,15 @@ export function AccountApiKeysPage() {
                     <span>切换 50 / 页</span>
                   </button>
                 </ToolsMenu>
-                <Button tone="primary" onClick={openCreate}><Plus size={15} />创建 Key</Button>
+                <Button tone="primary" onClick={openCreate}><Plus size={15} />添加 Key</Button>
               </ToolbarButtonRow>
             }
           >
             <SearchField value={search} placeholder="搜索名称 / 用户 / Key / 计划" onChange={(value) => { setSearch(value); setPage(1); }} />
+            <Select value={groupFilter} onChange={(event) => { setGroupFilter(event.target.value); setPage(1); }}>
+              <option value="">全部分组</option>
+              {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+            </Select>
             <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StatusFilter); setPage(1); }}>
               <option value="">全部状态</option>
               <option value="enabled">启用</option>
@@ -269,6 +285,7 @@ export function AccountApiKeysPage() {
                 <tr>
                   <th>名称</th>
                   {visibleColumns.has('owner') ? <th>用户</th> : null}
+                  {visibleColumns.has('group') ? <th>Key 分组</th> : null}
                   {visibleColumns.has('subscription') ? <th>订阅</th> : null}
                   {visibleColumns.has('preview') ? <th>Key 预览</th> : null}
                   {visibleColumns.has('usage') ? <th>使用记录</th> : null}
@@ -291,6 +308,9 @@ export function AccountApiKeysPage() {
                     <td><div className="sub2-cell-stack"><strong>{item.name}</strong><small>{item.id}</small></div></td>
                     {visibleColumns.has('owner') ? (
                       <td><div className="sub2-cell-stack"><strong>{getBusinessUserName(item)}</strong><small>{getBusinessUserId(item)}</small></div></td>
+                    ) : null}
+                    {visibleColumns.has('group') ? (
+                      <td><div className="sub2-cell-stack"><strong>{keyGroupName(item, groups)}</strong><small>{keyGroupId(item) || '-'}</small></div></td>
                     ) : null}
                     {visibleColumns.has('subscription') ? (
                       <td><div className="sub2-cell-stack"><strong>{item.subscription_active ? (item.active_plan_name || '订阅有效') : '无可用订阅'}</strong><small>{item.active_group_name || item.active_group_id || item.active_subscription_status || '-'}</small></div></td>
@@ -319,12 +339,14 @@ export function AccountApiKeysPage() {
                     {visibleColumns.has('status') ? (
                       <td><Badge tone={item.enabled === false ? 'warn' : 'ok'}>{item.enabled === false ? '停用' : '启用'}</Badge></td>
                     ) : null}
-                    <td>
+                    <td className="row-actions-cell">
                       <RowActions>
                         <RowAction icon={Eye} label="详情" onClick={() => setInspectKey(item)} />
                         <RowAction icon={Edit} label="编辑" onClick={() => openEdit(item)} />
-                        <RowAction icon={item.enabled === false ? ShieldCheck : KeyRound} label={item.enabled === false ? '启用' : '停用'} tone={item.enabled === false ? 'default' : 'warn'} onClick={() => setToggleTarget(item)} />
-                        <RowAction icon={Trash2} label="删除" tone="danger" onClick={() => setDeleteTarget(item)} />
+                        <ToolsMenu label="更多">
+                          <button type="button" onClick={() => setToggleTarget(item)}><span>{item.enabled === false ? '启用' : '停用'}</span><ShieldCheck size={14} /></button>
+                          <button type="button" className="danger" onClick={() => setDeleteTarget(item)}><span>删除</span><Trash2 size={14} /></button>
+                        </ToolsMenu>
                       </RowActions>
                     </td>
                   </tr>
@@ -332,7 +354,7 @@ export function AccountApiKeysPage() {
                 }) : (
                   <tr>
                     <td colSpan={visibleColumns.size + 2}>
-                      <EmptyState title="暂无 API Key" description="当前筛选条件下没有 API Key。" action={<Button tone="primary" onClick={openCreate}>创建 Key</Button>} />
+                      <EmptyState title="暂无 API Key" action={<Button tone="primary" onClick={openCreate}>添加 Key</Button>} />
                     </td>
                   </tr>
                 )}
@@ -377,7 +399,7 @@ export function AccountApiKeysPage() {
 
       {draft ? (
         <Modal
-          title={draft.id ? '编辑 API Key' : '创建 API Key'}
+          title={draft.id ? '编辑 API Key' : '添加 API Key'}
           size="md"
           onClose={() => setDraft(null)}
           footer={
@@ -396,9 +418,19 @@ export function AccountApiKeysPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-grid modal-grid">
               <Field label="归属用户">
-                <Select value={draft.user_id} onChange={(e) => setDraft({ ...draft, user_id: e.target.value })}>
+                <Select value={draft.user_id} onChange={(e) => {
+                  const nextUserId = e.target.value;
+                  const options = keyGroupOptions(nextUserId, users, groups);
+                  setDraft({ ...draft, user_id: nextUserId, group_id: options.some((group) => group.id === draft.group_id) ? draft.group_id : defaultKeyGroupId(nextUserId, users, groups) });
+                }}>
                   <option value="">请选择用户</option>
                   {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+                </Select>
+              </Field>
+              <Field label="Key 分组">
+                <Select value={draft.group_id} onChange={(e) => setDraft({ ...draft, group_id: e.target.value })}>
+                  <option value="">不绑定分组</option>
+                  {keyGroupOptions(draft.user_id, users, groups).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
                 </Select>
               </Field>
               <Field label="Key 名称">
@@ -433,18 +465,20 @@ export function AccountApiKeysPage() {
                 <small>{getBusinessUserId(inspectKey)}</small>
               </div>
               <div className="admin-dialog-summary-card">
+                <span>Key 分组</span>
+                <strong>{keyGroupName(inspectKey, groups)}</strong>
+                <small>{keyGroupId(inspectKey) || '-'}</small>
+              </div>
+              <div className="admin-dialog-summary-card">
                 <span>订阅</span>
                 <strong>{inspectKey.subscription_active ? (inspectKey.active_plan_name || '订阅有效') : '无可用订阅'}</strong>
                 <small>{inspectKey.active_subscription_status || '-'}</small>
               </div>
-              <div className="admin-dialog-summary-card">
-                <span>状态</span>
-                <strong>{inspectKey.enabled === false ? '停用' : '启用'}</strong>
-                <small>{inspectKey.key_preview}</small>
-              </div>
             </div>
             <div className="admin-dialog-grid">
-              <Field label="分组"><TextInput readOnly value={inspectKey.active_group_name || inspectKey.active_group_id || '-'} /></Field>
+              <Field label="状态"><TextInput readOnly value={inspectKey.enabled === false ? '停用' : '启用'} /></Field>
+              <Field label="Key 预览"><TextInput readOnly value={inspectKey.key_preview || '-'} /></Field>
+              <Field label="订阅分组"><TextInput readOnly value={inspectKey.active_group_name || inspectKey.active_group_id || '-'} /></Field>
               <Field label="计划"><TextInput readOnly value={inspectKey.active_plan_name || inspectKey.active_plan_id || '-'} /></Field>
               <Field label="创建时间"><TextInput readOnly value={formatTimestamp(inspectKey.created_at)} /></Field>
               <Field label="最近使用"><TextInput readOnly value={formatTimestamp(inspectKey.last_used_at)} /></Field>
@@ -509,4 +543,30 @@ function formatTimestamp(value: number | null | undefined) {
   const date = new Date(value * 1000);
   if (Number.isNaN(date.getTime())) return '-';
   return date.toLocaleString('zh-CN', { hour12: false });
+}
+
+function keyGroupId(item: AdminApiKey | null | undefined): string {
+  return String(item?.group_id || '').trim();
+}
+
+function keyGroupName(item: AdminApiKey | null | undefined, groups: AdminGroup[]): string {
+  const groupId = keyGroupId(item);
+  if (!groupId) return '不绑定分组';
+  return String(item?.group_name || groups.find((group) => group.id === groupId)?.name || groupId);
+}
+
+function keyGroupOptions(userId: string, users: AdminUser[], groups: AdminGroup[]): AdminGroup[] {
+  const user = users.find((item) => item.id === userId);
+  const allowedIds = user?.allowed_group_ids || user?.user_allowed_group_ids || [];
+  if (!allowedIds.length) return groups;
+  return groups.filter((group) => allowedIds.includes(group.id));
+}
+
+function defaultKeyGroupId(userId: string, users: AdminUser[], groups: AdminGroup[]): string {
+  const options = keyGroupOptions(userId, users, groups);
+  if (options.length === 1) return options[0].id;
+  const user = users.find((item) => item.id === userId);
+  const userGroups = user?.group_ids || (user?.group_id ? [user.group_id] : []);
+  const firstUsable = userGroups.find((groupId) => options.some((group) => group.id === groupId));
+  return firstUsable || '';
 }

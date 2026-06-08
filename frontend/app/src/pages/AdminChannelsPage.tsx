@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Activity, Ban, Edit, Eye, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
-import { deleteAdminChannel, fetchAdminChannels, fetchAdminGroups, saveAdminChannel } from '../api';
+import { deleteAdminChannel, fetchAdminChannels, fetchAdminGroups, saveAdminChannel, saveConfig } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Panel, PanelHead, Select, TextArea, TextInput } from '../components';
 import { ActionButton, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { buildPageIntro } from '../navigation';
 import { useDashboard } from '../state/dashboardContext';
 import { queryClient } from '../state/queryClient';
-import type { AdminChannel, AdminChannelPricing } from '../types';
+import type { AdminChannel, AdminChannelPricing, Pool, RuntimeConfig } from '../types';
 import { formatNumber, readStorageJSON, writeStorageJSON } from '../utils';
+import { normalizePool } from '../features/config/model';
+import { ProviderAccountModal } from './AdminAccountsPage';
 
 type ChannelDraft = {
   id?: string;
@@ -209,7 +211,7 @@ export function AdminChannelsPricingPage() {
                     <span>切换 50 / 页</span>
                   </button>
                 </ToolsMenu>
-                <Button tone="primary" data-tour="channels-create-btn" onClick={openCreate}><Plus size={15} />创建渠道</Button>
+                <Button tone="primary" data-tour="channels-create-btn" onClick={openCreate}><Plus size={15} />添加渠道</Button>
               </ToolbarButtonRow>
             }
           >
@@ -264,13 +266,15 @@ export function AdminChannelsPricingPage() {
                       <RowActions>
                         <RowAction icon={Eye} label="详情" onClick={() => setInspectChannel(item)} />
                         <RowAction icon={Edit} label="编辑" onClick={() => openEdit(item)} />
-                        <RowAction icon={item.enabled === false ? ShieldCheck : Ban} label={item.enabled === false ? '启用' : '停用'} tone={item.enabled === false ? 'default' : 'warn'} onClick={() => setToggleTarget(item)} />
-                        <RowAction icon={Trash2} label="删除" tone="danger" onClick={() => setDeleteTarget(item)} />
+                        <ToolsMenu label="更多">
+                          <button type="button" onClick={() => setToggleTarget(item)}><span>{item.enabled === false ? '启用' : '停用'}</span>{item.enabled === false ? <ShieldCheck size={14} /> : <Ban size={14} />}</button>
+                          <button type="button" className="danger" onClick={() => setDeleteTarget(item)}><span>删除</span><Trash2 size={14} /></button>
+                        </ToolsMenu>
                       </RowActions>
                     </td>
                   </tr>
                 )) : (
-                  <ListEmptyRow colSpan={8} title="暂无渠道数据" action={<Button tone="primary" data-tour="channels-create-btn" onClick={openCreate}>创建渠道</Button>} />
+                  <ListEmptyRow colSpan={8} title="暂无渠道数据" action={<Button tone="primary" data-tour="channels-create-btn" onClick={openCreate}>添加渠道</Button>} />
                 )}
               </tbody>
             </table>
@@ -291,7 +295,7 @@ export function AdminChannelsPricingPage() {
 
       {draft ? (
         <Modal
-          title={draft.id ? '编辑渠道' : '创建渠道'}
+          title={draft.id ? '编辑渠道' : '添加渠道'}
           size="lg"
           onClose={() => setDraft(null)}
           footer={
@@ -421,44 +425,133 @@ export function AdminChannelsPricingPage() {
 
 export function AdminChannelsMonitorPage() {
   const dashboard = useDashboard();
+  const channelsQuery = useQuery({ queryKey: ['admin-channels'], queryFn: fetchAdminChannels, refetchInterval: 10000 });
+  const [accountDraft, setAccountDraft] = useState<Pool | null>(null);
+  const [accountStatus, setAccountStatus] = useState('');
+  const channels = channelsQuery.data?.items || [];
+  const savePoolsMutation = useMutation({
+    mutationFn: (config: RuntimeConfig) => saveConfig(config),
+    onSuccess: async (state) => {
+      queryClient.setQueryData(['dashboard-state'], state);
+      setAccountDraft(null);
+      setAccountStatus('');
+      await queryClient.invalidateQueries({ queryKey: ['admin-provider-accounts'] });
+    },
+    onError: (error) => {
+      setAccountStatus(error instanceof Error ? error.message : '账号保存失败');
+    },
+  });
+  const poolsByProtocol = useMemo(() => {
+    const map = new Map<string, { enabled: number; total: number; requests: number; errors: number; keys: number }>();
+    for (const pool of dashboard.pools || []) {
+      const policy = pool.route_policy || {};
+      const protocol = String(policy.text_upstream_protocol || 'auto');
+      const entry = map.get(protocol) || { enabled: 0, total: 0, requests: 0, errors: 0, keys: 0 };
+      entry.total += 1;
+      if (pool.enabled !== false) entry.enabled += 1;
+      entry.keys += Array.isArray(pool.keys) ? pool.keys.filter((key) => String(key?.key || '').trim()).length : 0;
+      map.set(protocol, entry);
+    }
+    return map;
+  }, [dashboard.pools]);
+
+  function openCreateAccount() {
+    setAccountStatus('');
+    setAccountDraft(normalizePool());
+  }
+
+  function saveAccountDraft() {
+    if (!accountDraft) return;
+    const nextConfig = { ...dashboard.draft, pools: [...dashboard.pools, normalizePool(accountDraft)] };
+    savePoolsMutation.mutate(nextConfig);
+  }
 
   return (
     <section className="grid-page">
       {buildPageIntro('/admin/channels/monitor')}
       <Panel>
-        <PanelHead title={<><Activity size={18} />渠道监控</>} />
+        <PanelHead
+          title={<><Activity size={18} />渠道监控</>}
+          action={
+            <div className="button-row">
+              <Button onClick={() => channelsQuery.refetch()}><RefreshCw size={14} />刷新</Button>
+              <Button tone="primary" onClick={openCreateAccount}><Plus size={14} />添加账号</Button>
+            </div>
+          }
+        />
         <div className="table-wrap table-scroll">
           <table>
             <thead>
               <tr>
-                <th>上游账号</th>
-                <th>优先级</th>
-                <th>线路数</th>
-                <th>Key</th>
+                <th>渠道</th>
+                <th>平台</th>
+                <th>分组 / 套餐</th>
+                <th>价格规则</th>
+                <th>上游能力</th>
                 <th>状态</th>
               </tr>
             </thead>
             <tbody>
-              {dashboard.pools.length ? dashboard.pools.map((pool, index) => (
-                <tr key={`${pool.name || 'pool'}-${index}`}>
+              {channels.length ? channels.map((channel) => {
+                const platformConfigs = platformConfigsFromChannel(channel).filter((item) => item.enabled);
+                const upstreamStats = platformConfigs.reduce(
+                  (sum, item) => {
+                    const protocolStats = poolsByProtocol.get(item.platform) || poolsByProtocol.get('auto');
+                    if (!protocolStats) return sum;
+                    return {
+                      enabled: sum.enabled + protocolStats.enabled,
+                      total: sum.total + protocolStats.total,
+                      keys: sum.keys + protocolStats.keys,
+                    };
+                  },
+                  { enabled: 0, total: 0, keys: 0 },
+                );
+                return (
+                <tr key={channel.id}>
                   <td>
                     <div className="sub2-cell-stack sub2-cell-stack-tight">
-                      <strong>{pool.name || `上游账号 ${index + 1}`}</strong>
-                      <small>{pool.urls?.[0] || '-'}</small>
+                      <strong>{channel.name}</strong>
+                      <small>{channel.description || channel.id}</small>
                     </div>
                   </td>
-                  <td>{formatNumber(pool.priority || 0)}</td>
-                  <td>{formatNumber(pool.urls?.length || 0)}</td>
-                  <td>{formatNumber(pool.keys?.length || 0)}</td>
-                  <td>{pool.enabled === false ? '停用' : '启用'}</td>
+                  <td>{platformConfigs.map((item) => item.platform).join(' / ') || channel.platform || '-'}</td>
+                  <td>
+                    <div className="sub2-cell-stack sub2-cell-stack-tight">
+                      <strong>{formatNumber(channel.group_count || channel.group_ids?.length || 0)}</strong>
+                      <small>套餐 {formatNumber(channel.plan_count || 0)}</small>
+                    </div>
+                  </td>
+                  <td>{formatNumber(channel.pricing_count || channel.model_pricing?.length || 0)}</td>
+                  <td>
+                    <div className="sub2-cell-stack sub2-cell-stack-tight">
+                      <strong>{formatNumber(upstreamStats.enabled)} / {formatNumber(upstreamStats.total)}</strong>
+                      <small>Key {formatNumber(upstreamStats.keys)}</small>
+                    </div>
+                  </td>
+                  <td><Badge tone={channel.enabled === false ? 'warn' : 'ok'}>{channel.enabled === false ? '停用' : '启用'}</Badge></td>
                 </tr>
-              )) : (
-                <tr><td colSpan={5}>暂无渠道监控数据。</td></tr>
+              );}) : (
+                <tr><td colSpan={6}>暂无渠道监控数据。</td></tr>
               )}
             </tbody>
           </table>
         </div>
       </Panel>
+      {accountDraft ? (
+        <ProviderAccountModal
+          pool={accountDraft}
+          title="添加账号"
+          saving={savePoolsMutation.isPending}
+          testing={false}
+          status={accountStatus}
+          testResult={null}
+          canTest={false}
+          onChange={setAccountDraft}
+          onClose={() => { setAccountDraft(null); setAccountStatus(''); }}
+          onSave={saveAccountDraft}
+          onTest={() => setAccountStatus('')}
+        />
+      ) : null}
     </section>
   );
 }

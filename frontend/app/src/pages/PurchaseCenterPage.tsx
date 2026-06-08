@@ -140,7 +140,7 @@ export function PurchaseCenterPage() {
                 <span className="quick-action-icon green"><CreditCard size={20} /></span>
                 <span className="quick-action-copy">
                   <strong>{formatUsdCost(Number(draft.amount_cents || 0) / 100, 2)}</strong>
-                  <small>{draft.channel_id ? channels.find((item) => item.id === draft.channel_id)?.name || draft.channel_id : '手工通道或后续自动分配'}</small>
+                  <small>{draft.channel_id ? channels.find((item) => item.id === draft.channel_id)?.name || draft.channel_id : '不指定通道'}</small>
                 </span>
               </div>
               <div className="quick-action">
@@ -168,7 +168,7 @@ export function PurchaseCenterPage() {
         <Panel className="dashboard-card">
           <PanelHead title={<><Ticket size={18} />当前订阅</>} action={<span className="subtle">{selectedSubscriptions.length} 条</span>} />
           <div className="purchase-side-list">
-            {selectedSubscriptions.length ? selectedSubscriptions.slice(0, 6).map((item) => <SubscriptionCard key={item.id} item={item} />) : <Empty>当前用户暂无订阅。</Empty>}
+            {selectedSubscriptions.length ? selectedSubscriptions.slice(0, 6).map((item) => <SubscriptionCard key={item.id} item={item} />) : <Empty>暂无订阅</Empty>}
           </div>
         </Panel>
       </div>
@@ -275,7 +275,7 @@ export function PurchaseCenterPage() {
               <div className="admin-dialog-summary-card">
                 <span>订阅计划</span>
                 <strong>{selectedPlan?.name || '未选择计划'}</strong>
-                <small>{selectedPlan ? `${selectedPlan.validity_days || 0} 天` : '待选择计划'}</small>
+                <small>{selectedPlan ? `${selectedPlan.validity_days || 0} 天` : '-'}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>支付通道</span>

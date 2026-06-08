@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, Ban, Bolt, DollarSign, Eye, Pencil, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { deleteAdminGroup, fetchAdminGroups, saveAdminGroup } from '../api';
-import { Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
+import { Badge, Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
 import { ActionButton, ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { queryClient } from '../state/queryClient';
 import type { AdminGroup } from '../types';
@@ -30,7 +30,7 @@ type GroupDraft = {
   sort_order: number;
 };
 
-type GroupColumnKey = 'platform' | 'users' | 'requests' | 'errors' | 'tokens' | 'input' | 'output' | 'status';
+type GroupColumnKey = 'platform' | 'billing' | 'users' | 'subscriptions' | 'requests' | 'errors' | 'tokens' | 'input' | 'output' | 'status';
 type ExclusiveFilter = '' | 'exclusive' | 'public';
 type GroupExtraEntry = { user_id: string; user_name?: string; value: number };
 
@@ -55,7 +55,7 @@ const EMPTY_GROUP: GroupDraft = {
   sort_order: 0,
 };
 
-const DEFAULT_VISIBLE_COLUMNS: GroupColumnKey[] = ['users', 'requests', 'errors', 'tokens', 'status'];
+const DEFAULT_VISIBLE_COLUMNS: GroupColumnKey[] = ['platform', 'billing', 'users', 'subscriptions', 'requests', 'status'];
 const STORAGE_KEY = 'admin-groups-view-state';
 
 export function AdminGroupsPage() {
@@ -166,12 +166,12 @@ export function AdminGroupsPage() {
       description: item.description || '',
       platform: item.platform || '',
       is_exclusive: item.is_exclusive === true,
-      subscription_type: String(extra.subscription_type || 'standard'),
-      daily_limit_usd: Number(extra.daily_limit_usd || 0),
-      weekly_limit_usd: Number(extra.weekly_limit_usd || 0),
-      monthly_limit_usd: Number(extra.monthly_limit_usd || 0),
+      subscription_type: String(item.subscription_type || extra.subscription_type || 'standard'),
+      daily_limit_usd: Number(item.daily_limit_usd ?? extra.daily_limit_usd ?? 0),
+      weekly_limit_usd: Number(item.weekly_limit_usd ?? extra.weekly_limit_usd ?? 0),
+      monthly_limit_usd: Number(item.monthly_limit_usd ?? extra.monthly_limit_usd ?? 0),
       rate_multiplier: Number(item.rate_multiplier || 1),
-      rpm_limit: Number(extra.rpm_limit || 0),
+      rpm_limit: Number(item.rpm_limit ?? extra.rpm_limit ?? 0),
       allow_image_generation: extra.allow_image_generation === true,
       image_rate_independent: extra.image_rate_independent === true,
       image_rate_multiplier: Number(extra.image_rate_multiplier || 1),
@@ -292,6 +292,8 @@ export function AdminGroupsPage() {
                   items={[
                     { key: 'users', label: '账号数', checked: visibleColumns.has('users'), onToggle: () => toggleColumn('users') },
                     { key: 'platform', label: '平台 / 倍率', checked: visibleColumns.has('platform'), onToggle: () => toggleColumn('platform') },
+                    { key: 'billing', label: '计费类型', checked: visibleColumns.has('billing'), onToggle: () => toggleColumn('billing') },
+                    { key: 'subscriptions', label: '订阅', checked: visibleColumns.has('subscriptions'), onToggle: () => toggleColumn('subscriptions') },
                     { key: 'requests', label: '请求数', checked: visibleColumns.has('requests'), onToggle: () => toggleColumn('requests') },
                     { key: 'errors', label: '错误数', checked: visibleColumns.has('errors'), onToggle: () => toggleColumn('errors') },
                     { key: 'tokens', label: '总 Token', checked: visibleColumns.has('tokens'), onToggle: () => toggleColumn('tokens') },
@@ -311,7 +313,7 @@ export function AdminGroupsPage() {
                     <span>切换 50 / 页</span>
                   </button>
                 </ToolsMenu>
-                <Button tone="primary" data-tour="groups-create-btn" onClick={openCreate}><Plus size={15} />创建分组</Button>
+                <Button tone="primary" data-tour="groups-create-btn" onClick={openCreate}><Plus size={15} />添加分组</Button>
               </ToolbarButtonRow>
             }
           >
@@ -339,7 +341,9 @@ export function AdminGroupsPage() {
                 <tr>
                   <th>分组</th>
                   {visibleColumns.has('platform') ? <th>平台 / 倍率</th> : null}
+                  {visibleColumns.has('billing') ? <th>计费类型</th> : null}
                   {visibleColumns.has('users') ? <th>账号数</th> : null}
+                  {visibleColumns.has('subscriptions') ? <th>订阅</th> : null}
                   {visibleColumns.has('requests') ? <th>请求数</th> : null}
                   {visibleColumns.has('errors') ? <th>错误数</th> : null}
                   {visibleColumns.has('tokens') ? <th>总 Token</th> : null}
@@ -362,25 +366,50 @@ export function AdminGroupsPage() {
                       <td>
                         <div className="sub2-cell-stack sub2-cell-stack-tight">
                           <strong>{item.platform || '-'}</strong>
-                          <small>{item.is_exclusive ? 'exclusive' : 'shared'} · ×{Number(item.rate_multiplier || 1)}</small>
+                          <small>{item.is_exclusive ? '专属' : '共享'} · ×{Number(item.rate_multiplier || 1)}</small>
                         </div>
                       </td>
                     ) : null}
-                    {visibleColumns.has('users') ? <td><strong className="sub2-number-cell">{formatNumber(item.account_count || 0)}</strong></td> : null}
+                    {visibleColumns.has('billing') ? (
+                      <td>
+                        <div className="sub2-cell-stack sub2-cell-stack-tight">
+                          <Badge tone={item.subscription_type === 'subscription' ? 'ok' : 'neutral'}>{item.subscription_type === 'subscription' ? '订阅分组' : '标准分组'}</Badge>
+                          <small>{limitText(item)}</small>
+                        </div>
+                      </td>
+                    ) : null}
+                    {visibleColumns.has('users') ? (
+                      <td>
+                        <div className="sub2-cell-stack sub2-cell-stack-tight">
+                          <strong>{formatNumber(item.active_account_count ?? item.account_count ?? 0)} 可用</strong>
+                          <small>停用 {formatNumber(item.rate_limited_account_count || 0)} · 总 {formatNumber(item.account_count || 0)}</small>
+                        </div>
+                      </td>
+                    ) : null}
+                    {visibleColumns.has('subscriptions') ? (
+                      <td>
+                        <div className="sub2-cell-stack sub2-cell-stack-tight">
+                          <strong>{formatNumber(item.active_subscription_count || 0)} 有效</strong>
+                          <small>总订阅 {formatNumber(item.subscription_count || 0)}</small>
+                        </div>
+                      </td>
+                    ) : null}
                     {visibleColumns.has('requests') ? <td><strong className="sub2-number-cell">{formatNumber(item.request_count || 0)}</strong></td> : null}
                     {visibleColumns.has('errors') ? <td><strong className="sub2-number-cell sub2-number-warn">{formatNumber(item.error_count || 0)}</strong></td> : null}
                     {visibleColumns.has('tokens') ? <td><strong className="sub2-number-cell">{formatTokenCount(item.total_tokens || 0)}</strong></td> : null}
                     {visibleColumns.has('input') ? <td><strong className="sub2-number-cell">{formatByteCount(item.input_bytes || 0)}</strong></td> : null}
                     {visibleColumns.has('output') ? <td><strong className="sub2-number-cell">{formatByteCount(item.output_bytes || 0)}</strong></td> : null}
                     {visibleColumns.has('status') ? <td><span className={cn('badge', item.enabled === false ? 'badge-warn' : 'badge-ok')}>{item.enabled === false ? '停用' : '启用'}</span></td> : null}
-                    <td>
+                    <td className="row-actions-cell">
                       <RowActions>
                         <RowAction icon={Eye} label="详情" onClick={() => setInspectGroup(item)} />
                         <RowAction icon={Pencil} label="编辑" onClick={() => openEdit(item)} />
-                        <RowAction icon={DollarSign} label="专属倍率" onClick={() => setRateGroup(item)} />
-                        <RowAction icon={Bolt} label="专属 RPM" onClick={() => setRpmGroup(item)} />
-                        <RowAction icon={item.enabled === false ? ShieldCheck : Ban} label={item.enabled === false ? '启用' : '停用'} tone={item.enabled === false ? 'default' : 'warn'} onClick={() => toggleEnabled(item)} />
-                        <RowAction icon={Trash2} label="删除" tone="danger" onClick={() => setDeleteTarget(item)} />
+                        <ToolsMenu label="更多">
+                          <button type="button" onClick={() => setRateGroup(item)}><span>专属倍率</span><DollarSign size={14} /></button>
+                          <button type="button" onClick={() => setRpmGroup(item)}><span>专属 RPM</span><Bolt size={14} /></button>
+                          <button type="button" onClick={() => toggleEnabled(item)}><span>{item.enabled === false ? '启用' : '停用'}</span>{item.enabled === false ? <ShieldCheck size={14} /> : <Ban size={14} />}</button>
+                          <button type="button" className="danger" onClick={() => setDeleteTarget(item)}><span>删除</span><Trash2 size={14} /></button>
+                        </ToolsMenu>
                       </RowActions>
                     </td>
                   </tr>
@@ -388,7 +417,7 @@ export function AdminGroupsPage() {
                   <ListEmptyRow
                     colSpan={visibleColumns.size + 2}
                     title="暂无分组数据"
-                    action={<Button tone="primary" data-tour="groups-create-btn" onClick={openCreate}>创建分组</Button>}
+                    action={<Button tone="primary" data-tour="groups-create-btn" onClick={openCreate}>添加分组</Button>}
                   />
                 )}
               </tbody>
@@ -410,7 +439,7 @@ export function AdminGroupsPage() {
 
       {draft ? (
         <Modal
-          title={draft.id ? '编辑分组' : '创建分组'}
+          title={draft.id ? '编辑分组' : '添加分组'}
           size="lg"
           onClose={() => setDraft(null)}
           footer={
@@ -557,13 +586,13 @@ export function AdminGroupsPage() {
               </div>
               <div className="admin-dialog-summary-card">
                 <span>关联账号</span>
-                <strong>{formatNumber(inspectGroup.account_count || 0)}</strong>
-                <small>请求 {formatNumber(inspectGroup.request_count || 0)}</small>
+                <strong>{formatNumber(inspectGroup.active_account_count ?? inspectGroup.account_count ?? 0)}</strong>
+                <small>停用 {formatNumber(inspectGroup.rate_limited_account_count || 0)} · 总 {formatNumber(inspectGroup.account_count || 0)}</small>
               </div>
               <div className="admin-dialog-summary-card">
-                <span>状态</span>
-                <strong>{inspectGroup.enabled === false ? '停用' : '启用'}</strong>
-                <small>{inspectGroup.is_exclusive ? '专属分组' : '共享分组'}</small>
+                <span>订阅</span>
+                <strong>{formatNumber(inspectGroup.active_subscription_count || 0)} / {formatNumber(inspectGroup.subscription_count || 0)}</strong>
+                <small>{limitText(inspectGroup)}</small>
               </div>
             </div>
             <div className="admin-dialog-section">
@@ -573,6 +602,8 @@ export function AdminGroupsPage() {
               <div className="admin-dialog-grid">
                 <Field label="排序"><TextInput readOnly value={String(inspectGroup.sort_order || 0)} /></Field>
                 <Field label="倍率"><TextInput readOnly value={String(Number(inspectGroup.rate_multiplier || 1))} /></Field>
+                <Field label="分组类型"><TextInput readOnly value={inspectGroup.subscription_type === 'subscription' ? '订阅分组' : '标准分组'} /></Field>
+                <Field label="RPM 限制"><TextInput readOnly value={String(inspectGroup.rpm_limit || 0)} /></Field>
                 <Field label="错误数"><TextInput readOnly value={String(inspectGroup.error_count || 0)} /></Field>
                 <Field label="总 Token"><TextInput readOnly value={String(inspectGroup.total_tokens || 0)} /></Field>
               </div>
@@ -806,4 +837,13 @@ function extractEntries(value: unknown): GroupExtraEntry[] {
       if (entry.user_id) entries.push(entry);
       return entries;
     }, []);
+}
+
+function limitText(group: AdminGroup) {
+  const parts = [
+    Number(group.daily_limit_usd || 0) ? `$${group.daily_limit_usd}/日` : '',
+    Number(group.weekly_limit_usd || 0) ? `$${group.weekly_limit_usd}/周` : '',
+    Number(group.monthly_limit_usd || 0) ? `$${group.monthly_limit_usd}/月` : '',
+  ].filter(Boolean);
+  return parts.length ? parts.join(' · ') : '无限额';
 }

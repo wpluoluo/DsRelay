@@ -101,7 +101,7 @@ export function AdminSubscriptionPlansPage() {
           <strong>订阅计划</strong>
         </div>
         <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>计划数</span><strong>{formatNumber(filteredItems.length)}</strong><small>当前筛选范围</small></div>
+          <div className="sub2-inline-summary-item"><span>计划数</span><strong>{formatNumber(filteredItems.length)}</strong><small>计划</small></div>
           <div className="sub2-inline-summary-item"><span>启用计划</span><strong>{formatNumber(enabledCount)}</strong><small>{filteredItems.length ? `${Math.round((enabledCount / filteredItems.length) * 100)}%` : '0%'}</small></div>
           <div className="sub2-inline-summary-item"><span>基础价格</span><strong>{formatNumber(totalPrice)}</strong><small>筛选计划基础价合计</small></div>
           <div className="sub2-inline-summary-item"><span>最长有效期</span><strong>{formatNumber(maxValidity)} 天</strong><small>绑定分组 {formatNumber(groupedCount)}</small></div>
@@ -212,7 +212,6 @@ export function AdminSubscriptionPlansPage() {
                   <ListEmptyRow
                     colSpan={visibleColumns.size + 2}
                     title="暂无订阅计划"
-                    description="当前没有可展示的订阅计划。"
                     action={<Button tone="primary" onClick={() => setDraft({ name: '', group_id: '', price_cents: 0, validity_days: 30, daily_limit: 0, weekly_limit: 0, monthly_limit: 0, enabled: true, note: '' })}>新增计划</Button>}
                   />
                 )}
@@ -247,13 +246,12 @@ export function AdminSubscriptionPlansPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{draft.id ? '编辑订阅计划' : '新增订阅计划'}</strong>
-              <span>计划决定价格、有效期和额度上限，直接影响订阅分配和订单价格计算。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
                 <span>计划数</span>
                 <strong>{formatNumber(filteredItems.length)}</strong>
-                <small>当前筛选范围</small>
+                <small>计划</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>最长有效期</span>
@@ -371,7 +369,6 @@ export function AdminSubscriptionPlansPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{toggleTarget.name}</strong>
-              <span>{toggleTarget.enabled === false ? '启用后可继续用于新订阅分配和订单定价。' : '停用后不会影响历史记录，但会阻止新分配和新下单。'}</span>
             </div>
           </div>
         </Modal>

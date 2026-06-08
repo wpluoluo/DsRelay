@@ -93,3 +93,16 @@ class AdminContentMixin(AdminServiceBase):
             next_items.append(item)
         self._save_content_bucket(bucket, next_items)
         return {"ok": True, "bucket": bucket, "item": item}
+
+    def delete_content_bucket_item(self, bucket: str, item_id: str) -> dict:
+        if bucket not in CONTENT_BUCKETS:
+            raise ValueError("unsupported content bucket")
+        target = coerce_text(item_id)
+        if not target:
+            raise ValueError("content id is required")
+        items = self._load_content_bucket(bucket)
+        next_items = [item for item in items if coerce_text(item.get("id")) != target]
+        if len(next_items) == len(items):
+            raise ValueError("content item not found")
+        self._save_content_bucket(bucket, next_items)
+        return {"ok": True, "bucket": bucket, "id": target}

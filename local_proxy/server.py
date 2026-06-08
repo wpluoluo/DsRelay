@@ -6308,9 +6308,19 @@ def require_proxy_api_key() -> Response | None:
                 except Exception:
                     memberships = []
                 try:
-                    active_subscription = storage.get_active_subscription_context_for_account(matched_account_id)
+                    matched_group_id = str(matched.get("group_id") or "").strip()
+                    active_subscription = storage.get_active_subscription_context_for_account(matched_account_id, matched_group_id)
+                    if matched_group_id and not active_subscription:
+                        active_subscription = {
+                            "group_id": matched_group_id,
+                            "group_name": str(matched.get("group_name") or ""),
+                            "status": "inactive",
+                        }
+                    elif not matched_group_id:
+                        matched_group_id = str(active_subscription.get("group_id") or "").strip()
                 except Exception:
                     active_subscription = {}
+                    matched_group_id = str(matched.get("group_id") or "").strip()
                 REQUEST_LOCAL.proxy_consumer = {
                     "id": matched_account_id,
                     "name": str(matched.get("account_name") or matched.get("name") or "业务账户"),
@@ -6327,8 +6337,8 @@ def require_proxy_api_key() -> Response | None:
                     "subscription_id": str(active_subscription.get("subscription_id") or ""),
                     "plan_id": str(active_subscription.get("plan_id") or ""),
                     "plan_name": str(active_subscription.get("plan_name") or ""),
-                    "group_id": str(active_subscription.get("group_id") or ""),
-                    "group_name": str(active_subscription.get("group_name") or ""),
+                    "group_id": matched_group_id or str(active_subscription.get("group_id") or ""),
+                    "group_name": str(matched.get("group_name") or active_subscription.get("group_name") or ""),
                     "plan_price_cents": int(active_subscription.get("plan_price_cents") or 0),
                 }
                 storage.touch_admin_api_key(str(matched.get("id") or ""))

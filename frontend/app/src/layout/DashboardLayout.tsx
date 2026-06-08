@@ -55,7 +55,7 @@ export function DashboardLayout() {
     const keys = new Set<string>();
     for (const section of adminNavSections) {
       for (const item of section.items) {
-        if (item.children?.some((child) => locationPathname === child.path)) {
+        if (item.children?.some((child) => navPathMatches(locationPathname, child.path))) {
           keys.add(item.key);
         }
       }
@@ -148,8 +148,8 @@ function SidebarItem({
   onToggleGroup: () => void;
 }) {
   const Icon = item.icon;
-  const isActive = pathname === item.path || pathname.startsWith(`${item.path}/`);
-  const childActive = Boolean(item.children?.some((child) => pathname === child.path || pathname.startsWith(`${child.path}/`)));
+  const isActive = navPathMatches(pathname, item.path);
+  const childActive = Boolean(item.children?.some((child) => navPathMatches(pathname, child.path)));
 
   if (item.children?.length) {
     const buttonClass = `sidebar-link sidebar-link-button ${childActive ? 'active' : ''}`;
@@ -166,7 +166,12 @@ function SidebarItem({
               {item.children.map((child) => {
                 const ChildIcon = child.icon;
                 return (
-                  <Link key={child.key} to={child.path} activeProps={{ className: 'active' }} className="sidebar-link sidebar-link-child">
+                  <Link
+                    key={child.key}
+                    to={child.path}
+                    activeOptions={{ exact: true }}
+                    className={`sidebar-link sidebar-link-child ${navPathMatches(pathname, child.path, true) ? 'active' : ''}`}
+                  >
                     <ChildIcon size={16} />
                     <span>{child.label}</span>
                   </Link>
@@ -179,7 +184,7 @@ function SidebarItem({
     }
     return (
       <div className="sidebar-nested">
-        <Link to={item.path} activeProps={{ className: 'active' }} className={buttonClass} onClick={onToggleGroup}>
+        <Link to={item.path} className={buttonClass} onClick={onToggleGroup}>
           <Icon size={18} />
           <span>{item.label}</span>
           <ChevronDown size={14} className={expanded ? 'sidebar-group-toggle-open nav-arrow-inline' : 'nav-arrow-inline'} />
@@ -189,7 +194,12 @@ function SidebarItem({
             {item.children.map((child) => {
               const ChildIcon = child.icon;
               return (
-                <Link key={child.key} to={child.path} activeProps={{ className: 'active' }} className="sidebar-link sidebar-link-child">
+                <Link
+                  key={child.key}
+                  to={child.path}
+                  activeOptions={{ exact: true }}
+                  className={`sidebar-link sidebar-link-child ${navPathMatches(pathname, child.path, true) ? 'active' : ''}`}
+                >
                   <ChildIcon size={16} />
                   <span>{child.label}</span>
                 </Link>
@@ -202,9 +212,16 @@ function SidebarItem({
   }
 
   return (
-    <Link to={item.path} activeProps={{ className: 'active' }} className={`sidebar-link ${isActive ? 'active' : ''}`}>
+    <Link to={item.path} className={`sidebar-link ${isActive ? 'active' : ''}`}>
       <Icon size={20} />
       <span>{item.label}</span>
     </Link>
   );
+}
+
+function navPathMatches(pathname: string, targetPath: string, exact = false): boolean {
+  if (pathname === targetPath) return true;
+  if (exact) return false;
+  if (targetPath === '/admin/orders') return false;
+  return pathname.startsWith(`${targetPath}/`);
 }

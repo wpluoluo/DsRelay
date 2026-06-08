@@ -247,7 +247,6 @@ export function AdminPaymentOrdersPage() {
                   <ListEmptyRow
                     colSpan={10}
                     title="暂无订单"
-                    description="当前没有可展示的订单记录。"
                     action={<Button tone="primary" onClick={() => setDraft({ user_id: '', plan_id: '', channel_id: '', amount_cents: 0, currency: 'CNY' })}>创建订单</Button>}
                   />
                 )}
@@ -276,36 +275,16 @@ export function AdminPaymentOrdersPage() {
           footer={<ModalActions><Button onClick={() => setDraft(null)}>取消</Button><Button tone="primary" disabled={createMutation.isPending || !draft.user_id || !draft.plan_id} onClick={() => createMutation.mutate(buildBusinessUserPayload(draft.user_id, { plan_id: draft.plan_id, channel_id: draft.channel_id, amount_cents: draft.amount_cents, currency: draft.currency }))}>创建</Button></ModalActions>}
         >
           <div className="admin-dialog">
-            <div className="admin-dialog-intro">
-              <strong>人工创建订单</strong>
-            </div>
-            <div className="admin-dialog-summary">
-              <div className="admin-dialog-summary-card">
-                <span>待处理订单</span>
-                <strong>{pendingCount}</strong>
-                <small>当前可继续拉起</small>
-              </div>
-              <div className="admin-dialog-summary-card">
-                <span>失败订单</span>
-                <strong>{failedCount}</strong>
-                <small>待处理</small>
-              </div>
-              <div className="admin-dialog-summary-card">
-                <span>当前金额</span>
-                <strong>{formatCost(Number(draft.amount_cents || 0) / 100, 2)}</strong>
-                <small>{draft.currency || 'CNY'}</small>
-              </div>
-            </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
                 <span>目标用户</span>
-                <strong>{selectedUser?.name || '待选择用户'}</strong>
+                <strong>{selectedUser?.name || '-'}</strong>
                 <small>{selectedUser?.group_name || selectedUser?.group_id || '未分组'}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>选中计划</span>
-                <strong>{selectedPlan?.name || '待选择计划'}</strong>
-                <small>{selectedPlan ? `${formatCost(Number(selectedPlan.final_price_cents || selectedPlan.price_cents || 0) / 100, 2)} · ${formatNumber(selectedPlan.validity_days || 0)} 天` : '未生成价格'}</small>
+                <strong>{selectedPlan?.name || '-'}</strong>
+                <small>{selectedPlan ? `${formatCost(Number(selectedPlan.final_price_cents || selectedPlan.price_cents || 0) / 100, 2)} · ${formatNumber(selectedPlan.validity_days || 0)} 天` : '-'}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>支付通道</span>
@@ -316,7 +295,6 @@ export function AdminPaymentOrdersPage() {
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
                 <strong>订单信息</strong>
-                <span>用户、计划、通道和金额会直接进入订单主记录</span>
               </div>
               <div className="admin-dialog-grid modal-grid">
                 <Field label="用户"><Select value={draft.user_id} onChange={(e) => setDraft({ ...draft, user_id: e.target.value })}><option value="">请选择用户</option>{users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</Select></Field>
@@ -368,17 +346,7 @@ export function AdminPaymentOrdersPage() {
               <div className="admin-dialog-summary-card">
                 <span>目标状态</span>
                 <strong>{statusTarget.status}</strong>
-                <small>{statusTarget.status === 'paid' ? '进入履约链' : '终止当前订单'}</small>
-              </div>
-              <div className="admin-dialog-summary-card">
-                <span>执行方式</span>
-                <strong>人工确认</strong>
-                <small>后台直接更新订单状态</small>
-              </div>
-              <div className="admin-dialog-summary-card">
-                <span>影响范围</span>
-                <strong>单个订单</strong>
-                <small>{statusTarget.status === 'paid' ? '可能生成订阅履约' : '不会再继续支付流程'}</small>
+                <small>{statusTarget.status === 'paid' ? '履约' : '失败'}</small>
               </div>
             </div>
           </div>

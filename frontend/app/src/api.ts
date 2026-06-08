@@ -11,11 +11,16 @@ import type {
   AdminPaymentOrder,
   AdminContentPayload,
   AdminContentItem,
+  AdminBalanceEvent,
   AdminProviderAccount,
   AdminUser,
   AdminSubscriptionPlan,
   AdminUsageItem,
   AdminUserSubscription,
+  AccountAffiliatePayload,
+  AccountAffiliateTransferResult,
+  AccountRedeemPayload,
+  AccountRedeemResult,
   DashboardState,
   PoolTestResult,
   RuntimeConfig,
@@ -115,6 +120,17 @@ export function deleteAdminUser(userId: string): Promise<{ ok?: boolean; id?: st
   return requestJson<{ ok?: boolean; id?: string }>(`/admin/users/${userId}`, {
     method: 'DELETE',
   });
+}
+
+export function adjustAdminUserBalance(userId: string, payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminUser; event?: AdminBalanceEvent }> {
+  return requestJson<{ ok?: boolean; item?: AdminUser; event?: AdminBalanceEvent }>(`/admin/users/${userId}/balance`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchAdminUserBalanceEvents(userId: string): Promise<AdminListPayload<AdminBalanceEvent>> {
+  return requestJson<AdminListPayload<AdminBalanceEvent>>(`/admin/users/${userId}/balance-events`);
 }
 
 export function fetchAdminGroups(): Promise<AdminListPayload<AdminGroup>> {
@@ -285,6 +301,36 @@ export function saveAdminContent(
   return requestJson<{ ok?: boolean; bucket?: string; item?: AdminContentItem }>(path, {
     method: 'POST',
     body: JSON.stringify(payload),
+  });
+}
+
+export function deleteAdminContent(
+  path: '/admin/announcements' | '/admin/risk-control' | '/admin/redeem' | '/admin/promo-codes' | '/admin/affiliates/invites' | '/admin/affiliates/rebates' | '/admin/affiliates/transfers',
+  itemId: string,
+): Promise<{ ok?: boolean; bucket?: string; id?: string }> {
+  return requestJson<{ ok?: boolean; bucket?: string; id?: string }>(`${path}/${encodeURIComponent(itemId)}`, {
+    method: 'DELETE',
+  });
+}
+
+export function fetchAccountRedeem(userId: string): Promise<AccountRedeemPayload> {
+  return requestJson<AccountRedeemPayload>(`/account/users/${encodeURIComponent(userId)}/redeem`);
+}
+
+export function redeemAccountCode(userId: string, code: string): Promise<AccountRedeemResult> {
+  return requestJson<AccountRedeemResult>(`/account/users/${encodeURIComponent(userId)}/redeem`, {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+}
+
+export function fetchAccountAffiliate(userId: string): Promise<AccountAffiliatePayload> {
+  return requestJson<AccountAffiliatePayload>(`/account/users/${encodeURIComponent(userId)}/affiliate`);
+}
+
+export function transferAccountAffiliateQuota(userId: string): Promise<AccountAffiliateTransferResult> {
+  return requestJson<AccountAffiliateTransferResult>(`/account/users/${encodeURIComponent(userId)}/affiliate/transfer`, {
+    method: 'POST',
   });
 }
 

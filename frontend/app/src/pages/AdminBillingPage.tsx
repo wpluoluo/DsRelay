@@ -371,7 +371,7 @@ export function AdminBillingPage() {
                   )) : (
                     <tr>
                       <td colSpan={5 + visibleColumns.size}>
-                        <EmptyState title="暂无使用记录" description="当前基于真实请求的使用记录为空。" />
+                        <EmptyState title="暂无使用记录" />
                       </td>
                     </tr>
                   )}
@@ -484,7 +484,7 @@ function AggregateBillingTable({
   onInspect: (row: AdminBillingAccountItem | AdminBillingGroupItem | AdminBillingPlanItem | AdminBillingSubscriptionItem | AdminBillingOrderItem) => void;
 }) {
   if (!rows.length) {
-    return <EmptyState title="暂无聚合记录" description="当前筛选条件下没有聚合结果。" />;
+    return <EmptyState title="暂无聚合记录" />;
   }
   return (
     <table>

@@ -135,7 +135,7 @@ class AdminServiceBase:
 
     def _get_account_subscription_status(self, account_id: str) -> dict:
         context = self._get_active_subscription_context(account_id)
-        subscription_id = coerce_text(context.get("id"))
+        subscription_id = coerce_text(context.get("subscription_id") or context.get("id"))
         status = coerce_text(context.get("status")) or ("active" if subscription_id else "inactive")
         return {
             "subscription_active": bool(subscription_id) and status == "active",

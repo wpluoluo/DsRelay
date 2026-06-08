@@ -41,6 +41,22 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
     def admin_users_reset_key(user_id: str):
         return jsonify(analytics_service.reset_user_external_key(user_id))
 
+    @app.get("/admin/users/<user_id>/balance-events")
+    @admin_required
+    def admin_users_balance_events(user_id: str):
+        limit = request.args.get("limit", "200")
+        try:
+            normalized_limit = int(limit)
+        except Exception:
+            normalized_limit = 200
+        return jsonify(analytics_service.list_user_balance_events(user_id, limit=normalized_limit))
+
+    @app.post("/admin/users/<user_id>/balance")
+    @admin_required
+    def admin_users_balance(user_id: str):
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.adjust_user_balance(user_id, payload))
+
     @app.delete("/admin/users/<user_id>")
     @admin_required
     def admin_users_delete(user_id: str):
@@ -210,6 +226,11 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.upsert_content_bucket_item("announcements", payload))
 
+    @app.delete("/admin/announcements/<item_id>")
+    @admin_required
+    def admin_announcements_delete(item_id: str):
+        return jsonify(analytics_service.delete_content_bucket_item("announcements", item_id))
+
     @app.get("/admin/risk-control")
     @admin_required
     def admin_risk_control():
@@ -220,6 +241,11 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
     def admin_risk_control_upsert():
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.upsert_content_bucket_item("risk-rules", payload))
+
+    @app.delete("/admin/risk-control/<item_id>")
+    @admin_required
+    def admin_risk_control_delete(item_id: str):
+        return jsonify(analytics_service.delete_content_bucket_item("risk-rules", item_id))
 
     @app.get("/admin/redeem")
     @admin_required
@@ -232,6 +258,11 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.upsert_content_bucket_item("redeem-codes", payload))
 
+    @app.delete("/admin/redeem/<item_id>")
+    @admin_required
+    def admin_redeem_delete(item_id: str):
+        return jsonify(analytics_service.delete_content_bucket_item("redeem-codes", item_id))
+
     @app.get("/admin/promo-codes")
     @admin_required
     def admin_promo_codes():
@@ -242,6 +273,11 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
     def admin_promo_codes_upsert():
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.upsert_content_bucket_item("promo-codes", payload))
+
+    @app.delete("/admin/promo-codes/<item_id>")
+    @admin_required
+    def admin_promo_codes_delete(item_id: str):
+        return jsonify(analytics_service.delete_content_bucket_item("promo-codes", item_id))
 
     @app.get("/admin/affiliates/invites")
     @admin_required
@@ -254,6 +290,11 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.upsert_content_bucket_item("affiliate-invites", payload))
 
+    @app.delete("/admin/affiliates/invites/<item_id>")
+    @admin_required
+    def admin_affiliate_invites_delete(item_id: str):
+        return jsonify(analytics_service.delete_content_bucket_item("affiliate-invites", item_id))
+
     @app.get("/admin/affiliates/rebates")
     @admin_required
     def admin_affiliate_rebates():
@@ -265,6 +306,11 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.upsert_content_bucket_item("affiliate-rebates", payload))
 
+    @app.delete("/admin/affiliates/rebates/<item_id>")
+    @admin_required
+    def admin_affiliate_rebates_delete(item_id: str):
+        return jsonify(analytics_service.delete_content_bucket_item("affiliate-rebates", item_id))
+
     @app.get("/admin/affiliates/transfers")
     @admin_required
     def admin_affiliate_transfers():
@@ -275,6 +321,32 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
     def admin_affiliate_transfers_upsert():
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.upsert_content_bucket_item("affiliate-transfers", payload))
+
+    @app.delete("/admin/affiliates/transfers/<item_id>")
+    @admin_required
+    def admin_affiliate_transfers_delete(item_id: str):
+        return jsonify(analytics_service.delete_content_bucket_item("affiliate-transfers", item_id))
+
+    @app.get("/account/users/<user_id>/redeem")
+    @admin_required
+    def account_redeem_profile(user_id: str):
+        return jsonify(analytics_service.account_redeem_profile(user_id))
+
+    @app.post("/account/users/<user_id>/redeem")
+    @admin_required
+    def account_redeem_code(user_id: str):
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.redeem_account_code(user_id, payload))
+
+    @app.get("/account/users/<user_id>/affiliate")
+    @admin_required
+    def account_affiliate_detail(user_id: str):
+        return jsonify(analytics_service.account_affiliate_detail(user_id))
+
+    @app.post("/account/users/<user_id>/affiliate/transfer")
+    @admin_required
+    def account_affiliate_transfer(user_id: str):
+        return jsonify(analytics_service.transfer_account_affiliate_quota(user_id))
 
     @app.get("/admin/protocols")
     @admin_required

@@ -86,33 +86,72 @@ class AdminAnalyticsMixin(AdminServiceBase):
             urls = pool.get("urls") if isinstance(pool.get("urls"), list) else []
             keys = pool.get("keys") if isinstance(pool.get("keys"), list) else []
             route_policy = pool.get("route_policy") if isinstance(pool.get("route_policy"), dict) else {}
+            account_stats = {
+                "request_count": 0,
+                "error_count": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "input_bytes": 0,
+                "output_bytes": 0,
+                "last_seen_at": "",
+                "model_names": set(),
+            }
+            route_items = []
             for route_index, raw_url in enumerate(urls):
                 route_url = coerce_text(raw_url)
                 if not route_url:
                     continue
                 stats = route_stats.get(route_url, {})
+                account_stats["request_count"] += safe_int(stats.get("request_count"))
+                account_stats["error_count"] += safe_int(stats.get("error_count"))
+                account_stats["prompt_tokens"] += safe_int(stats.get("prompt_tokens"))
+                account_stats["completion_tokens"] += safe_int(stats.get("completion_tokens"))
+                account_stats["total_tokens"] += safe_int(stats.get("total_tokens"))
+                account_stats["input_bytes"] += safe_int(stats.get("input_bytes"))
+                account_stats["output_bytes"] += safe_int(stats.get("output_bytes"))
+                account_stats["model_names"].update(stats.get("model_names") or set())
+                last_seen_at = coerce_text(stats.get("last_seen_at"))
+                if last_seen_at and last_seen_at > coerce_text(account_stats.get("last_seen_at")):
+                    account_stats["last_seen_at"] = last_seen_at
+                route_items.append(
+                    {
+                        "url": route_url,
+                        "index": route_index + 1,
+                        "request_count": safe_int(stats.get("request_count")),
+                        "error_count": safe_int(stats.get("error_count")),
+                        "last_seen_at": last_seen_at,
+                    }
+                )
+
+            if route_items:
                 key_count = len([item for item in keys if isinstance(item, dict) and coerce_text(item.get("key"))])
-                hostname = route_url.split("://", 1)[-1].split("/", 1)[0]
+                first_route_url = coerce_text(route_items[0].get("url"))
+                hostname = first_route_url.split("://", 1)[-1].split("/", 1)[0]
                 items.append(
                     {
-                        "id": f"provider_{pool_index}_{route_index}",
+                        "id": f"provider_{pool_index}",
                         "pool_name": pool_name,
                         "pool_index": pool_index,
-                        "route_url": route_url,
-                        "route_index": route_index + 1,
-                        "provider_name": hostname or route_url,
+                        "route_url": first_route_url,
+                        "route_urls": [coerce_text(item.get("url")) for item in route_items],
+                        "routes": route_items,
+                        "route_count": len(route_items),
+                        "provider_name": hostname or first_route_url or pool_name,
                         "enabled": pool.get("enabled") is not False,
                         "priority": safe_int(pool.get("priority")),
                         "key_count": key_count,
-                        "request_count": safe_int(stats.get("request_count")),
-                        "error_count": safe_int(stats.get("error_count")),
-                        "prompt_tokens": safe_int(stats.get("prompt_tokens")),
-                        "completion_tokens": safe_int(stats.get("completion_tokens")),
-                        "total_tokens": safe_int(stats.get("total_tokens")),
-                        "input_bytes": safe_int(stats.get("input_bytes")),
-                        "output_bytes": safe_int(stats.get("output_bytes")),
-                        "last_seen_at": coerce_text(stats.get("last_seen_at")),
-                        "models": sorted(stats.get("model_names") or []),
+                        "request_count": safe_int(account_stats.get("request_count")),
+                        "error_count": safe_int(account_stats.get("error_count")),
+                        "prompt_tokens": safe_int(account_stats.get("prompt_tokens")),
+                        "completion_tokens": safe_int(account_stats.get("completion_tokens")),
+                        "total_tokens": safe_int(account_stats.get("total_tokens")),
+                        "input_bytes": safe_int(account_stats.get("input_bytes")),
+                        "output_bytes": safe_int(account_stats.get("output_bytes")),
+                        "last_seen_at": coerce_text(account_stats.get("last_seen_at")),
+                        "models": sorted(account_stats.get("model_names") or []),
+                        "supported_models_text": coerce_text(pool.get("supported_models_text")),
+                        "model_aliases_text": coerce_text(pool.get("model_aliases_text")),
                         "protocol": coerce_text(route_policy.get("text_upstream_protocol")) or "openai_chat_completions",
                         "cooldown_seconds": safe_int(route_policy.get("route_cooldown_seconds")),
                         "backoff_attempts": safe_int(route_policy.get("rate_limit_retry_attempts")),
@@ -343,17 +382,51 @@ class AdminAnalyticsMixin(AdminServiceBase):
         rows = self._load_recent_requests()
         stored_groups = {}
         memberships: dict[str, list[str]] = {}
+        stored_accounts = {}
+        subscriptions_by_group: dict[str, dict[str, int]] = {}
         if self.storage is not None:
+            try:
+                stored_account_rows = self.storage.list_admin_accounts()
+            except Exception:
+                stored_account_rows = []
+            for account in stored_account_rows:
+                if not isinstance(account, dict):
+                    continue
+                account_id = coerce_text(account.get("id"))
+                if account_id:
+                    stored_accounts[account_id] = account
             for group in self.storage.list_admin_groups():
+                extra = group.get("extra") if isinstance(group.get("extra"), dict) else {}
                 stored_groups[coerce_text(group.get("id"))] = {
                     **group,
+                    "subscription_type": coerce_text(extra.get("subscription_type")) or "standard",
+                    "daily_limit_usd": safe_float(extra.get("daily_limit_usd")),
+                    "weekly_limit_usd": safe_float(extra.get("weekly_limit_usd")),
+                    "monthly_limit_usd": safe_float(extra.get("monthly_limit_usd")),
+                    "rpm_limit": safe_int(extra.get("rpm_limit")),
                     "account_ids": set(),
+                    "active_account_ids": set(),
+                    "disabled_account_ids": set(),
                     "request_count": 0,
                     "error_count": 0,
                     "total_tokens": 0,
                     "input_bytes": 0,
                     "output_bytes": 0,
                 }
+            try:
+                subscription_rows = self.storage.list_admin_account_subscriptions()
+            except Exception:
+                subscription_rows = []
+            for subscription in subscription_rows:
+                if not isinstance(subscription, dict):
+                    continue
+                group_id = coerce_text(subscription.get("group_id"))
+                if not group_id:
+                    continue
+                entry = subscriptions_by_group.setdefault(group_id, {"subscription_count": 0, "active_subscription_count": 0})
+                entry["subscription_count"] += 1
+                if coerce_text(subscription.get("status")) == "active":
+                    entry["active_subscription_count"] += 1
             for row in self.storage.list_admin_account_groups():
                 account_id = coerce_text(row.get("account_id"))
                 group_id = coerce_text(row.get("group_id"))
@@ -361,6 +434,11 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     memberships.setdefault(account_id, []).append(group_id)
                     if group_id in stored_groups:
                         stored_groups[group_id]["account_ids"].add(account_id)
+                        account = stored_accounts.get(account_id, {})
+                        if account.get("enabled") is False or coerce_text(account.get("status")) == "disabled":
+                            stored_groups[group_id]["disabled_account_ids"].add(account_id)
+                        else:
+                            stored_groups[group_id]["active_account_ids"].add(account_id)
 
         for row in rows:
             consumer_id, consumer_name, consumer_type, preview = self._consumer_key(row)
@@ -412,8 +490,20 @@ class AdminAnalyticsMixin(AdminServiceBase):
 
         items = []
         for entry in stored_groups.values():
-            items.append({**entry, "account_count": len(entry.get("account_ids") or [])})
+            subscription_counts = subscriptions_by_group.get(coerce_text(entry.get("id")), {})
+            items.append(
+                {
+                    **entry,
+                    "account_count": len(entry.get("account_ids") or []),
+                    "active_account_count": len(entry.get("active_account_ids") or []),
+                    "rate_limited_account_count": len(entry.get("disabled_account_ids") or []),
+                    "subscription_count": safe_int(subscription_counts.get("subscription_count")),
+                    "active_subscription_count": safe_int(subscription_counts.get("active_subscription_count")),
+                }
+            )
             items[-1].pop("account_ids", None)
+            items[-1].pop("active_account_ids", None)
+            items[-1].pop("disabled_account_ids", None)
         items.sort(key=lambda item: (safe_int(item.get("sort_order")), -safe_int(item.get("request_count")), coerce_text(item.get("name"))))
         return {"ok": True, "items": items, "total": len(items)}
 

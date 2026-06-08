@@ -8,6 +8,14 @@ from .base import AdminServiceBase, coerce_text, safe_float, safe_int
 
 
 class AdminApiKeysMixin(AdminServiceBase):
+    def _resolve_key_group_id(self, account: dict, raw_group_id: object) -> str:
+        group_id = coerce_text(raw_group_id)
+        if not group_id:
+            return ""
+        self._validate_group_set([group_id])
+        self._validate_account_allowed_groups(account, [group_id])
+        return group_id
+
     def list_api_keys(self) -> dict:
         if self.storage is None:
             return {"ok": True, "items": [], "total": 0}
@@ -63,6 +71,10 @@ class AdminApiKeysMixin(AdminServiceBase):
             storage_account_id = coerce_text(row.get("account_id"))
             account = accounts.get(storage_account_id, {})
             usage = usage_by_key.get(coerce_text(row.get("id")), {})
+            group_id = coerce_text(row.get("group_id"))
+            group_name = coerce_text(row.get("group_name"))
+            active_group_id = group_id or coerce_text(account.get("active_group_id"))
+            active_group_name = group_name or coerce_text(account.get("active_group_name"))
             items.append({
                 **row,
                 "account_id": storage_account_id,
@@ -80,8 +92,8 @@ class AdminApiKeysMixin(AdminServiceBase):
                 "active_subscription_id": account.get("active_subscription_id"),
                 "active_plan_id": account.get("active_plan_id"),
                 "active_plan_name": account.get("active_plan_name"),
-                "active_group_id": account.get("active_group_id"),
-                "active_group_name": account.get("active_group_name"),
+                "active_group_id": active_group_id,
+                "active_group_name": active_group_name,
                 "active_subscription_status": account.get("active_subscription_status"),
                 "active_subscription_expires_at": account.get("active_subscription_expires_at"),
                 "request_count": safe_int(usage.get("request_count")),
@@ -116,11 +128,13 @@ class AdminApiKeysMixin(AdminServiceBase):
             if coerce_text(row.get("account_id")) == account_id and coerce_text(row.get("group_id"))
         ]
         self._validate_account_allowed_groups(account, group_ids)
+        group_id = self._resolve_key_group_id(account, payload.get("group_id"))
         raw_key = generate_proxy_api_key()
         saved = self.storage.upsert_admin_api_key(
             {
                 "id": f"uak_{uuid.uuid4().hex[:16]}",
                 "account_id": account_id,
+                "group_id": group_id,
                 "name": name,
                 "key_hash": hash_proxy_api_key(raw_key),
                 "key_preview": preview_proxy_api_key(raw_key),
@@ -146,10 +160,12 @@ class AdminApiKeysMixin(AdminServiceBase):
             if coerce_text(row.get("account_id")) == next_account_id and coerce_text(row.get("group_id"))
         ]
         self._validate_account_allowed_groups(account, group_ids)
+        next_group_id = self._resolve_key_group_id(account, payload.get("group_id")) if "group_id" in payload else coerce_text(current.get("group_id"))
         saved = self.storage.upsert_admin_api_key(
             {
                 **current,
                 "account_id": next_account_id,
+                "group_id": next_group_id,
                 "name": next_name,
                 "enabled": payload.get("enabled", current.get("enabled")) is not False,
             }

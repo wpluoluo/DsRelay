@@ -65,7 +65,7 @@ export function AccountOrdersPage() {
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>当前用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '-'}</small></div>
-          <div className="sub2-inline-summary-item"><span>订单总数</span><strong>{formatNumber(filtered.length)}</strong><small>当前筛选范围</small></div>
+          <div className="sub2-inline-summary-item"><span>订单总数</span><strong>{formatNumber(filtered.length)}</strong><small>订单</small></div>
           <div className="sub2-inline-summary-item"><span>待支付</span><strong>{formatNumber(pendingCount)}</strong><small>已支付 {formatNumber(paidCount)}</small></div>
           <div className="sub2-inline-summary-item"><span>失败订单</span><strong>{formatNumber(failedCount)}</strong><small>累计金额 {formatUsdCost(totalAmount / 100, 2)}</small></div>
         </div>
@@ -125,7 +125,7 @@ export function AccountOrdersPage() {
                 )) : (
                   <tr>
                     <td colSpan={7}>
-                      <EmptyState title="暂无订单" description="当前用户在筛选条件下没有订单记录。" />
+                      <EmptyState title="暂无订单" />
                     </td>
                   </tr>
                 )}

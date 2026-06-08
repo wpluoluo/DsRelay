@@ -127,7 +127,7 @@ export function AdminSubscriptionsPage() {
           <strong>订阅管理</strong>
         </div>
         <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>订阅数</span><strong>{formatNumber(filteredItems.length)}</strong><small>当前筛选范围</small></div>
+          <div className="sub2-inline-summary-item"><span>订阅数</span><strong>{formatNumber(filteredItems.length)}</strong><small>订阅</small></div>
           <div className="sub2-inline-summary-item"><span>有效订阅</span><strong>{formatNumber(activeCount)}</strong><small>已过期 {formatNumber(expiredCount)}</small></div>
           <div className="sub2-inline-summary-item"><span>即将到期</span><strong>{formatNumber(expiringSoonCount)}</strong><small>7 天内到期</small></div>
           <div className="sub2-inline-summary-item"><span>日累计用量</span><strong>{formatNumber(totalDailyUsed)}</strong><small>筛选订阅合计</small></div>
@@ -234,7 +234,6 @@ export function AdminSubscriptionsPage() {
                   <ListEmptyRow
                     colSpan={visibleColumns.size + 4}
                     title="暂无订阅"
-                    description="当前没有可展示的订阅记录。"
                     action={<Button tone="primary" onClick={() => setDraft({ user_id: '', plan_id: '', status: 'active' })}>分配订阅</Button>}
                   />
                 )}
@@ -268,36 +267,16 @@ export function AdminSubscriptionsPage() {
           }
         >
           <div className="admin-dialog">
-            <div className="admin-dialog-intro">
-              <strong>向用户分配新的订阅</strong>
-            </div>
-            <div className="admin-dialog-summary">
-              <div className="admin-dialog-summary-card">
-                <span>当前有效订阅</span>
-                <strong>{formatNumber(activeCount)}</strong>
-                <small>当前筛选范围</small>
-              </div>
-              <div className="admin-dialog-summary-card">
-                <span>即将到期</span>
-                <strong>{formatNumber(expiringSoonCount)}</strong>
-                <small>7 天内到期</small>
-              </div>
-              <div className="admin-dialog-summary-card">
-                <span>待分配状态</span>
-                <strong>{draft.status || 'active'}</strong>
-                <small>{draft.plan_id ? '已选择计划' : '待选择计划'}</small>
-              </div>
-            </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
                 <span>目标用户</span>
-                <strong>{selectedUser?.name || '待选择用户'}</strong>
+                <strong>{selectedUser?.name || '-'}</strong>
                 <small>{selectedUser?.group_name || selectedUser?.group_id || '未分组'}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>计划价格</span>
                 <strong>{selectedPlan ? formatNumber(selectedPlan.final_price_cents || selectedPlan.price_cents || 0) : '-'}</strong>
-                <small>{selectedPlan ? `${formatNumber(selectedPlan.validity_days || 0)} 天` : '待选择计划'}</small>
+                <small>{selectedPlan ? `${formatNumber(selectedPlan.validity_days || 0)} 天` : '-'}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>额度预览</span>
@@ -400,29 +379,10 @@ export function AdminSubscriptionsPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{extendTarget.name}</strong>
-              <span>确认要为该订阅增加有效期。默认增加 30 天，可手动调整。</span>
-            </div>
-            <div className="admin-dialog-summary">
-              <div className="admin-dialog-summary-card">
-                <span>操作类型</span>
-                <strong>延期</strong>
-                <small>直接写入新的到期时间</small>
-              </div>
-              <div className="admin-dialog-summary-card">
-                <span>当前选择</span>
-                <strong>{extendTarget.days} 天</strong>
-                <small>支持 7 / 30 / 90 / 365 天</small>
-              </div>
-              <div className="admin-dialog-summary-card">
-                <span>影响范围</span>
-                <strong>单个订阅</strong>
-                <small>不会变更额度历史</small>
-              </div>
             </div>
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
                 <strong>延期参数</strong>
-                <span>提交后立即写入订阅到期时间</span>
               </div>
               <div className="admin-dialog-grid">
                 <Field label="延期天数">
@@ -463,24 +423,6 @@ export function AdminSubscriptionsPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{actionTarget.name}</strong>
-              <span>{actionTarget.action === 'reset' ? '将清空该订阅的日、周、月额度使用量。' : '撤销后该订阅会立刻失效，影响用户调用。'}</span>
-            </div>
-            <div className="admin-dialog-summary">
-              <div className="admin-dialog-summary-card">
-                <span>操作类型</span>
-                <strong>{actionTarget.action === 'reset' ? '重置额度' : '撤销订阅'}</strong>
-                <small>{actionTarget.action === 'reset' ? '清空日 / 周 / 月用量' : '状态会立即失效'}</small>
-              </div>
-              <div className="admin-dialog-summary-card">
-                <span>执行对象</span>
-                <strong>{actionTarget.name}</strong>
-                <small>当前选中的单个订阅</small>
-              </div>
-              <div className="admin-dialog-summary-card">
-                <span>风险级别</span>
-                <strong>{actionTarget.action === 'reset' ? '中' : '高'}</strong>
-                <small>{actionTarget.action === 'reset' ? '仅影响配额统计' : '会影响后续调用可用性'}</small>
-              </div>
             </div>
           </div>
         </Modal>

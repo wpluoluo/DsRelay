@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .account import AdminAccountPortalMixin
 from .analytics import AdminAnalyticsMixin
 from .api_keys import AdminApiKeysMixin
 from .base import AdminServiceBase
@@ -12,6 +13,7 @@ from .users import AdminUsersMixin
 
 
 class AdminConsoleService(
+    AdminAccountPortalMixin,
     AdminContentMixin,
     AdminChannelsMixin,
     AdminProtocolsMixin,

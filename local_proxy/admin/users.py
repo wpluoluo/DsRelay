@@ -137,3 +137,42 @@ class AdminUsersMixin(AdminServiceBase):
         current = self._require_account(user_id)
         self.storage.delete_admin_account(current["id"])
         return {"ok": True, "id": current["id"]}
+
+    def adjust_user_balance(self, user_id: str, payload: dict) -> dict:
+        if self.storage is None:
+            raise RuntimeError("storage not configured")
+        current = self._require_account(user_id)
+        operation = coerce_text(payload.get("operation") or payload.get("type") or "deposit")
+        amount_cents = safe_int(payload.get("amount_cents"))
+        if not amount_cents:
+            amount = payload.get("amount")
+            try:
+                amount_cents = int(round(float(amount or 0) * 100))
+            except Exception:
+                amount_cents = 0
+        if amount_cents <= 0:
+            raise ValueError("amount is required")
+        if operation in {"withdraw", "subtract", "deduct"}:
+            delta = -amount_cents
+            event_type = "withdraw"
+        else:
+            delta = amount_cents
+            event_type = "deposit"
+        event = self.storage.adjust_admin_account_balance(
+            current["id"],
+            delta,
+            event_type=event_type,
+            note=coerce_text(payload.get("note") or payload.get("notes")),
+            actor_type=coerce_text(payload.get("actor_type")) or "admin",
+            actor_id=coerce_text(payload.get("actor_id")),
+        )
+        refreshed = self.storage.get_admin_account(current["id"]) or current
+        refreshed.update(self._get_account_subscription_status(current["id"]))
+        return {"ok": True, "item": refreshed, "event": event}
+
+    def list_user_balance_events(self, user_id: str, limit: int = 200) -> dict:
+        if self.storage is None:
+            return {"ok": True, "items": [], "total": 0}
+        current = self._require_account(user_id)
+        rows = self.storage.list_admin_balance_events(current["id"], limit=limit)
+        return {"ok": True, "items": rows, "total": len(rows)}

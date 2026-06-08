@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Download, Edit, Eye, Plus, RefreshCw, Server, Trash2 } from 'lucide-react';
+import { Ban, Download, Edit, Eye, Plus, RefreshCw, Server, ShieldCheck, Trash2 } from 'lucide-react';
 import { fetchAdminProviderAccounts, saveConfig, testPool } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, NumberInput, Select, TextArea, TextInput, Toggle } from '../components';
 import {
@@ -33,13 +33,14 @@ const STORAGE_KEY = 'admin-provider-accounts-view-state';
 
 export function AdminAccountsPage() {
   const dashboard = useDashboard();
-  const accountsQuery = useQuery({ queryKey: ['admin-provider-accounts'], queryFn: fetchAdminProviderAccounts, refetchInterval: 10000 });
   const savedState = readStorageJSON(STORAGE_KEY, {
     search: '',
     statusFilter: '' as StatusFilter,
     healthFilter: '' as HealthFilter,
     poolFilter: '',
     protocolFilter: '',
+    autoRefreshEnabled: true,
+    autoRefreshInterval: 10,
     pageSize: 20,
     visibleColumns: DEFAULT_VISIBLE_COLUMNS,
   });
@@ -49,16 +50,24 @@ export function AdminAccountsPage() {
   const [healthFilter, setHealthFilter] = useState<HealthFilter>(savedState.healthFilter || '');
   const [poolFilter, setPoolFilter] = useState(savedState.poolFilter || '');
   const [protocolFilter, setProtocolFilter] = useState(savedState.protocolFilter || '');
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(savedState.autoRefreshEnabled !== false);
+  const [autoRefreshInterval, setAutoRefreshInterval] = useState(Number(savedState.autoRefreshInterval || 10));
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
   const initialVisibleColumns = ((savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS) as string[]).map((item) => (item === 'pool' ? 'route' : item)) as AccountColumnKey[];
   const [visibleColumns, setVisibleColumns] = useState<Set<AccountColumnKey>>(new Set(initialVisibleColumns.length ? initialVisibleColumns : DEFAULT_VISIBLE_COLUMNS));
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [inspectAccount, setInspectAccount] = useState<AdminProviderAccount | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminProviderAccount | null>(null);
   const [accountIndex, setAccountIndex] = useState<number | null>(null);
   const [accountDraft, setAccountDraft] = useState<Pool | null>(null);
   const [accountTest, setAccountTest] = useState<PoolTestResult | null>(null);
   const [accountStatus, setAccountStatus] = useState('');
+  const accountsQuery = useQuery({
+    queryKey: ['admin-provider-accounts'],
+    queryFn: fetchAdminProviderAccounts,
+    refetchInterval: autoRefreshEnabled ? Math.max(5, autoRefreshInterval) * 1000 : false,
+  });
 
   const savePoolsMutation = useMutation({
     mutationFn: (config: RuntimeConfig) => saveConfig(config),
@@ -103,6 +112,7 @@ export function AdminAccountsPage() {
         item.provider_name,
         item.pool_name,
         item.route_url,
+        ...(item.route_urls || []),
         item.protocol,
         ...(item.models || []),
       ]
@@ -114,6 +124,8 @@ export function AdminAccountsPage() {
 
   const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
   const pagedItems = filteredItems.slice((page - 1) * pageSize, page * pageSize);
+  const allPageSelected = pagedItems.length > 0 && pagedItems.every((item) => selectedIds.has(item.id));
+  const selectedItems = useMemo(() => items.filter((item) => selectedIds.has(item.id)), [items, selectedIds]);
 
   useEffect(() => {
     writeStorageJSON(STORAGE_KEY, {
@@ -122,10 +134,20 @@ export function AdminAccountsPage() {
       healthFilter,
       poolFilter,
       protocolFilter,
+      autoRefreshEnabled,
+      autoRefreshInterval,
       pageSize,
       visibleColumns: Array.from(visibleColumns),
     });
-  }, [healthFilter, pageSize, poolFilter, protocolFilter, search, statusFilter, visibleColumns]);
+  }, [autoRefreshEnabled, autoRefreshInterval, healthFilter, pageSize, poolFilter, protocolFilter, search, statusFilter, visibleColumns]);
+
+  useEffect(() => {
+    const validIds = new Set(items.map((item) => item.id));
+    setSelectedIds((current) => {
+      const next = new Set(Array.from(current).filter((id) => validIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [items]);
 
   function toggleColumn(key: AccountColumnKey) {
     setVisibleColumns((current) => {
@@ -143,6 +165,35 @@ export function AdminAccountsPage() {
     setPoolFilter('');
     setProtocolFilter('');
     setPage(1);
+  }
+
+  function toggleSelected(itemId: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  }
+
+  function togglePageSelected() {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (allPageSelected) {
+        for (const item of pagedItems) next.delete(item.id);
+      } else {
+        for (const item of pagedItems) next.add(item.id);
+      }
+      return next;
+    });
+  }
+
+  function updateSelectedAccountsEnabled(enabled: boolean) {
+    const selectedIndexes = new Set(selectedItems.map(resolvePoolIndex).filter((index) => index >= 0));
+    if (!selectedIndexes.size) return;
+    const next = dashboard.pools.map((pool, index) => (selectedIndexes.has(index) ? normalizePool({ ...pool, enabled }) : pool));
+    saveAccountPools(next);
+    setSelectedIds(new Set());
   }
 
   function exportFilteredAccounts() {
@@ -220,10 +271,16 @@ export function AdminAccountsPage() {
                     <span>立即刷新</span>
                     <RefreshCw size={14} />
                   </button>
-                  <button type="button" onClick={() => accountsQuery.refetch()}>
-                    <span>使用当前 10 秒刷新</span>
-                    <RefreshCw size={14} />
+                  <button type="button" onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}>
+                    <span>{autoRefreshEnabled ? '关闭自动刷新' : '开启自动刷新'}</span>
+                    <strong>{autoRefreshEnabled ? '✓' : ''}</strong>
                   </button>
+                  {[10, 30, 60, 120].map((seconds) => (
+                    <button key={seconds} type="button" onClick={() => { setAutoRefreshInterval(seconds); setAutoRefreshEnabled(true); }}>
+                      <span>{seconds} 秒</span>
+                      <strong>{autoRefreshEnabled && autoRefreshInterval === seconds ? '✓' : ''}</strong>
+                    </button>
+                  ))}
                 </ToolsMenu>
                 <ToolsMenu>
                   <button type="button" onClick={resetFilters}>
@@ -278,9 +335,20 @@ export function AdminAccountsPage() {
         }
         table={
           <div className="table-wrap table-scroll table-wide">
+            {selectedIds.size ? (
+              <div className="sub2-bulk-bar">
+                <strong>已选择 {formatNumber(selectedIds.size)} 个账号</strong>
+                <div className="button-row">
+                  <Button onClick={() => updateSelectedAccountsEnabled(true)}><ShieldCheck size={14} />启用</Button>
+                  <Button tone="danger" onClick={() => updateSelectedAccountsEnabled(false)}><Ban size={14} />停用</Button>
+                  <Button onClick={() => setSelectedIds(new Set())}>取消选择</Button>
+                </div>
+              </div>
+            ) : null}
             <table>
               <thead>
                 <tr>
+                  <th><input type="checkbox" checked={allPageSelected} onChange={togglePageSelected} aria-label="选择当前页账号" /></th>
                   <th>上游账号</th>
                   {visibleColumns.has('route') ? <th>线路</th> : null}
                   {visibleColumns.has('protocol') ? <th>协议</th> : null}
@@ -294,17 +362,18 @@ export function AdminAccountsPage() {
               <tbody>
                 {pagedItems.length ? pagedItems.map((item) => (
                   <tr key={item.id}>
+                    <td><input type="checkbox" checked={selectedIds.has(item.id)} onChange={() => toggleSelected(item.id)} aria-label={`选择 ${item.pool_name || item.id}`} /></td>
                     <td>
                       <div className="sub2-cell-stack sub2-cell-stack-tight">
-                        <strong>{item.provider_name || routeHost(item.route_url) || item.id}</strong>
-                        <small>{item.route_url || '-'}</small>
+                        <strong>{item.pool_name || item.provider_name || item.id}</strong>
+                        <small>{item.provider_name || routeHost(item.route_url) || '-'}</small>
                       </div>
                     </td>
                     {visibleColumns.has('route') ? (
                       <td>
                         <div className="sub2-cell-stack sub2-cell-stack-tight">
                           <strong>{item.pool_name || '-'}</strong>
-                          <small>优先级 {formatNumber(item.priority || 0)} · 线路 {formatNumber(item.route_index || 0)}</small>
+                          <small>优先级 {formatNumber(item.priority || 0)} · 线路 {formatNumber(item.route_count || item.route_urls?.length || 0)}</small>
                         </div>
                       </td>
                     ) : null}
@@ -352,13 +421,18 @@ export function AdminAccountsPage() {
                       <RowActions>
                         <RowAction icon={Eye} label="详情" onClick={() => setInspectAccount(item)} />
                         <RowAction icon={Edit} label="编辑" onClick={() => openAccountForm(resolvePoolIndex(item))} />
-                        <RowAction icon={Trash2} label="删除" tone="danger" onClick={() => setDeleteTarget(item)} />
+                        <ToolsMenu label="更多">
+                          <button type="button" onClick={() => setDeleteTarget(item)} className="danger">
+                            <span>删除</span>
+                            <Trash2 size={14} />
+                          </button>
+                        </ToolsMenu>
                       </RowActions>
                     </td>
                   </tr>
                 )) : (
                   <ListEmptyRow
-                    colSpan={visibleColumns.size + 2}
+                    colSpan={visibleColumns.size + 3}
                     title="暂无账号数据"
                     action={<Button tone="primary" data-tour="accounts-create-btn" onClick={() => openAccountForm(null)}><Plus size={14} />添加账号</Button>}
                   />
@@ -395,7 +469,7 @@ export function AdminAccountsPage() {
               <div className="admin-dialog-summary-card">
                 <span>上游账号</span>
                 <strong>{inspectAccount.pool_name || '-'}</strong>
-                <small>优先级 {formatNumber(inspectAccount.priority || 0)} · 线路 {formatNumber(inspectAccount.route_index || 0)}</small>
+                <small>优先级 {formatNumber(inspectAccount.priority || 0)} · 线路 {formatNumber(inspectAccount.route_count || inspectAccount.route_urls?.length || 0)}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>状态</span>
@@ -413,7 +487,7 @@ export function AdminAccountsPage() {
                 <strong>连接信息</strong>
               </div>
               <div className="admin-dialog-grid">
-                <Field label="线路 URL"><TextInput readOnly value={inspectAccount.route_url || '-'} /></Field>
+                <Field label="线路数量"><TextInput readOnly value={formatNumber(inspectAccount.route_count || inspectAccount.route_urls?.length || 0)} /></Field>
                 <Field label="协议"><TextInput readOnly value={inspectAccount.protocol || '-'} /></Field>
                 <Field label="Key 数量"><TextInput readOnly value={String(inspectAccount.key_count || 0)} /></Field>
                 <Field label="冷却秒数"><TextInput readOnly value={String(inspectAccount.cooldown_seconds || 0)} /></Field>
@@ -421,6 +495,9 @@ export function AdminAccountsPage() {
                 <Field label="最近请求"><TextInput readOnly value={inspectAccount.last_seen_at || '-'} /></Field>
               </div>
             </div>
+            <Field label="线路 URL" full>
+              <TextArea readOnly rows={Math.min(6, Math.max(2, inspectAccount.route_urls?.length || 1))} value={(inspectAccount.route_urls || [inspectAccount.route_url || '-']).join('\n')} />
+            </Field>
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
                 <strong>用量观测</strong>
@@ -475,7 +552,7 @@ export function AdminAccountsPage() {
           onSave={saveAccountDraft}
           onTest={() => {
             if (accountIndex == null) {
-              setAccountTest({ ok: false, message: '新账号保存后再测试。' });
+              setAccountTest(null);
               return;
             }
             testMutation.mutate({ index: accountIndex, pool: accountDraft });
@@ -486,7 +563,7 @@ export function AdminAccountsPage() {
   );
 }
 
-function ProviderAccountModal({
+export function ProviderAccountModal({
   pool,
   title,
   saving,

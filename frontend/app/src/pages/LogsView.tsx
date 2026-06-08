@@ -74,7 +74,7 @@ export function LogsView({ state }: { state: DashboardState }) {
                       </RowActions>
                     </td>
                   </tr>
-                )) : <tr><td colSpan={8}><EmptyState title="暂无日志" description="当前没有可展示的运行日志。" /></td></tr>}
+                )) : <tr><td colSpan={8}><EmptyState title="暂无日志" /></td></tr>}
               </tbody>
             </table>
           </div>

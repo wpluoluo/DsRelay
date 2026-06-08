@@ -71,7 +71,7 @@ export function AccountSubscriptionsPage() {
               <UsageMeter label="月用量" used={Number(item.monthly_used || 0)} limit={Number(item.monthly_limit || 0)} />
             </div>
           </Panel>
-        )) : <Empty>当前用户暂无订阅。</Empty>}
+        )) : <Empty>暂无订阅</Empty>}
       </div>
 
       {inspectSubscription ? (

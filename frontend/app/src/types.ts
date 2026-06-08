@@ -218,6 +218,9 @@ export type AdminProviderAccount = {
   pool_name?: string;
   pool_index?: number;
   route_url?: string;
+  route_urls?: string[];
+  routes?: Array<{ url?: string; index?: number; request_count?: number; error_count?: number; last_seen_at?: string }>;
+  route_count?: number;
   route_index?: number;
   provider_name?: string;
   priority?: number;
@@ -226,6 +229,8 @@ export type AdminProviderAccount = {
   cooldown_seconds?: number;
   backoff_attempts?: number;
   models?: string[];
+  supported_models_text?: string;
+  model_aliases_text?: string;
   name: string;
   source_type: string;
   preview?: string;
@@ -323,6 +328,15 @@ export type AdminGroup = {
   enabled?: boolean;
   sort_order?: number;
   account_count?: number;
+  active_account_count?: number;
+  rate_limited_account_count?: number;
+  subscription_type?: string;
+  daily_limit_usd?: number;
+  weekly_limit_usd?: number;
+  monthly_limit_usd?: number;
+  rpm_limit?: number;
+  subscription_count?: number;
+  active_subscription_count?: number;
   request_count?: number;
   error_count?: number;
   total_tokens?: number;
@@ -551,6 +565,8 @@ export type AdminChannel = {
 export type AdminApiKey = {
   id: string;
   account_id: string;
+  group_id?: string;
+  group_name?: string;
   account_name?: string;
   account_source_type?: string;
   account_enabled?: boolean;
@@ -585,6 +601,20 @@ export type AdminApiKey = {
   actual_cost?: number;
   total_cost?: number;
   last_used_request_at?: string;
+};
+
+export type AdminBalanceEvent = {
+  id: string;
+  account_id: string;
+  account_name?: string;
+  event_type?: string;
+  amount_cents?: number;
+  before_balance_cents?: number;
+  after_balance_cents?: number;
+  note?: string;
+  actor_type?: string;
+  actor_id?: string;
+  created_at?: number;
 };
 
 export type AdminSubscriptionPlan = {
@@ -703,4 +733,57 @@ export type AdminContentPayload = {
   label?: string;
   items?: AdminContentItem[];
   total?: number;
+};
+
+export type AccountRedeemHistoryItem = {
+  id: string;
+  type?: string;
+  amount_cents?: number;
+  before_balance_cents?: number;
+  after_balance_cents?: number;
+  note?: string;
+  created_at?: number;
+};
+
+export type AccountRedeemPayload = {
+  ok?: boolean;
+  user_id?: string;
+  balance_cents?: number;
+  concurrency_limit?: number;
+  history?: AccountRedeemHistoryItem[];
+  total?: number;
+};
+
+export type AccountRedeemResult = {
+  ok?: boolean;
+  code?: string;
+  type?: string;
+  message?: string;
+  value?: number | string;
+  balance_cents?: number;
+  concurrency_limit?: number;
+  plan_id?: string;
+  plan_name?: string;
+  group_id?: string;
+  validity_days?: number;
+};
+
+export type AccountAffiliatePayload = {
+  ok?: boolean;
+  user_id?: string;
+  aff_code?: string;
+  effective_rebate_rate_percent?: number;
+  aff_count?: number;
+  aff_quota_cents?: number;
+  aff_history_quota_cents?: number;
+  aff_frozen_quota_cents?: number;
+  invitees?: AdminContentItem[];
+  rebates?: AdminContentItem[];
+  transfers?: AdminContentItem[];
+};
+
+export type AccountAffiliateTransferResult = {
+  ok?: boolean;
+  transferred_cents?: number;
+  item?: AdminContentItem;
 };

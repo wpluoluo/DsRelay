@@ -1,5 +1,6 @@
 import json
 import time
+import uuid
 
 import pymysql
 
@@ -189,6 +190,7 @@ class ProxyStorage:
                     CREATE TABLE IF NOT EXISTS admin_api_keys (
                         id VARCHAR(64) PRIMARY KEY,
                         account_id VARCHAR(64) NOT NULL,
+                        group_id VARCHAR(64) NULL,
                         name VARCHAR(128) NOT NULL,
                         key_hash VARCHAR(128) NOT NULL,
                         key_preview VARCHAR(64) NOT NULL,
@@ -197,10 +199,19 @@ class ProxyStorage:
                         created_at DOUBLE NOT NULL,
                         updated_at DOUBLE NOT NULL,
                         INDEX idx_admin_api_keys_account_id (account_id),
+                        INDEX idx_admin_api_keys_group_id (group_id),
                         UNIQUE KEY uniq_admin_api_keys_hash (key_hash)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                     """
                 )
+                try:
+                    cur.execute("ALTER TABLE admin_api_keys ADD COLUMN group_id VARCHAR(64) NULL AFTER account_id")
+                except Exception:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE admin_api_keys ADD INDEX idx_admin_api_keys_group_id (group_id)")
+                except Exception:
+                    pass
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS admin_subscription_plans (
@@ -216,6 +227,24 @@ class ProxyStorage:
                         note TEXT NULL,
                         created_at DOUBLE NOT NULL,
                         updated_at DOUBLE NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS admin_balance_events (
+                        id VARCHAR(64) PRIMARY KEY,
+                        account_id VARCHAR(64) NOT NULL,
+                        event_type VARCHAR(32) NOT NULL,
+                        amount_cents BIGINT NOT NULL,
+                        before_balance_cents BIGINT NOT NULL,
+                        after_balance_cents BIGINT NOT NULL,
+                        note TEXT NULL,
+                        actor_type VARCHAR(32) NOT NULL DEFAULT 'admin',
+                        actor_id VARCHAR(128) NULL,
+                        created_at DOUBLE NOT NULL,
+                        INDEX idx_admin_balance_events_account_id (account_id),
+                        INDEX idx_admin_balance_events_created_at (created_at)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                     """
                 )
@@ -753,10 +782,120 @@ class ProxyStorage:
                 cur.execute("DELETE FROM admin_api_keys WHERE account_id = %s", (target,))
                 cur.execute("DELETE FROM admin_account_subscriptions WHERE account_id = %s", (target,))
                 cur.execute("DELETE FROM admin_payment_orders WHERE account_id = %s", (target,))
+                cur.execute("DELETE FROM admin_balance_events WHERE account_id = %s", (target,))
                 cur.execute("DELETE FROM admin_accounts WHERE id = %s", (target,))
             conn.commit()
         finally:
             conn.close()
+
+    def adjust_admin_account_balance(self, account_id: str, amount_cents: int, *, event_type: str, note: str = "", actor_type: str = "admin", actor_id: str = "") -> dict:
+        target = str(account_id or "").strip()
+        if not target:
+            raise ValueError("account_id is required")
+        delta = int(amount_cents or 0)
+        normalized_type = str(event_type or "").strip() or ("deposit" if delta >= 0 else "withdraw")
+        now = time.time()
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT balance_cents FROM admin_accounts WHERE id = %s FOR UPDATE", (target,))
+                row = cur.fetchone()
+                if row is None:
+                    raise ValueError("user not found")
+                before_balance = int(row[0] or 0)
+                after_balance = before_balance + delta
+                if after_balance < 0:
+                    raise ValueError("insufficient balance")
+                cur.execute(
+                    "UPDATE admin_accounts SET balance_cents = %s, updated_at = %s WHERE id = %s",
+                    (after_balance, now, target),
+                )
+                event_id = f"bal_{uuid.uuid4().hex[:16]}"
+                cur.execute(
+                    """
+                    INSERT INTO admin_balance_events
+                    (id, account_id, event_type, amount_cents, before_balance_cents, after_balance_cents, note, actor_type, actor_id, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        event_id,
+                        target,
+                        normalized_type,
+                        delta,
+                        before_balance,
+                        after_balance,
+                        str(note or ""),
+                        str(actor_type or "admin"),
+                        str(actor_id or ""),
+                        now,
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        return {
+            "id": event_id,
+            "account_id": target,
+            "event_type": normalized_type,
+            "amount_cents": delta,
+            "before_balance_cents": before_balance,
+            "after_balance_cents": after_balance,
+            "note": str(note or ""),
+            "actor_type": str(actor_type or "admin"),
+            "actor_id": str(actor_id or ""),
+            "created_at": now,
+        }
+
+    def list_admin_balance_events(self, account_id: str | None = None, limit: int = 200) -> list[dict]:
+        target = str(account_id or "").strip()
+        rows = []
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                if target:
+                    cur.execute(
+                        """
+                        SELECT e.id, e.account_id, e.event_type, e.amount_cents, e.before_balance_cents,
+                               e.after_balance_cents, e.note, e.actor_type, e.actor_id, e.created_at, u.name
+                        FROM admin_balance_events e
+                        LEFT JOIN admin_accounts u ON u.id = e.account_id
+                        WHERE e.account_id = %s
+                        ORDER BY e.created_at DESC
+                        LIMIT %s
+                        """,
+                        (target, int(limit or 200)),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT e.id, e.account_id, e.event_type, e.amount_cents, e.before_balance_cents,
+                               e.after_balance_cents, e.note, e.actor_type, e.actor_id, e.created_at, u.name
+                        FROM admin_balance_events e
+                        LEFT JOIN admin_accounts u ON u.id = e.account_id
+                        ORDER BY e.created_at DESC
+                        LIMIT %s
+                        """,
+                        (int(limit or 200),),
+                    )
+                for row in cur.fetchall():
+                    rows.append(
+                        {
+                            "id": str(row[0] or ""),
+                            "account_id": str(row[1] or ""),
+                            "event_type": str(row[2] or ""),
+                            "amount_cents": int(row[3] or 0),
+                            "before_balance_cents": int(row[4] or 0),
+                            "after_balance_cents": int(row[5] or 0),
+                            "note": str(row[6] or ""),
+                            "actor_type": str(row[7] or ""),
+                            "actor_id": str(row[8] or ""),
+                            "created_at": float(row[9] or 0.0),
+                            "account_name": str(row[10] or ""),
+                        }
+                    )
+        finally:
+            conn.close()
+        return rows
 
     def list_admin_groups(self) -> list[dict]:
         rows = []
@@ -859,9 +998,9 @@ class ProxyStorage:
         try:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM admin_account_groups WHERE group_id = %s", (target,))
+                cur.execute("UPDATE admin_api_keys SET group_id = NULL WHERE group_id = %s", (target,))
                 cur.execute("UPDATE admin_subscription_plans SET group_id = NULL WHERE group_id = %s", (target,))
                 cur.execute("UPDATE admin_account_subscriptions SET group_id = NULL WHERE group_id = %s", (target,))
-                cur.execute("UPDATE admin_payment_orders SET group_id = NULL WHERE group_id = %s", (target,))
                 cur.execute("DELETE FROM admin_groups WHERE id = %s", (target,))
             conn.commit()
         finally:
@@ -920,9 +1059,11 @@ class ProxyStorage:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, account_id, name, key_hash, key_preview, enabled, last_used_at, created_at, updated_at
-                    FROM admin_api_keys
-                    ORDER BY updated_at DESC, created_at DESC
+                    SELECT k.id, k.account_id, k.group_id, k.name, k.key_hash, k.key_preview,
+                           k.enabled, k.last_used_at, k.created_at, k.updated_at, g.name
+                    FROM admin_api_keys k
+                    LEFT JOIN admin_groups g ON g.id = k.group_id
+                    ORDER BY k.updated_at DESC, k.created_at DESC
                     """
                 )
                 for row in cur.fetchall():
@@ -930,13 +1071,15 @@ class ProxyStorage:
                         {
                             "id": str(row[0] or ""),
                             "account_id": str(row[1] or ""),
-                            "name": str(row[2] or ""),
-                            "key_hash": str(row[3] or ""),
-                            "key_preview": str(row[4] or ""),
-                            "enabled": bool(row[5]),
-                            "last_used_at": float(row[6] or 0.0) if row[6] is not None else None,
-                            "created_at": float(row[7] or 0.0),
-                            "updated_at": float(row[8] or 0.0),
+                            "group_id": str(row[2] or ""),
+                            "name": str(row[3] or ""),
+                            "key_hash": str(row[4] or ""),
+                            "key_preview": str(row[5] or ""),
+                            "enabled": bool(row[6]),
+                            "last_used_at": float(row[7] or 0.0) if row[7] is not None else None,
+                            "created_at": float(row[8] or 0.0),
+                            "updated_at": float(row[9] or 0.0),
+                            "group_name": str(row[10] or ""),
                         }
                     )
         finally:
@@ -957,6 +1100,7 @@ class ProxyStorage:
         item = {
             "id": str(payload.get("id") or "").strip(),
             "account_id": str(payload.get("account_id") or "").strip(),
+            "group_id": str(payload.get("group_id") or "").strip(),
             "name": str(payload.get("name") or "").strip(),
             "key_hash": str(payload.get("key_hash") or "").strip(),
             "key_preview": str(payload.get("key_preview") or "").strip(),
@@ -974,12 +1118,13 @@ class ProxyStorage:
                 cur.execute(
                     """
                     REPLACE INTO admin_api_keys
-                    (id, account_id, name, key_hash, key_preview, enabled, last_used_at, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (id, account_id, group_id, name, key_hash, key_preview, enabled, last_used_at, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         item["id"],
                         item["account_id"],
+                        item["group_id"] or None,
                         item["name"],
                         item["key_hash"],
                         item["key_preview"],
@@ -994,6 +1139,11 @@ class ProxyStorage:
             conn.close()
         item["created_at"] = created_at
         item["updated_at"] = now
+        if item["group_id"]:
+            group = self.get_admin_group(item["group_id"])
+            item["group_name"] = str(group.get("name") or "")
+        else:
+            item["group_name"] = ""
         return item
 
     def delete_admin_api_key(self, key_id: str) -> None:
@@ -1043,10 +1193,12 @@ class ProxyStorage:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT k.id, k.account_id, k.name, k.key_hash, k.key_preview, k.enabled,
-                           u.name, u.source_type, u.enabled, u.note, u.status, u.allowed_group_ids_json
+                    SELECT k.id, k.account_id, k.group_id, k.name, k.key_hash, k.key_preview, k.enabled,
+                           u.name, u.source_type, u.enabled, u.note, u.status, u.allowed_group_ids_json,
+                           g.name
                     FROM admin_api_keys k
                     LEFT JOIN admin_accounts u ON u.id = k.account_id
+                    LEFT JOIN admin_groups g ON g.id = k.group_id
                     WHERE k.key_hash = %s
                     LIMIT 1
                     """,
@@ -1058,22 +1210,24 @@ class ProxyStorage:
         if row is None:
             return {}
         try:
-            allowed_group_ids = json.loads(row[11]) if row[11] else []
+            allowed_group_ids = json.loads(row[12]) if row[12] else []
         except json.JSONDecodeError:
             allowed_group_ids = []
         return {
             "id": str(row[0] or ""),
             "account_id": str(row[1] or ""),
-            "name": str(row[2] or ""),
-            "key_hash": str(row[3] or ""),
-            "key_preview": str(row[4] or ""),
-            "enabled": bool(row[5]),
-            "account_name": str(row[6] or ""),
-            "account_source_type": str(row[7] or ""),
-            "account_enabled": bool(row[8]) if row[8] is not None else True,
-            "account_note": str(row[9] or ""),
-            "account_status": str(row[10] or ""),
+            "group_id": str(row[2] or ""),
+            "name": str(row[3] or ""),
+            "key_hash": str(row[4] or ""),
+            "key_preview": str(row[5] or ""),
+            "enabled": bool(row[6]),
+            "account_name": str(row[7] or ""),
+            "account_source_type": str(row[8] or ""),
+            "account_enabled": bool(row[9]) if row[9] is not None else True,
+            "account_note": str(row[10] or ""),
+            "account_status": str(row[11] or ""),
             "account_allowed_group_ids": allowed_group_ids if isinstance(allowed_group_ids, list) else [],
+            "group_name": str(row[13] or ""),
         }
 
     def list_admin_subscription_plans(self) -> list[dict]:
@@ -1634,16 +1788,22 @@ class ProxyStorage:
             "updated_at": float(row[11] or 0.0),
         }
 
-    def get_active_subscription_context_for_account(self, account_id: str) -> dict:
+    def get_active_subscription_context_for_account(self, account_id: str, group_id: str = "") -> dict:
         target = str(account_id or "").strip()
         if not target:
             return {}
+        target_group_id = str(group_id or "").strip()
         now = time.time()
         conn = self._connect()
         try:
             with conn.cursor() as cur:
+                params = [target, now]
+                group_filter = ""
+                if target_group_id:
+                    group_filter = "AND s.group_id = %s"
+                    params.append(target_group_id)
                 cur.execute(
-                    """
+                    f"""
                     SELECT s.id, s.account_id, s.plan_id, s.group_id, s.status, s.started_at, s.expires_at,
                            p.name, p.price_cents, g.name
                     FROM admin_account_subscriptions s
@@ -1652,10 +1812,11 @@ class ProxyStorage:
                     WHERE s.account_id = %s
                       AND s.status = 'active'
                       AND (s.expires_at IS NULL OR s.expires_at > %s)
+                      {group_filter}
                     ORDER BY s.updated_at DESC, s.created_at DESC
                     LIMIT 1
                     """,
-                    (target, now),
+                    tuple(params),
                 )
                 row = cur.fetchone()
         finally:
