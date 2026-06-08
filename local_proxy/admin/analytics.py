@@ -152,6 +152,54 @@ class AdminAnalyticsMixin(AdminServiceBase):
         )
         return {"ok": True, "items": items[:limit], "total": len(items)}
 
+    def list_users(self, limit: int = 200) -> dict:
+        accounts_payload = self.list_accounts(limit=limit)
+        key_counts: dict[str, int] = {}
+        active_key_counts: dict[str, int] = {}
+        subscription_counts: dict[str, int] = {}
+        active_subscription_counts: dict[str, int] = {}
+        if self.storage is not None:
+            for row in self.storage.list_admin_api_keys():
+                account_id = coerce_text(row.get("account_id"))
+                if not account_id:
+                    continue
+                key_counts[account_id] = key_counts.get(account_id, 0) + 1
+                if row.get("enabled") is not False:
+                    active_key_counts[account_id] = active_key_counts.get(account_id, 0) + 1
+            for row in self.storage.list_admin_account_subscriptions():
+                account_id = coerce_text(row.get("account_id"))
+                if not account_id:
+                    continue
+                subscription_counts[account_id] = subscription_counts.get(account_id, 0) + 1
+                if coerce_text(row.get("status")) == "active":
+                    active_subscription_counts[account_id] = active_subscription_counts.get(account_id, 0) + 1
+        items = []
+        for account in accounts_payload.get("items", []):
+            account_id = coerce_text(account.get("id"))
+            items.append(
+                {
+                    "id": account_id,
+                    "name": coerce_text(account.get("name")) or "未命名用户",
+                    "preview": coerce_text(account.get("preview")),
+                    "source_type": coerce_text(account.get("source_type")),
+                    "group_id": coerce_text(account.get("group_id")),
+                    "group_name": coerce_text(account.get("group_name")),
+                    "enabled": account.get("enabled") is not False,
+                    "status": coerce_text(account.get("status")) or "active",
+                    "request_count": safe_int(account.get("request_count")),
+                    "last_seen_at": coerce_text(account.get("last_seen_at")),
+                    "key_count": key_counts.get(account_id, 0),
+                    "active_key_count": active_key_counts.get(account_id, 0),
+                    "subscription_count": subscription_counts.get(account_id, 0),
+                    "active_subscription_count": active_subscription_counts.get(account_id, 0),
+                    "subscription_active": account.get("subscription_active") is True,
+                    "active_plan_name": coerce_text(account.get("active_plan_name")),
+                    "active_group_id": coerce_text(account.get("active_group_id")),
+                    "active_group_name": coerce_text(account.get("active_group_name")),
+                }
+            )
+        return {"ok": True, "items": items, "total": len(items)}
+
     def list_groups(self) -> dict:
         rows = self._load_recent_requests()
         stored_groups = {}

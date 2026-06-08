@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Ban, Coins, Download, Pencil, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Ban, Coins, Download, Eye, Pencil, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
 import { fetchAdminAccounts, fetchAdminGroups, saveAdminAccount, setAdminAccountBalance, setAdminAccountConcurrency } from '../api';
-import { Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
-import { ActionButton, ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
+import { Badge, Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
+import { ActionButton, ColumnMenu, FilterToolbar, ListEmptyRow, Pager, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { queryClient } from '../state/queryClient';
 import type { AdminAccount } from '../types';
 import { cn, formatByteCount, formatCost, formatNumber, formatTokenCount, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
@@ -70,6 +70,7 @@ export function AdminAccountsPage() {
   const groupsQuery = useQuery({ queryKey: ['admin-groups'], queryFn: fetchAdminGroups, refetchInterval: 10000 });
   const [draft, setDraft] = useState<AccountDraft | null>(null);
   const [quotaDraft, setQuotaDraft] = useState<{ id: string; name: string; balance_cents: number; concurrency_limit: number } | null>(null);
+  const [inspectAccount, setInspectAccount] = useState<AdminAccount | null>(null);
   const savedState = readStorageJSON(STORAGE_KEY, {
     search: '',
     statusFilter: '',
@@ -257,8 +258,8 @@ export function AdminAccountsPage() {
     <section className="grid-page">
       <div className="sub2-page-head">
         <div className="sub2-page-title">
-          <strong>账户管理</strong>
-          <span>按业务账户管理订阅、分组和用量，保持和 SUB2 一致的运营表格视图。</span>
+          <strong>账号管理</strong>
+          <span>处理账号资料、额度、状态和分组归属。用户覆盖总览已经拆到“用户管理”。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>账户总数</span><strong>{formatNumber(items.length)}</strong><small>当前业务账户</small></div>
@@ -424,13 +425,26 @@ export function AdminAccountsPage() {
                         </div>
                       </td>
                     ) : null}
-                    {visibleColumns.has('status') ? <td><span className={cn('badge', item.enabled === false ? 'badge-warn' : 'badge-ok')}>{item.enabled === false ? '停用' : '启用'}</span></td> : null}
+                    {visibleColumns.has('status') ? <td><Badge tone={item.enabled === false ? 'warn' : 'ok'}>{item.enabled === false ? '停用' : '启用'}</Badge></td> : null}
                     <td>
-                      <RowActions>
-                        <RowAction icon={Pencil} label="编辑" onClick={() => openEdit(item)} />
-                        <RowAction icon={Coins} label="调额" onClick={() => openQuota(item)} />
-                        <RowAction icon={item.enabled === false ? ShieldCheck : Ban} label={item.enabled === false ? '启用' : '停用'} tone={item.enabled === false ? 'default' : 'warn'} onClick={() => toggleEnabled(item)} />
-                      </RowActions>
+                      <ToolsMenu label="账号操作" icon={false}>
+                        <button type="button" onClick={() => setInspectAccount(item)}>
+                          <span>查看详情</span>
+                          <Eye size={14} />
+                        </button>
+                        <button type="button" onClick={() => openEdit(item)}>
+                          <span>编辑资料</span>
+                          <Pencil size={14} />
+                        </button>
+                        <button type="button" onClick={() => openQuota(item)}>
+                          <span>调整额度</span>
+                          <Coins size={14} />
+                        </button>
+                        <button type="button" onClick={() => toggleEnabled(item)}>
+                          <span>{item.enabled === false ? '启用账号' : '停用账号'}</span>
+                          {item.enabled === false ? <ShieldCheck size={14} /> : <Ban size={14} />}
+                        </button>
+                      </ToolsMenu>
                     </td>
                   </tr>
                 )) : (
@@ -559,6 +573,70 @@ export function AdminAccountsPage() {
         </Modal>
       ) : null}
 
+      {inspectAccount ? (
+        <Modal
+          title="账号详情"
+          size="lg"
+          onClose={() => setInspectAccount(null)}
+          footer={<ModalActions><Button onClick={() => setInspectAccount(null)}>关闭</Button></ModalActions>}
+        >
+          <div className="admin-dialog">
+            <div className="admin-dialog-intro">
+              <strong>{inspectAccount.name || inspectAccount.id}</strong>
+              <span>账号详情用于核对来源、订阅覆盖、请求归因和额度边界，不在这里直接修改内容。</span>
+            </div>
+            <div className="admin-dialog-summary">
+              <div className="admin-dialog-summary-card">
+                <span>账号状态</span>
+                <strong>{inspectAccount.enabled === false ? '停用' : '启用'}</strong>
+                <small>{inspectAccount.status || 'active'} · {inspectAccount.role || 'user'}</small>
+              </div>
+              <div className="admin-dialog-summary-card">
+                <span>有效订阅</span>
+                <strong>{inspectAccount.subscription_active ? (inspectAccount.active_plan_name || '订阅有效') : '无可用订阅'}</strong>
+                <small>{inspectAccount.active_group_name || inspectAccount.active_group_id || '未分组'}</small>
+              </div>
+              <div className="admin-dialog-summary-card">
+                <span>资源边界</span>
+                <strong>${formatCost(Number(inspectAccount.balance_cents || 0) / 100, 2)}</strong>
+                <small>并发 {formatNumber(inspectAccount.concurrency_limit || 0)}</small>
+              </div>
+            </div>
+            <div className="admin-dialog-section">
+              <div className="admin-dialog-section-head">
+                <strong>基础归属</strong>
+                <span>来源、分组、请求归因口径</span>
+              </div>
+              <div className="admin-dialog-grid modal-grid">
+                <Field label="账号 ID"><TextInput readOnly value={inspectAccount.id || ''} /></Field>
+                <Field label="来源键"><TextInput readOnly value={inspectAccount.external_key || inspectAccount.preview || ''} /></Field>
+                <Field label="来源类型"><TextInput readOnly value={inspectAccount.source_type || 'managed'} /></Field>
+                <Field label="当前分组"><TextInput readOnly value={inspectAccount.group_name || inspectAccount.group_id || '未分组'} /></Field>
+                <Field label="允许分组"><TextInput readOnly value={(inspectAccount.allowed_group_ids || []).join('，') || '未限制'} /></Field>
+                <Field label="最近请求"><TextInput readOnly value={inspectAccount.last_seen_at || '-'} /></Field>
+              </div>
+            </div>
+            <div className="admin-dialog-section">
+              <div className="admin-dialog-section-head">
+                <strong>请求与订阅</strong>
+                <span>这部分由真实归因与订阅链驱动</span>
+              </div>
+              <div className="admin-dialog-grid modal-grid">
+                <Field label="累计请求"><TextInput readOnly value={String(inspectAccount.request_count || 0)} /></Field>
+                <Field label="错误请求"><TextInput readOnly value={String(inspectAccount.error_count || 0)} /></Field>
+                <Field label="总 Token"><TextInput readOnly value={formatTokenCount(inspectAccount.total_tokens || 0)} /></Field>
+                <Field label="请求字节"><TextInput readOnly value={formatByteCount(inspectAccount.input_bytes || 0)} /></Field>
+                <Field label="响应字节"><TextInput readOnly value={formatByteCount(inspectAccount.output_bytes || 0)} /></Field>
+                <Field label="订阅到期"><TextInput readOnly value={formatMaybeDate(inspectAccount.active_subscription_expires_at)} /></Field>
+              </div>
+            </div>
+            <div className="admin-dialog-note">
+              资料编辑、额度调整和停启操作保留在列表动作区，避免详情弹层承担双重职责。
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
       {quotaDraft ? (
         <Modal
           title="调整额度"
@@ -655,6 +733,14 @@ function parseMaybeDate(value?: string) {
 
 function formatDateTime(timestamp: number) {
   return new Date(timestamp).toLocaleString('zh-CN', { hour12: false });
+}
+
+function formatMaybeDate(value?: number | string | null) {
+  if (!value) return '-';
+  if (typeof value === 'number') return formatDateTime(value * 1000);
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return String(value);
+  return formatDateTime(timestamp);
 }
 
 function isAccountSourceFilter(value: unknown): value is AccountSourceFilter {

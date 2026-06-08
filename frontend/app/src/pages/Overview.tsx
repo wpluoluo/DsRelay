@@ -18,31 +18,31 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
 
   const operationCards = useMemo(() => ([
     {
-      to: '/accounts',
+      to: '/admin/accounts',
       icon: <Users size={20} />,
-      title: '账户管理',
-      desc: '管理账户状态、角色、余额和订阅关系',
+      title: '账号管理',
+      desc: '管理账号状态、角色、额度和分组归属',
       tone: 'blue',
     },
     {
-      to: '/subscriptions',
+      to: '/admin/subscriptions',
       icon: <ListChecks size={20} />,
       title: '订阅管理',
       desc: '处理分配、延期、重置和撤销',
       tone: 'amber',
     },
     {
-      to: '/payment-orders',
+      to: '/admin/orders',
       icon: <Receipt size={20} />,
-      title: '支付订单',
+      title: '订单管理',
       desc: '查看履约状态、拉起参数和失败订单',
       tone: 'violet',
     },
     {
-      to: '/billing',
+      to: '/admin/usage',
       icon: <Coins size={20} />,
-      title: '计费分析',
-      desc: '按账户、分组、计划和订单核账',
+      title: '使用记录',
+      desc: '按账户、分组、计划和订单查看明细',
       tone: 'green',
     },
   ]), []);
@@ -55,9 +55,9 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
           <span>对齐 SUB2 的管理员总览口径，聚焦账户、分组、请求和计费核心数据。</span>
         </div>
         <div className="overview-command-actions">
-          <Link to="/accounts" className="btn">账户管理</Link>
-          <Link to="/groups" className="btn">分组管理</Link>
-          <Link to="/billing" className="btn btn-primary">计费管理</Link>
+          <Link to="/admin/accounts" className="btn">账号管理</Link>
+          <Link to="/admin/groups" className="btn">分组管理</Link>
+          <Link to="/admin/usage" className="btn btn-primary">使用记录</Link>
         </div>
       </div>
 
@@ -77,7 +77,7 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
 
       <div className="dashboard-main-grid">
         <Panel className="dashboard-card">
-          <PanelHead title="运营摘要" action={<Link to="/billing" className="panel-link">查看详情 <ArrowRight size={14} /></Link>} />
+          <PanelHead title="运营摘要" action={<Link to="/admin/usage" className="panel-link">查看详情 <ArrowRight size={14} /></Link>} />
           <div className="overview-summary-grid">
             <SummaryItem label="总请求" value={formatNumber(summary.request_count ?? 0)} sub={`错误 ${formatNumber(summary.error_count ?? 0)}`} />
             <SummaryItem label="订阅中" value={formatNumber(summary.active_subscription_count ?? 0)} sub={`覆盖 ${formatNumber(summary.covered_request_count ?? 0)} 条请求`} />
@@ -98,7 +98,7 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
 
       <div className="dashboard-charts-grid">
         <Panel className="dashboard-card">
-          <PanelHead title="重点账户" action={<Link to="/accounts" className="panel-link">查看全部 <ArrowRight size={14} /></Link>} />
+          <PanelHead title="重点账户" action={<Link to="/admin/accounts" className="panel-link">查看全部 <ArrowRight size={14} /></Link>} />
           <div className="recent-usage-list">
             {topAccounts.length ? topAccounts.map((item) => (
               <div className="recent-usage-item" key={item.id}>
@@ -119,7 +119,7 @@ export function Overview({ state, keys }: { state: DashboardState; keys?: ProxyK
         </Panel>
 
         <Panel className="dashboard-card">
-          <PanelHead title="重点分组" action={<Link to="/groups" className="panel-link">查看全部 <ArrowRight size={14} /></Link>} />
+          <PanelHead title="重点分组" action={<Link to="/admin/groups" className="panel-link">查看全部 <ArrowRight size={14} /></Link>} />
           <div className="recent-usage-list">
             {topGroups.length ? topGroups.map((item) => (
               <div className="recent-usage-item" key={item.id}>

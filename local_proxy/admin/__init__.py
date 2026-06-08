@@ -1,4 +1,4 @@
 from .routes import register_admin_routes
-from .service import AdminAnalyticsService
+from .service import AdminConsoleService
 
-__all__ = ["register_admin_routes", "AdminAnalyticsService"]
+__all__ = ["register_admin_routes", "AdminConsoleService"]

@@ -248,8 +248,8 @@ export function AdminBillingPage() {
     <section className="grid-page">
       <div className="sub2-page-head">
         <div className="sub2-page-title">
-          <strong>计费管理</strong>
-          <span>基于真实请求、订阅和支付订单查看消费归因，保持和 SUB2 一致的计费分析视图。</span>
+          <strong>使用记录</strong>
+          <span>基于真实请求、订阅和订单查看用量与消费归因，对齐 SUB2 的使用记录入口。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>请求总数</span><strong>{formatNumber(summaryRequestCount)}</strong><small>当前页 {formatNumber(filteredRowsForPager.length)}</small></div>
@@ -372,7 +372,7 @@ export function AdminBillingPage() {
                   )) : (
                     <tr>
                       <td colSpan={5 + visibleColumns.size}>
-                        <EmptyState title="暂无计费记录" description="当前基于真实请求的计费记录为空。" />
+                        <EmptyState title="暂无使用记录" description="当前基于真实请求的使用记录为空。" />
                       </td>
                     </tr>
                   )}
@@ -402,7 +402,7 @@ export function AdminBillingPage() {
 
       {inspectUsage ? (
         <Modal
-          title="请求账单详情"
+          title="请求详情"
           size="lg"
           onClose={() => setInspectUsage(null)}
           footer={<ModalActions><Button onClick={() => setInspectUsage(null)}>关闭</Button></ModalActions>}
@@ -410,7 +410,7 @@ export function AdminBillingPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{inspectUsage.request_id}</strong>
-              <span>查看这次请求的消费归因、线路、缓存与异常信息，便于核对真实计费来源。</span>
+              <span>查看这次请求的用量归因、线路、缓存与异常信息。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
@@ -466,7 +466,7 @@ export function AdminBillingPage() {
 
       {inspectAggregate ? (
         <Modal
-          title="聚合账单详情"
+          title="聚合详情"
           size="lg"
           onClose={() => setInspectAggregate(null)}
           footer={<ModalActions><Button onClick={() => setInspectAggregate(null)}>关闭</Button></ModalActions>}
@@ -488,7 +488,7 @@ function AggregateBillingTable({
   onInspect: (row: AdminBillingAccountItem | AdminBillingGroupItem | AdminBillingPlanItem | AdminBillingSubscriptionItem | AdminBillingOrderItem) => void;
 }) {
   if (!rows.length) {
-    return <EmptyState title="暂无聚合账单" description="当前筛选条件下没有聚合结果。" />;
+    return <EmptyState title="暂无聚合记录" description="当前筛选条件下没有聚合结果。" />;
   }
   return (
     <table>

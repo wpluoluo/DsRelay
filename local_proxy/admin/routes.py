@@ -13,6 +13,11 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
     def admin_accounts():
         return jsonify(analytics_service.list_accounts())
 
+    @app.get("/admin/users")
+    @admin_required
+    def admin_users():
+        return jsonify(analytics_service.list_users())
+
     @app.post("/admin/accounts")
     @admin_required
     def admin_accounts_upsert():
@@ -174,6 +179,83 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
     def admin_payment_orders_update_status(order_id: str):
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.update_payment_order_status(order_id, payload))
+
+    @app.get("/admin/announcements")
+    @admin_required
+    def admin_announcements():
+        return jsonify(analytics_service.list_content_bucket("announcements"))
+
+    @app.post("/admin/announcements")
+    @admin_required
+    def admin_announcements_upsert():
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.upsert_content_bucket_item("announcements", payload))
+
+    @app.get("/admin/risk-control")
+    @admin_required
+    def admin_risk_control():
+        return jsonify(analytics_service.list_content_bucket("risk-rules"))
+
+    @app.post("/admin/risk-control")
+    @admin_required
+    def admin_risk_control_upsert():
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.upsert_content_bucket_item("risk-rules", payload))
+
+    @app.get("/admin/redeem")
+    @admin_required
+    def admin_redeem():
+        return jsonify(analytics_service.list_content_bucket("redeem-codes"))
+
+    @app.post("/admin/redeem")
+    @admin_required
+    def admin_redeem_upsert():
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.upsert_content_bucket_item("redeem-codes", payload))
+
+    @app.get("/admin/promo-codes")
+    @admin_required
+    def admin_promo_codes():
+        return jsonify(analytics_service.list_content_bucket("promo-codes"))
+
+    @app.post("/admin/promo-codes")
+    @admin_required
+    def admin_promo_codes_upsert():
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.upsert_content_bucket_item("promo-codes", payload))
+
+    @app.get("/admin/affiliates/invites")
+    @admin_required
+    def admin_affiliate_invites():
+        return jsonify(analytics_service.list_content_bucket("affiliate-invites"))
+
+    @app.post("/admin/affiliates/invites")
+    @admin_required
+    def admin_affiliate_invites_upsert():
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.upsert_content_bucket_item("affiliate-invites", payload))
+
+    @app.get("/admin/affiliates/rebates")
+    @admin_required
+    def admin_affiliate_rebates():
+        return jsonify(analytics_service.list_content_bucket("affiliate-rebates"))
+
+    @app.post("/admin/affiliates/rebates")
+    @admin_required
+    def admin_affiliate_rebates_upsert():
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.upsert_content_bucket_item("affiliate-rebates", payload))
+
+    @app.get("/admin/affiliates/transfers")
+    @admin_required
+    def admin_affiliate_transfers():
+        return jsonify(analytics_service.list_content_bucket("affiliate-transfers"))
+
+    @app.post("/admin/affiliates/transfers")
+    @admin_required
+    def admin_affiliate_transfers_upsert():
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.upsert_content_bucket_item("affiliate-transfers", payload))
 
     @app.get("/admin/protocols")
     @admin_required

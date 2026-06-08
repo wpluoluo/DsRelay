@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { BadgeCheck, CreditCard, Eye, Plus, RefreshCw, ReceiptText, ShieldCheck, Wallet } from 'lucide-react';
+import { BadgeCheck, CircleX, CreditCard, Eye, Plus, RefreshCw, ReceiptText, ShieldCheck, Wallet } from 'lucide-react';
 import { createAdminPaymentOrder, fetchAdminAccounts, fetchAdminPaymentChannels, fetchAdminPaymentOrders, fetchAdminSubscriptionPlans, updateAdminPaymentOrderStatus } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
 import { ActionButton, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
@@ -82,6 +82,7 @@ export function AdminPaymentOrdersPage() {
   const paidCount = items.filter((item) => item.status === 'paid').length;
   const pendingCount = items.filter((item) => item.status === 'pending').length;
   const failedCount = items.filter((item) => item.status === 'failed').length;
+  const manualCount = items.filter((item) => !item.provider || item.provider === 'manual').length;
   const totalAmount = items.reduce((sum, item) => sum + Number(item.amount_cents || 0), 0);
   const fulfilledCount = items.filter((item) => Array.isArray(item.fulfillment_logs) && item.fulfillment_logs.length > 0).length;
   const channelOptions = useMemo(
@@ -113,14 +114,15 @@ export function AdminPaymentOrdersPage() {
     <section className="grid-page">
       <div className="sub2-page-head">
         <div className="sub2-page-title">
-          <strong>支付订单</strong>
-          <span>以订单列表处理支付状态、履约结果与人工补单，保持和 SUB2 一致的管理员工作流。</span>
+          <strong>订单管理</strong>
+          <span>围绕订单状态、履约结果和补单动作处理支付链路，保持和 SUB2 一致的后台操作入口。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>订单总数</span><strong>{items.length}</strong><small>支付流水总量</small></div>
           <div className="sub2-inline-summary-item"><span>已支付</span><strong>{paidCount}</strong><small>待支付 {pendingCount}</small></div>
           <div className="sub2-inline-summary-item"><span>失败订单</span><strong>{failedCount}</strong><small>需要人工跟进</small></div>
           <div className="sub2-inline-summary-item"><span>履约日志</span><strong>{fulfilledCount}</strong><small>已关联订阅或履约记录</small></div>
+          <div className="sub2-inline-summary-item"><span>人工订单</span><strong>{manualCount}</strong><small>后台创建或补单</small></div>
           <div className="sub2-inline-summary-item"><span>累计订单金额</span><strong>${formatCost(totalAmount / 100, 2)}</strong><small>订单金额合计</small></div>
         </div>
       </div>
@@ -172,7 +174,7 @@ export function AdminPaymentOrdersPage() {
                   <th>通道</th>
                   <th>金额</th>
                   <th>状态</th>
-                  <th>订阅</th>
+                  <th>履约</th>
                   <th>详情</th>
                   <th>操作</th>
                 </tr>
@@ -207,15 +209,10 @@ export function AdminPaymentOrdersPage() {
                         <small>{item.provider ? `provider: ${item.provider}` : 'manual'}</small>
                       </div>
                     </td>
-                    <td>
-                      <div className="sub2-cell-stack sub2-cell-stack-tight">
-                        <strong>{item.subscription_id || '-'}</strong>
-                        <small>{Array.isArray(item.fulfillment_logs) ? `${item.fulfillment_logs.length} 条日志` : '0 条日志'}</small>
-                      </div>
-                    </td>
+                    <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.subscription_id || '-'}</strong><small>{Array.isArray(item.fulfillment_logs) ? `${item.fulfillment_logs.length} 条日志` : '0 条日志'}</small></div></td>
                     <td>
                       <RowActions>
-                        <RowAction icon={Eye} label={item.provider_payload ? '参数' : '详情'} onClick={() => setInspectOrder(item)} />
+                        <RowAction icon={Eye} label="详情" onClick={() => setInspectOrder(item)} />
                       </RowActions>
                     </td>
                     <td>
@@ -224,27 +221,34 @@ export function AdminPaymentOrdersPage() {
                           <Badge tone="ok">已完成</Badge>
                         </div>
                       ) : (
-                        <RowActions>
-                          <RowAction
-                            icon={BadgeCheck}
-                            label="完成"
+                        <ToolsMenu label="订单操作" icon={false}>
+                          <button
+                            type="button"
                             onClick={() => setStatusTarget({ id: item.id, status: 'paid', title: '确认完成订单', subtitle: `${item.account_name || item.account_id || item.id} · ${item.plan_name || item.plan_id || '-'}` })}
-                          />
-                          <RowAction
-                            icon={ShieldCheck}
-                            label="失败"
-                            tone="warn"
+                          >
+                            <span>标记已支付</span>
+                            <BadgeCheck size={14} />
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => setStatusTarget({ id: item.id, status: 'failed', title: '确认标记失败', subtitle: `${item.account_name || item.account_id || item.id} · ${item.plan_name || item.plan_id || '-'}` })}
-                          />
-                        </RowActions>
+                          >
+                            <span>标记失败</span>
+                            <CircleX size={14} />
+                          </button>
+                          <button type="button" onClick={() => setInspectOrder(item)}>
+                            <span>查看拉起参数</span>
+                            <ShieldCheck size={14} />
+                          </button>
+                        </ToolsMenu>
                       )}
                     </td>
                   </tr>
                 )) : (
                   <ListEmptyRow
                     colSpan={10}
-                    title="暂无支付订单"
-                    description="当前没有可展示的支付订单记录。"
+                    title="暂无订单"
+                    description="当前没有可展示的订单记录。"
                     action={<Button tone="primary" onClick={() => setDraft({ account_id: '', plan_id: '', channel_id: '', amount_cents: 0, currency: 'CNY' })}>创建订单</Button>}
                   />
                 )}
@@ -267,19 +271,19 @@ export function AdminPaymentOrdersPage() {
 
       {draft ? (
         <Modal
-          title="创建支付订单"
+          title="创建订单"
           size="md"
           onClose={() => setDraft(null)}
           footer={<ModalActions><Button onClick={() => setDraft(null)}>取消</Button><Button tone="primary" disabled={createMutation.isPending || !draft.account_id || !draft.plan_id} onClick={() => createMutation.mutate(draft)}>创建</Button></ModalActions>}
         >
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
-              <strong>人工创建支付订单</strong>
-              <span>用于后台补单、测试拉起或线下确认后的人工收款。订单创建后会进入统一支付与履约链路。</span>
+              <strong>人工创建订单</strong>
+              <span>用于后台补单、测试拉起或线下确认后的人工收款。创建后进入统一支付和履约链。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
-                <span>待支付订单</span>
+                <span>待处理订单</span>
                 <strong>{pendingCount}</strong>
                 <small>当前可继续拉起</small>
               </div>
@@ -314,7 +318,7 @@ export function AdminPaymentOrdersPage() {
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
                 <strong>订单信息</strong>
-                <span>用户、计划、通道和金额会直接写入订单主记录</span>
+                <span>用户、计划、通道和金额会直接进入订单主记录</span>
               </div>
               <div className="admin-dialog-grid modal-grid">
                 <Field label="账户"><Select value={draft.account_id} onChange={(e) => setDraft({ ...draft, account_id: e.target.value })}><option value="">请选择账户</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</Select></Field>
@@ -337,7 +341,7 @@ export function AdminPaymentOrdersPage() {
       ) : null}
 
       {inspectOrder ? (
-        <Modal title="支付订单详情" size="lg" onClose={() => setInspectOrder(null)} footer={<ModalActions><Button onClick={() => setInspectOrder(null)}>关闭</Button></ModalActions>}>
+        <Modal title="订单详情" size="lg" onClose={() => setInspectOrder(null)} footer={<ModalActions><Button onClick={() => setInspectOrder(null)}>关闭</Button></ModalActions>}>
           <OrderInspect item={inspectOrder} includePayload includeOrderPayload />
         </Modal>
       ) : null}

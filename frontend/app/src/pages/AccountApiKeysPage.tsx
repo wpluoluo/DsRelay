@@ -156,7 +156,7 @@ export function AccountApiKeysPage() {
                 )) : (
                   <tr>
                     <td colSpan={6}>
-                      <EmptyState title="暂无 API Key" description="当前账户还没有可用的业务 API Key。" />
+                      <EmptyState title="暂无 API Key" description="当前账户还没有可用的账户 API Key。" />
                     </td>
                   </tr>
                 )}

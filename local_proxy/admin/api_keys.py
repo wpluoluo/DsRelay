@@ -12,8 +12,18 @@ class AdminApiKeysMixin(AdminServiceBase):
         if self.storage is None:
             return {"ok": True, "items": [], "total": 0}
         accounts = {str(item.get("id") or ""): item for item in self.list_accounts(limit=5000).get("items", [])}
+        key_counts: dict[str, int] = {}
+        active_key_counts: dict[str, int] = {}
+        raw_rows = self.storage.list_admin_api_keys()
+        for row in raw_rows:
+            storage_account_id = coerce_text(row.get("account_id"))
+            if not storage_account_id:
+                continue
+            key_counts[storage_account_id] = key_counts.get(storage_account_id, 0) + 1
+            if row.get("enabled") is not False:
+                active_key_counts[storage_account_id] = active_key_counts.get(storage_account_id, 0) + 1
         items = []
-        for row in self.storage.list_admin_api_keys():
+        for row in raw_rows:
             storage_account_id = coerce_text(row.get("account_id"))
             account = accounts.get(storage_account_id, {})
             items.append({
@@ -32,6 +42,9 @@ class AdminApiKeysMixin(AdminServiceBase):
                 "active_subscription_status": account.get("active_subscription_status"),
                 "active_subscription_expires_at": account.get("active_subscription_expires_at"),
             })
+        for account_id, account in accounts.items():
+            account["key_count"] = key_counts.get(account_id, 0)
+            account["active_key_count"] = active_key_counts.get(account_id, 0)
         return {"ok": True, "items": items, "total": len(items)}
 
     def create_api_key(self, payload: dict) -> dict:

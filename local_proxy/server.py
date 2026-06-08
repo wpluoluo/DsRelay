@@ -55,7 +55,7 @@ from local_proxy.compat.protocols import (
 from local_proxy.dashboard import load_dashboard_template
 from local_proxy.auth import admin_required, init_auth, login_page, login_required, logout, is_authenticated
 from local_proxy.admin import register_admin_routes
-from local_proxy.admin.service import AdminAnalyticsService
+from local_proxy.admin.service import AdminConsoleService
 from local_proxy.http.headers import (
     apply_sse_response_headers,
     build_response_headers,
@@ -9589,7 +9589,7 @@ register_http_routes(
     },
 )
 
-admin_analytics_service = AdminAnalyticsService(storage=storage, request_recorder=request_recorder)
+admin_analytics_service = AdminConsoleService(storage=storage, request_recorder=request_recorder)
 register_admin_routes(
     app,
     admin_required=admin_required,

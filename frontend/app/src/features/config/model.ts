@@ -1,7 +1,7 @@
 import type { Pool, RuntimeConfig } from '../../types';
 
 export type ViewKey = 'overview' | 'requests' | 'logs' | 'config';
-export type ConfigTab = 'routes' | 'routing' | 'strategy';
+export type ConfigTab = 'routes' | 'routing' | 'strategy' | 'keys';
 
 export const defaultPolicy = {
   reasoning_effort: 'medium',

@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Copy, Eye, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
 import { createAdminApiKey, fetchAdminAccounts, fetchAdminApiKeys, setAdminApiKeyEnabled } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
-import { ActionButton, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
+import { ActionButton, FilterToolbar, ListEmptyRow, Pager, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { queryClient } from '../state/queryClient';
 import type { AdminApiKey } from '../types';
 import { cn, formatNumber, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
@@ -95,11 +95,11 @@ export function AdminApiKeysPage() {
     <section className="grid-page">
       <div className="sub2-page-head">
         <div className="sub2-page-title">
-          <strong>业务 API Key</strong>
-          <span>按业务账户维护调用 Key、订阅归属和启停状态，保持和 SUB2 一致的列表工作流。</span>
+          <strong>账户 API Key</strong>
+          <span>按账号归属维护调用 Key、订阅覆盖和启停状态，避免再把 Key 当成用户对象本身。</span>
         </div>
         <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>业务 Key 总数</span><strong>{formatNumber(items.length)}</strong><small>当前列表全量</small></div>
+          <div className="sub2-inline-summary-item"><span>Key 总数</span><strong>{formatNumber(items.length)}</strong><small>当前列表全量</small></div>
           <div className="sub2-inline-summary-item"><span>启用 Key</span><strong>{formatNumber(enabledCount)}</strong><small>停用 {formatNumber(disabledCount)}</small></div>
           <div className="sub2-inline-summary-item"><span>绑定账户</span><strong>{formatNumber(boundAccounts)}</strong><small>未覆盖 {formatNumber(unboundCount)} 个 Key</small></div>
           <div className="sub2-inline-summary-item"><span>有效订阅</span><strong>{formatNumber(activeSubscriptionCount)}</strong><small>无效 {formatNumber(inactiveSubscriptionCount)}</small></div>
@@ -205,22 +205,23 @@ export function AdminApiKeysPage() {
                       </div>
                     </td>
                     <td>
-                      <RowActions>
-                        <RowAction icon={Eye} label="详情" onClick={() => setInspectKey(item)} />
-                        <RowAction
-                          icon={ShieldCheck}
-                          label={item.enabled === false ? '启用' : '停用'}
-                          tone={item.enabled === false ? 'default' : 'warn'}
-                          onClick={() => toggleMutation.mutate({ keyId: item.id, enabled: item.enabled === false })}
-                        />
-                      </RowActions>
+                      <ToolsMenu label="Key 操作" icon={false}>
+                        <button type="button" onClick={() => setInspectKey(item)}>
+                          <span>查看详情</span>
+                          <Eye size={14} />
+                        </button>
+                        <button type="button" onClick={() => toggleMutation.mutate({ keyId: item.id, enabled: item.enabled === false })}>
+                          <span>{item.enabled === false ? '启用 Key' : '停用 Key'}</span>
+                          <ShieldCheck size={14} />
+                        </button>
+                      </ToolsMenu>
                     </td>
                   </tr>
                 )) : (
                   <ListEmptyRow
                     colSpan={8}
-                    title="暂无业务 API Key"
-                    description="当前还没有创建任何业务账户 Key。"
+                    title="暂无账户 API Key"
+                    description="当前还没有创建任何账号调用 Key。"
                     action={<Button tone="primary" onClick={() => setDraft({ account_id: '', name: '' })}>生成 Key</Button>}
                   />
                 )}
@@ -288,7 +289,7 @@ export function AdminApiKeysPage() {
 
       {draft ? (
         <Modal
-          title="生成业务 API Key"
+          title="生成账户 API Key"
           size="md"
           onClose={() => setDraft(null)}
           footer={
@@ -302,12 +303,12 @@ export function AdminApiKeysPage() {
         >
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
-              <strong>为指定账户生成新的业务 Key</strong>
+              <strong>为指定账户生成新的调用 Key</strong>
               <span>生成后会直接建立账户归属，后续请求会按这个 Key 做订阅可用性校验和消费归因。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
-                <span>业务 Key</span>
+                <span>账户 Key</span>
                 <strong>{formatNumber(items.length)}</strong>
                 <small>当前列表全量</small>
               </div>
@@ -356,7 +357,7 @@ export function AdminApiKeysPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{inspectKey.name}</strong>
-              <span>查看业务 Key 的账户归属、订阅覆盖和时间信息，方便快速核验问题。</span>
+              <span>查看账户 Key 的归属、订阅覆盖和时间信息，方便快速核验问题。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">

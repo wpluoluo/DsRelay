@@ -44,8 +44,8 @@ export function AccountOrdersPage() {
     <section className="grid-page">
       <div className="sub2-page-head">
         <div className="sub2-page-title">
-          <strong>支付订单</strong>
-          <span>对齐 SUB2 账户订单页的入口逻辑，聚焦筛选、刷新和状态查看。</span>
+          <strong>我的订单</strong>
+          <span>对齐 SUB2 个人订单页的入口逻辑，聚焦筛选、刷新和状态查看。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>当前账户</span><strong>{selectedAccount?.name || '未选择账户'}</strong><small>{selectedAccount?.source_type || '请选择账户'}</small></div>
@@ -140,7 +140,7 @@ export function AccountOrdersPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{cancelTarget.id}</strong>
-              <span>这会把当前待支付订单状态改为 `cancelled`，不会删除历史记录。</span>
+              <span>这会把当前待处理订单状态改为 `cancelled`，不会删除历史记录。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">

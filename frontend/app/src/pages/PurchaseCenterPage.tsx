@@ -88,14 +88,14 @@ export function PurchaseCenterPage() {
     <section className="grid-page">
       <div className="sub2-page-head">
         <div className="sub2-page-title">
-          <strong>购买与订阅</strong>
-          <span>面向业务账户查看当前订阅、创建订单并追踪最近消费。</span>
+          <strong>充值/订阅</strong>
+          <span>对齐 SUB2 个人购买页，面向当前账户创建订单、选择计划并追踪最近消费。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>账户</span><strong>{selectedAccount?.name || '未选择账户'}</strong><small>{selectedAccount?.source_type || '请选择账户'}</small></div>
           <div className="sub2-inline-summary-item"><span>可用计划</span><strong>{formatNumber(visiblePlans.length)}</strong><small>启用计划</small></div>
           <div className="sub2-inline-summary-item"><span>支付通道</span><strong>{formatNumber(visibleChannels.length)}</strong><small>当前可用</small></div>
-          <div className="sub2-inline-summary-item"><span>已支付订单</span><strong>{formatNumber(paidOrders)}</strong><small>待支付 {formatNumber(selectedOrders.filter((item) => item.status === 'pending').length)}</small></div>
+          <div className="sub2-inline-summary-item"><span>已支付订单</span><strong>{formatNumber(paidOrders)}</strong><small>待处理 {formatNumber(selectedOrders.filter((item) => item.status === 'pending').length)}</small></div>
           <div className="sub2-inline-summary-item"><span>当前消费</span><strong>{formatUsdCost(todayActualCost, 2)}</strong><small>按订单金额聚合</small></div>
         </div>
       </div>
@@ -165,7 +165,7 @@ export function PurchaseCenterPage() {
                 disabled={createMutation.isPending || !draft.account_id || !draft.plan_id}
                 onClick={() => setConfirmCreate(true)}
               >
-                创建支付订单
+                创建订单
               </Button>
               <Button onClick={() => setDraft((current) => ({ ...DEFAULT_DRAFT, account_id: current.account_id || selectedAccountId }))}>重置选择</Button>
             </div>
@@ -278,7 +278,7 @@ export function PurchaseCenterPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
                 <strong>{selectedAccount?.name || '未选择账户'}</strong>
-                <span>确认按当前计划、通道和金额创建支付订单。创建后会进入统一支付与履约链路。</span>
+                <span>确认按当前计划、通道和金额创建订单。创建后会进入统一支付与履约链路。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">

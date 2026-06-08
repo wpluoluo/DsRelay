@@ -1,161 +1,166 @@
-import { createHashHistory, createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
-import { ConfigView } from './features/config/ConfigView';
-import { RequestsView } from './features/requests/RequestsView';
+import { createHashHistory, createRootRoute, createRoute, createRouter, redirect } from '@tanstack/react-router';
 import { DashboardLayout } from './layout/DashboardLayout';
-import { AdminApiKeysPage } from './pages/AdminApiKeysPage';
+import { AdminAccountsPage } from './pages/AdminAccountsPage';
 import { AdminBillingPage } from './pages/AdminBillingPage';
+import { AdminChannelsMonitorPage, AdminChannelsPricingPage } from './pages/AdminChannelsPage';
+import {
+  AdminAffiliateInvitesPage,
+  AdminAffiliateRebatesPage,
+  AdminAffiliateTransfersPage,
+  AdminAnnouncementsPage,
+  AdminPromoCodesPage,
+  AdminRedeemCodesPage,
+  AdminRiskControlPage,
+} from './pages/AdminContentPages';
 import { AdminGroupsPage } from './pages/AdminGroupsPage';
-import { AdminPaymentChannelsPage } from './pages/AdminPaymentChannelsPage';
+import { AdminOpsPage } from './pages/AdminOpsPage';
+import { AdminOrdersDashboardPage } from './pages/AdminOrdersDashboardPage';
+import { AdminProxyPage } from './pages/AdminProxyPage';
+import { AdminUsersPage } from './pages/AdminUsersPage';
 import { AdminPaymentOrdersPage } from './pages/AdminPaymentOrdersPage';
+import { AdminSettingsPage } from './pages/AdminSettingsPage';
 import { AdminSubscriptionPlansPage } from './pages/AdminSubscriptionPlansPage';
 import { AdminSubscriptionsPage } from './pages/AdminSubscriptionsPage';
-import { AdminAccountsPage } from './pages/AdminAccountsPage';
-import { LogsView } from './pages/LogsView';
-import { Overview } from './pages/Overview';
-import { PurchaseCenterPage } from './pages/PurchaseCenterPage';
-import { ProxyKeysPage } from './pages/ProxyKeysPage';
 import { AccountApiKeysPage } from './pages/AccountApiKeysPage';
-import { AccountDashboardPage } from './pages/AccountDashboardPage';
+import { AccountAvailableChannelsPage, AccountMonitorPage, AccountProfilePage } from './pages/AccountChannelPages';
+import { AccountAffiliatePage, AccountRedeemPage } from './pages/AccountValuePages';
 import { AccountOrdersPage } from './pages/AccountOrdersPage';
 import { AccountSubscriptionsPage } from './pages/AccountSubscriptionsPage';
 import { AccountUsagePage } from './pages/AccountUsagePage';
+import { Overview } from './pages/Overview';
+import { PurchaseCenterPage } from './pages/PurchaseCenterPage';
 import { useDashboard } from './state/dashboardContext';
 
-function OverviewRoute() {
+function AdminDashboardRoute() {
   const { state, keyQuery } = useDashboard();
   return <Overview state={state} keys={keyQuery.data} />;
 }
 
-function RequestsRoute() {
-  const { state } = useDashboard();
-  return <RequestsView state={state} />;
+function AdminUsageRoute() {
+  return <AdminBillingPage />;
+}
+
+function AccountKeysRoute() {
+  return <AccountApiKeysPage />;
 }
 
 function AccountUsageRoute() {
   return <AccountUsagePage />;
 }
 
-function AccountDashboardRoute() {
-  return <AccountDashboardPage />;
+function AccountSubscriptionsRoute() {
+  return <AccountSubscriptionsPage />;
 }
 
 function AccountOrdersRoute() {
   return <AccountOrdersPage />;
 }
 
-function AccountSubscriptionsRoute() {
-  return <AccountSubscriptionsPage />;
-}
-
-function LogsRoute() {
-  const { state } = useDashboard();
-  return <LogsView state={state} />;
-}
-
-function ConfigRoute() {
-  const dashboard = useDashboard();
-  return (
-    <ConfigView
-      draft={dashboard.draft}
-      pools={dashboard.pools}
-      configTab={dashboard.configTab}
-      setConfigTab={dashboard.setConfigTab}
-      status={dashboard.status}
-      saving={dashboard.saving}
-      onPatch={dashboard.patchDraft}
-      onSave={dashboard.saveConfig}
-      onOpenPool={dashboard.openPool}
-      onDeletePool={dashboard.deletePool}
-      onMovePool={dashboard.movePool}
-    />
-  );
-}
-
-function KeysRoute() {
-  return <AccountApiKeysPage />;
-}
-
-function ProxyKeysRoute() {
-  return <ProxyKeysPage />;
-}
-
-function AccountsRoute() {
-  return <AdminAccountsPage />;
-}
-
-function GroupsRoute() {
-  return <AdminGroupsPage />;
-}
-
-function BillingRoute() {
-  return <AdminBillingPage />;
-}
-
-function AdminApiKeysRoute() {
-  return <AdminApiKeysPage />;
-}
-
-function SubscriptionPlansRoute() {
-  return <AdminSubscriptionPlansPage />;
-}
-
-function SubscriptionsRoute() {
-  return <AdminSubscriptionsPage />;
-}
-
-function PaymentChannelsRoute() {
-  return <AdminPaymentChannelsPage />;
-}
-
-function PaymentOrdersRoute() {
-  return <AdminPaymentOrdersPage />;
-}
-
-function PurchaseCenterRoute() {
+function AccountPurchaseRoute() {
   return <PurchaseCenterPage />;
 }
 
 const rootRoute = createRootRoute({ component: DashboardLayout });
-const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: OverviewRoute });
-const requestsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/requests', component: RequestsRoute });
-const accountUsageRoute = createRoute({ getParentRoute: () => rootRoute, path: '/usage', component: AccountUsageRoute });
-const accountDashboardRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account-dashboard', component: AccountDashboardRoute });
-const accountOrdersRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account-orders', component: AccountOrdersRoute });
-const accountSubscriptionsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account-subscriptions', component: AccountSubscriptionsRoute });
-const logsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/logs', component: LogsRoute });
-const keysRoute = createRoute({ getParentRoute: () => rootRoute, path: '/keys', component: KeysRoute });
-const proxyKeysRoute = createRoute({ getParentRoute: () => rootRoute, path: '/proxy-keys', component: ProxyKeysRoute });
-const accountsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/accounts', component: AccountsRoute });
-const groupsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/groups', component: GroupsRoute });
-const billingRoute = createRoute({ getParentRoute: () => rootRoute, path: '/billing', component: BillingRoute });
-const adminApiKeysRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account-api-keys', component: AdminApiKeysRoute });
-const subscriptionPlansRoute = createRoute({ getParentRoute: () => rootRoute, path: '/subscription-plans', component: SubscriptionPlansRoute });
-const subscriptionsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/subscriptions', component: SubscriptionsRoute });
-const paymentChannelsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/payment-channels', component: PaymentChannelsRoute });
-const paymentOrdersRoute = createRoute({ getParentRoute: () => rootRoute, path: '/payment-orders', component: PaymentOrdersRoute });
-const purchaseCenterRoute = createRoute({ getParentRoute: () => rootRoute, path: '/purchase', component: PurchaseCenterRoute });
-const configRoute = createRoute({ getParentRoute: () => rootRoute, path: '/config', component: ConfigRoute });
+
+const indexRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/',
+  beforeLoad: () => {
+    throw redirect({ to: '/admin/dashboard' });
+  },
+});
+
+const adminRedirectRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/admin',
+  beforeLoad: () => {
+    throw redirect({ to: '/admin/dashboard' });
+  },
+});
+
+const adminDashboardRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/dashboard', component: AdminDashboardRoute });
+const adminOpsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/ops', component: AdminOpsPage });
+const adminUsersRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/users', component: AdminUsersPage });
+const adminGroupsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/groups', component: AdminGroupsPage });
+const adminChannelsRedirectRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/admin/channels',
+  beforeLoad: () => {
+    throw redirect({ to: '/admin/channels/pricing' });
+  },
+});
+const adminChannelsPricingRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/channels/pricing', component: AdminChannelsPricingPage });
+const adminChannelsMonitorRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/channels/monitor', component: AdminChannelsMonitorPage });
+const adminSubscriptionsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/subscriptions', component: AdminSubscriptionsPage });
+const adminAccountsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/accounts', component: AdminAccountsPage });
+const adminAnnouncementsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/announcements', component: AdminAnnouncementsPage });
+const adminProxiesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/proxies', component: AdminProxyPage });
+const adminRiskControlRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/risk-control', component: AdminRiskControlPage });
+const adminRedeemRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/redeem', component: AdminRedeemCodesPage });
+const adminPromoCodesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/promo-codes', component: AdminPromoCodesPage });
+const adminAffiliatesRedirectRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/admin/affiliates',
+  beforeLoad: () => {
+    throw redirect({ to: '/admin/affiliates/invites' });
+  },
+});
+const adminAffiliateInvitesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/affiliates/invites', component: AdminAffiliateInvitesPage });
+const adminAffiliateRebatesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/affiliates/rebates', component: AdminAffiliateRebatesPage });
+const adminAffiliateTransfersRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/affiliates/transfers', component: AdminAffiliateTransfersPage });
+const adminOrdersDashboardRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/orders/dashboard', component: AdminOrdersDashboardPage });
+const adminOrdersRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/orders', component: AdminPaymentOrdersPage });
+const adminOrdersPlansRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/orders/plans', component: AdminSubscriptionPlansPage });
+const adminUsageRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/usage', component: AdminUsageRoute });
+const adminSettingsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/settings', component: AdminSettingsPage });
+
+const keysRoute = createRoute({ getParentRoute: () => rootRoute, path: '/keys', component: AccountKeysRoute });
+const usageRoute = createRoute({ getParentRoute: () => rootRoute, path: '/usage', component: AccountUsageRoute });
+const availableChannelsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/available-channels', component: AccountAvailableChannelsPage });
+const monitorRoute = createRoute({ getParentRoute: () => rootRoute, path: '/monitor', component: AccountMonitorPage });
+const subscriptionsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/subscriptions', component: AccountSubscriptionsRoute });
+const purchaseRoute = createRoute({ getParentRoute: () => rootRoute, path: '/purchase', component: AccountPurchaseRoute });
+const ordersRoute = createRoute({ getParentRoute: () => rootRoute, path: '/orders', component: AccountOrdersRoute });
+const redeemRoute = createRoute({ getParentRoute: () => rootRoute, path: '/redeem', component: AccountRedeemPage });
+const affiliateRoute = createRoute({ getParentRoute: () => rootRoute, path: '/affiliate', component: AccountAffiliatePage });
+const profileRoute = createRoute({ getParentRoute: () => rootRoute, path: '/profile', component: AccountProfilePage });
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
-  requestsRoute,
-  accountDashboardRoute,
-  accountOrdersRoute,
-  accountSubscriptionsRoute,
-  accountUsageRoute,
-  logsRoute,
+  adminRedirectRoute,
+  adminDashboardRoute,
+  adminOpsRoute,
+  adminUsersRoute,
+  adminGroupsRoute,
+  adminChannelsRedirectRoute,
+  adminChannelsPricingRoute,
+  adminChannelsMonitorRoute,
+  adminSubscriptionsRoute,
+  adminAccountsRoute,
+  adminAnnouncementsRoute,
+  adminProxiesRoute,
+  adminRiskControlRoute,
+  adminRedeemRoute,
+  adminPromoCodesRoute,
+  adminAffiliatesRedirectRoute,
+  adminAffiliateInvitesRoute,
+  adminAffiliateRebatesRoute,
+  adminAffiliateTransfersRoute,
+  adminOrdersDashboardRoute,
+  adminOrdersRoute,
+  adminOrdersPlansRoute,
+  adminUsageRoute,
+  adminSettingsRoute,
   keysRoute,
-  proxyKeysRoute,
-  accountsRoute,
-  groupsRoute,
-  billingRoute,
-  adminApiKeysRoute,
-  subscriptionPlansRoute,
+  usageRoute,
+  availableChannelsRoute,
+  monitorRoute,
   subscriptionsRoute,
-  paymentChannelsRoute,
-  paymentOrdersRoute,
-  purchaseCenterRoute,
-  configRoute,
+  purchaseRoute,
+  ordersRoute,
+  redeemRoute,
+  affiliateRoute,
+  profileRoute,
 ]);
 
 export const router = createRouter({ routeTree, history: createHashHistory() });

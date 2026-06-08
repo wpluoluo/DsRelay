@@ -274,6 +274,27 @@ export type AdminAccount = {
   active_subscription_price_cents?: number;
 };
 
+export type AdminUser = {
+  id: string;
+  name: string;
+  preview?: string;
+  source_type?: string;
+  group_id?: string;
+  group_name?: string;
+  enabled?: boolean;
+  status?: string;
+  request_count?: number;
+  last_seen_at?: string;
+  key_count?: number;
+  active_key_count?: number;
+  subscription_count?: number;
+  active_subscription_count?: number;
+  subscription_active?: boolean;
+  active_plan_name?: string;
+  active_group_id?: string;
+  active_group_name?: string;
+};
+
 export type AdminGroup = {
   id: string;
   name: string;
@@ -584,4 +605,23 @@ export type AdminPaymentOrder = {
   payload?: Record<string, unknown>;
   provider_payload?: Record<string, unknown>;
   fulfillment_logs?: AdminPaymentFulfillmentLog[];
+};
+
+export type AdminContentItem = {
+  id: string;
+  title: string;
+  status?: string;
+  summary?: string;
+  content?: string;
+  note?: string;
+  created_at?: number;
+  updated_at?: number;
+};
+
+export type AdminContentPayload = {
+  ok?: boolean;
+  bucket?: string;
+  label?: string;
+  items?: AdminContentItem[];
+  total?: number;
 };

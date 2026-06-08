@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
-import { BarChart3, ChevronDown, ChevronLeft, Coins, CreditCard, FolderTree, KeyRound, LayoutDashboard, ListChecks, RefreshCw, Server, Settings, Ticket, Users } from 'lucide-react';
+import { ChevronDown, ChevronLeft, RefreshCw } from 'lucide-react';
 import { fetchDashboardState, fetchProxyKeys, saveConfig, testPool } from '../api';
 import { Badge, Button } from '../components';
 import { PoolModal } from '../features/config/PoolModal';
@@ -11,10 +11,12 @@ import { DashboardProvider } from '../state/dashboardContext';
 import { queryClient } from '../state/queryClient';
 import { AccountCenterProvider } from '../state/accountCenterContext';
 import type { Pool, PoolTestResult, RuntimeConfig } from '../types';
+import { adminNavSections, type NavItem } from '../navigation';
 
 export function DashboardLayout() {
   const locationHref = useRouterState({ select: (state) => state.location.href });
-  const [configTab, setConfigTab] = useState<ConfigTab>('routes');
+  const locationPathname = useRouterState({ select: (state) => state.location.pathname });
+  const [configTab, setConfigTab] = useState<ConfigTab>('routing');
   const [draft, setDraft] = useState<RuntimeConfig>({ pools: [] });
   const [dirty, setDirty] = useState(false);
   const [status, setStatus] = useState('');
@@ -56,13 +58,24 @@ export function DashboardLayout() {
   });
 
   const state = stateQuery.data || {};
-  const runtime = state.runtime || {};
   const pools = (draft.pools || []).map(normalizePool);
   const [menuOpen, setMenuOpen] = useState<Record<string, boolean>>({
-    console: true,
-    accountCenter: true,
     admin: true,
+    account: true,
   });
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+
+  const activeGroupKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const section of adminNavSections) {
+      for (const item of section.items) {
+        if (item.children?.some((child) => locationPathname === child.path)) {
+          keys.add(item.key);
+        }
+      }
+    }
+    return keys;
+  }, [locationPathname]);
 
   function patchDraft(patch: Partial<RuntimeConfig>) {
     setDraft((current) => ({ ...current, ...patch }));
@@ -119,46 +132,34 @@ export function DashboardLayout() {
         <aside className="sidebar">
           <div className="brand">
             <div className="brand-mark">DR</div>
-            <div className="brand-copy"><strong>DsRelay</strong><span>本地代理控制台</span></div>
+            <div className="brand-copy"><strong>DsRelay</strong><span>管理控制台</span></div>
           </div>
           <nav className="sidebar-nav">
-            <NavGroup
-              title="控制台"
-              open={menuOpen.console}
-              onToggle={() => setMenuOpen((current) => ({ ...current, console: !current.console }))}
-            >
-              <NavLink to="/" icon={<BarChart3 size={18} />} label="总览仪表盘" />
-              <NavLink to="/config" icon={<Settings size={18} />} label="线路与策略" />
-              <NavLink to="/proxy-keys" icon={<KeyRound size={18} />} label="入口 API Key" />
-              <NavLink to="/requests" icon={<ListChecks size={18} />} label="使用记录" />
-              <NavLink to="/logs" icon={<Server size={18} />} label="运行日志" />
-            </NavGroup>
-            <NavGroup
-              title="账户中心"
-              open={menuOpen.accountCenter}
-              onToggle={() => setMenuOpen((current) => ({ ...current, accountCenter: !current.accountCenter }))}
-            >
-              <NavLink to="/account-dashboard" icon={<LayoutDashboard size={18} />} label="控制台" />
-              <NavLink to="/purchase" icon={<CreditCard size={18} />} label="购买与订阅" />
-              <NavLink to="/account-orders" icon={<CreditCard size={18} />} label="支付订单" />
-              <NavLink to="/account-subscriptions" icon={<Ticket size={18} />} label="我的订阅" />
-              <NavLink to="/keys" icon={<KeyRound size={18} />} label="账户 API Key" />
-              <NavLink to="/usage" icon={<BarChart3 size={18} />} label="使用记录" />
-            </NavGroup>
-            <NavGroup
-              title="管理后台"
-              open={menuOpen.admin}
-              onToggle={() => setMenuOpen((current) => ({ ...current, admin: !current.admin }))}
-            >
-              <NavLink to="/accounts" icon={<Users size={18} />} label="账户管理" />
-              <NavLink to="/groups" icon={<FolderTree size={18} />} label="分组管理" />
-              <NavLink to="/account-api-keys" icon={<KeyRound size={18} />} label="业务 API Key" />
-              <NavLink to="/billing" icon={<Coins size={18} />} label="计费管理" />
-              <NavLink to="/subscription-plans" icon={<Ticket size={18} />} label="订阅计划" />
-              <NavLink to="/subscriptions" icon={<Ticket size={18} />} label="账户订阅" />
-              <NavLink to="/payment-channels" icon={<CreditCard size={18} />} label="支付通道" />
-              <NavLink to="/payment-orders" icon={<CreditCard size={18} />} label="支付订单" />
-            </NavGroup>
+            {adminNavSections.map((section) => (
+              <div className="sidebar-group" key={section.key}>
+                <button
+                  type="button"
+                  className="sidebar-group-toggle"
+                  onClick={() => setMenuOpen((current) => ({ ...current, [section.key]: !current[section.key] }))}
+                >
+                  <span>{section.title}</span>
+                  <ChevronDown size={14} className={menuOpen[section.key] ? 'sidebar-group-toggle-open' : ''} />
+                </button>
+                {menuOpen[section.key] ? (
+                  <div className="sidebar-group-links">
+                    {section.items.map((item) => (
+                      <SidebarItem
+                        key={item.key}
+                        item={item}
+                        pathname={locationPathname}
+                        expanded={Boolean(expandedGroups[item.key] || activeGroupKeys.has(item.key))}
+                        onToggleGroup={() => setExpandedGroups((current) => ({ ...current, [item.key]: !(current[item.key] || activeGroupKeys.has(item.key)) }))}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ))}
           </nav>
         </aside>
 
@@ -167,7 +168,7 @@ export function DashboardLayout() {
             <div className="topbar-main">
               <div className="topbar-title">
                 <h1>DsRelay</h1>
-                <p>管理控制台</p>
+                <p>对齐 SUB2 的导航与入口层级</p>
               </div>
             </div>
             <div className="hero-actions">
@@ -201,33 +202,77 @@ export function DashboardLayout() {
   );
 }
 
-function NavGroup({
-  title,
-  open,
-  onToggle,
-  children,
+function SidebarItem({
+  item,
+  pathname,
+  expanded,
+  onToggleGroup,
 }: {
-  title: string;
-  open: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
+  item: NavItem;
+  pathname: string;
+  expanded: boolean;
+  onToggleGroup: () => void;
 }) {
-  return (
-    <div className="sidebar-group">
-      <button type="button" className="sidebar-group-toggle" onClick={onToggle}>
-        <span>{title}</span>
-        <ChevronDown size={14} className={open ? 'sidebar-group-toggle-open' : ''} />
-      </button>
-      {open ? <div className="sidebar-group-links">{children}</div> : null}
-    </div>
-  );
-}
+  const Icon = item.icon;
+  const isActive = pathname === item.path || pathname.startsWith(`${item.path}/`);
+  const childActive = Boolean(item.children?.some((child) => pathname === child.path));
 
-function NavLink({ to, icon, label }: { to: string; icon: React.ReactNode; label: string }) {
+  if (item.children?.length) {
+    const buttonClass = `sidebar-link sidebar-link-button ${childActive && !expanded ? 'active' : ''}`;
+    if (item.expandOnly) {
+      return (
+        <div className="sidebar-nested">
+          <button type="button" className={buttonClass} onClick={onToggleGroup}>
+            <Icon size={18} />
+            <span>{item.label}</span>
+            <ChevronDown size={14} className={expanded ? 'sidebar-group-toggle-open nav-arrow-inline' : 'nav-arrow-inline'} />
+          </button>
+          {expanded ? (
+            <div className="sidebar-nested-children">
+              {item.children.map((child) => {
+                const ChildIcon = child.icon;
+                return (
+                  <Link key={child.key} to={child.path} activeProps={{ className: 'active' }} className="sidebar-link sidebar-link-child">
+                    <ChildIcon size={16} />
+                    <span>{child.label}</span>
+                    <ChevronLeft className="nav-arrow" size={14} />
+                  </Link>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+    return (
+      <div className="sidebar-nested">
+        <Link to={item.path} activeProps={{ className: 'active' }} className={buttonClass} onClick={onToggleGroup}>
+          <Icon size={18} />
+          <span>{item.label}</span>
+          <ChevronDown size={14} className={expanded ? 'sidebar-group-toggle-open nav-arrow-inline' : 'nav-arrow-inline'} />
+        </Link>
+        {expanded ? (
+          <div className="sidebar-nested-children">
+            {item.children.map((child) => {
+              const ChildIcon = child.icon;
+              return (
+                <Link key={child.key} to={child.path} activeProps={{ className: 'active' }} className="sidebar-link sidebar-link-child">
+                  <ChildIcon size={16} />
+                  <span>{child.label}</span>
+                  <ChevronLeft className="nav-arrow" size={14} />
+                </Link>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
-    <Link to={to} activeOptions={{ exact: to === '/' }} activeProps={{ className: 'active' }}>
-      {icon}
-      <span>{label}</span>
+    <Link to={item.path} activeProps={{ className: 'active' }} className={isActive ? 'active' : undefined}>
+      <Icon size={18} />
+      <span>{item.label}</span>
       <ChevronLeft className="nav-arrow" size={14} />
     </Link>
   );

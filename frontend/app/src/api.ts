@@ -8,7 +8,10 @@ import type {
   AdminPaymentChannel,
   AdminPaymentChannelTemplatePayload,
   AdminPaymentOrder,
+  AdminContentPayload,
+  AdminContentItem,
   AdminAccount,
+  AdminUser,
   AdminSubscriptionPlan,
   AdminUsageItem,
   AdminAccountSubscription,
@@ -86,6 +89,10 @@ export function fetchAdminProtocols(): Promise<AdminListPayload<AdminProtocolPro
 
 export function fetchAdminAccounts(): Promise<AdminListPayload<AdminAccount>> {
   return requestJson<AdminListPayload<AdminAccount>>('/admin/accounts');
+}
+
+export function fetchAdminUsers(): Promise<AdminListPayload<AdminUser>> {
+  return requestJson<AdminListPayload<AdminUser>>('/admin/users');
 }
 
 export function saveAdminAccount(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminAccount }> {
@@ -246,6 +253,20 @@ export function createAdminPaymentOrder(payload: Record<string, unknown>): Promi
 
 export function updateAdminPaymentOrderStatus(orderId: string, payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminPaymentOrder }> {
   return requestJson<{ ok?: boolean; item?: AdminPaymentOrder }>(`/admin/payment-orders/${orderId}/status`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchAdminContent(path: '/admin/announcements' | '/admin/risk-control' | '/admin/redeem' | '/admin/promo-codes' | '/admin/affiliates/invites' | '/admin/affiliates/rebates' | '/admin/affiliates/transfers'): Promise<AdminContentPayload> {
+  return requestJson<AdminContentPayload>(path);
+}
+
+export function saveAdminContent(
+  path: '/admin/announcements' | '/admin/risk-control' | '/admin/redeem' | '/admin/promo-codes' | '/admin/affiliates/invites' | '/admin/affiliates/rebates' | '/admin/affiliates/transfers',
+  payload: Partial<AdminContentItem>,
+): Promise<{ ok?: boolean; bucket?: string; item?: AdminContentItem }> {
+  return requestJson<{ ok?: boolean; bucket?: string; item?: AdminContentItem }>(path, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
