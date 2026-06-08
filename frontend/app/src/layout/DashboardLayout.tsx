@@ -178,7 +178,7 @@ export function DashboardLayout() {
         {poolDraft ? (
           <PoolModal
             pool={poolDraft}
-            title={poolIndex == null ? '新增连接池' : '管理连接池'}
+            title={poolIndex == null ? '添加账号' : '管理账号'}
             testResult={poolTest}
             onChange={setPoolDraft}
             onClose={() => { setPoolDraft(null); setPoolIndex(null); }}
@@ -210,7 +210,7 @@ function SidebarItem({
   const childActive = Boolean(item.children?.some((child) => pathname === child.path));
 
   if (item.children?.length) {
-    const buttonClass = `sidebar-link sidebar-link-button ${childActive && !expanded ? 'active' : ''}`;
+    const buttonClass = `sidebar-link sidebar-link-button ${childActive ? 'active' : ''}`;
     if (item.expandOnly) {
       return (
         <div className="sidebar-nested">
@@ -227,7 +227,6 @@ function SidebarItem({
                   <Link key={child.key} to={child.path} activeProps={{ className: 'active' }} className="sidebar-link sidebar-link-child">
                     <ChildIcon size={16} />
                     <span>{child.label}</span>
-                    <ChevronLeft className="nav-arrow" size={14} />
                   </Link>
                 );
               })}
@@ -251,7 +250,6 @@ function SidebarItem({
                 <Link key={child.key} to={child.path} activeProps={{ className: 'active' }} className="sidebar-link sidebar-link-child">
                   <ChildIcon size={16} />
                   <span>{child.label}</span>
-                  <ChevronLeft className="nav-arrow" size={14} />
                 </Link>
               );
             })}

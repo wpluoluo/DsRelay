@@ -57,6 +57,11 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.upsert_group(payload))
 
+    @app.delete("/admin/groups/<group_id>")
+    @admin_required
+    def admin_groups_delete(group_id: str):
+        return jsonify(analytics_service.delete_group(group_id))
+
     @app.get("/admin/usage")
     @admin_required
     def admin_usage():

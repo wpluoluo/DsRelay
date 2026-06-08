@@ -216,6 +216,7 @@ export type AdminProtocolProfile = {
 export type AdminProviderAccount = {
   id: string;
   pool_name?: string;
+  pool_index?: number;
   route_url?: string;
   route_index?: number;
   provider_name?: string;

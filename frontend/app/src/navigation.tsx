@@ -52,7 +52,7 @@ export const routeMeta = {
   '/admin/ops': meta('Ops', ''),
   '/admin/users': meta('用户管理', ''),
   '/admin/groups': meta('分组管理', ''),
-  '/admin/channels/pricing': meta('渠道管理', ''),
+  '/admin/channels/pricing': meta('渠道定价', ''),
   '/admin/channels/monitor': meta('渠道监控', ''),
   '/admin/subscriptions': meta('订阅管理', ''),
   '/admin/accounts': meta('账号管理', ''),

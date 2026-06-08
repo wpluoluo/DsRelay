@@ -127,6 +127,12 @@ export function saveAdminGroup(payload: Record<string, unknown>): Promise<{ ok?:
   });
 }
 
+export function deleteAdminGroup(groupId: string): Promise<{ ok?: boolean; id?: string }> {
+  return requestJson<{ ok?: boolean; id?: string }>(`/admin/groups/${groupId}`, {
+    method: 'DELETE',
+  });
+}
+
 export function fetchAdminUsage(params?: { started_after?: string; started_before?: string }): Promise<AdminListPayload<AdminUsageItem>> {
   const query = new URLSearchParams();
   if (params?.started_after) query.set('started_after', params.started_after);

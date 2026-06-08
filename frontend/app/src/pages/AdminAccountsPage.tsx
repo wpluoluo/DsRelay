@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Eye, RefreshCw, Server } from 'lucide-react';
+import { Edit, Eye, Plus, RefreshCw, Server } from 'lucide-react';
 import { fetchAdminProviderAccounts } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
 import {
@@ -18,6 +18,7 @@ import {
 } from '../components/admin';
 import type { AdminProviderAccount } from '../types';
 import { formatByteCount, formatNumber, formatTokenCount, readStorageJSON, writeStorageJSON } from '../utils';
+import { useDashboard } from '../state/dashboardContext';
 
 type StatusFilter = '' | 'enabled' | 'disabled';
 type HealthFilter = '' | 'error' | 'used' | 'unused';
@@ -27,6 +28,7 @@ const DEFAULT_VISIBLE_COLUMNS: AccountColumnKey[] = ['pool', 'protocol', 'models
 const STORAGE_KEY = 'admin-provider-accounts-view-state';
 
 export function AdminAccountsPage() {
+  const dashboard = useDashboard();
   const accountsQuery = useQuery({ queryKey: ['admin-provider-accounts'], queryFn: fetchAdminProviderAccounts, refetchInterval: 10000 });
   const savedState = readStorageJSON(STORAGE_KEY, {
     search: '',
@@ -161,6 +163,7 @@ export function AdminAccountsPage() {
                     <span>切换 50 / 页</span>
                   </button>
                 </ToolsMenu>
+                <Button tone="primary" onClick={() => dashboard.openPool(null)}><Plus size={15} />添加账号</Button>
               </ToolbarButtonRow>
             }
           >
@@ -261,6 +264,7 @@ export function AdminAccountsPage() {
                     <td>
                       <RowActions>
                         <RowAction icon={Eye} label="详情" onClick={() => setInspectAccount(item)} />
+                        <RowAction icon={Edit} label="管理" onClick={() => dashboard.openPool(resolvePoolIndex(item))} />
                       </RowActions>
                     </td>
                   </tr>
@@ -268,8 +272,7 @@ export function AdminAccountsPage() {
                   <ListEmptyRow
                     colSpan={visibleColumns.size + 2}
                     title="暂无账号数据"
-                    description="当前筛选条件下没有上游账号。"
-                    action={<Button onClick={() => accountsQuery.refetch()}><RefreshCw size={14} />刷新</Button>}
+                    action={<Button tone="primary" onClick={() => dashboard.openPool(null)}><Plus size={14} />添加账号</Button>}
                   />
                 )}
               </tbody>
@@ -361,4 +364,11 @@ function routeHost(value: string | undefined) {
   } catch {
     return text.split('://', 2).pop()?.split('/', 1)[0] || text;
   }
+}
+
+function resolvePoolIndex(item: AdminProviderAccount) {
+  const index = Number(item.pool_index);
+  if (Number.isFinite(index) && index >= 0) return index;
+  const routeIndex = Number(item.route_index);
+  return Number.isFinite(routeIndex) && routeIndex > 0 ? routeIndex - 1 : 0;
 }

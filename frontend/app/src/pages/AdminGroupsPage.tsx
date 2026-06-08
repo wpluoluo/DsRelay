@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Ban, Eye, Pencil, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
-import { fetchAdminGroups, saveAdminGroup } from '../api';
+import { Ban, Eye, Pencil, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { deleteAdminGroup, fetchAdminGroups, saveAdminGroup } from '../api';
 import { Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
 import { ActionButton, ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { queryClient } from '../state/queryClient';
@@ -39,6 +39,7 @@ export function AdminGroupsPage() {
   const [draft, setDraft] = useState<GroupDraft | null>(null);
   const [inspectGroup, setInspectGroup] = useState<AdminGroup | null>(null);
   const [toggleTarget, setToggleTarget] = useState<AdminGroup | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AdminGroup | null>(null);
   const savedState = readStorageJSON(STORAGE_KEY, {
     search: '',
     statusFilter: '',
@@ -57,6 +58,18 @@ export function AdminGroupsPage() {
     mutationFn: saveAdminGroup,
     onSuccess: async () => {
       setDraft(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['admin-groups'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin-overview'] }),
+      ]);
+    },
+  });
+  const deleteMutation = useMutation({
+    mutationFn: (groupId: string) => deleteAdminGroup(groupId),
+    onSuccess: async () => {
+      setDeleteTarget(null);
+      setInspectGroup(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['admin-groups'] }),
         queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
@@ -187,7 +200,7 @@ export function AdminGroupsPage() {
                     <span>切换 50 / 页</span>
                   </button>
                 </ToolsMenu>
-                <Button tone="primary" onClick={openCreate}><Plus size={15} />新增分组</Button>
+                <Button tone="primary" onClick={openCreate}><Plus size={15} />创建分组</Button>
               </ToolbarButtonRow>
             }
           >
@@ -249,6 +262,7 @@ export function AdminGroupsPage() {
                         <RowAction icon={Eye} label="详情" onClick={() => setInspectGroup(item)} />
                         <RowAction icon={Pencil} label="编辑" onClick={() => openEdit(item)} />
                         <RowAction icon={item.enabled === false ? ShieldCheck : Ban} label={item.enabled === false ? '启用' : '停用'} tone={item.enabled === false ? 'default' : 'warn'} onClick={() => toggleEnabled(item)} />
+                        <RowAction icon={Trash2} label="删除" tone="danger" onClick={() => setDeleteTarget(item)} />
                       </RowActions>
                     </td>
                   </tr>
@@ -256,8 +270,7 @@ export function AdminGroupsPage() {
                   <ListEmptyRow
                     colSpan={visibleColumns.size + 2}
                     title="暂无分组数据"
-                    description="当前没有可展示的分组记录。"
-                    action={<Button tone="primary" onClick={openCreate}>新增分组</Button>}
+                    action={<Button tone="primary" onClick={openCreate}>创建分组</Button>}
                   />
                 )}
               </tbody>
@@ -279,7 +292,7 @@ export function AdminGroupsPage() {
 
       {draft ? (
         <Modal
-          title={draft.id ? '编辑分组' : '新增分组'}
+          title={draft.id ? '编辑分组' : '创建分组'}
           size="lg"
           onClose={() => setDraft(null)}
           footer={
@@ -293,7 +306,7 @@ export function AdminGroupsPage() {
         >
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
-              <strong>{draft.id ? '编辑分组' : '新增分组'}</strong>
+              <strong>{draft.id ? '编辑分组' : '创建分组'}</strong>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
@@ -434,8 +447,30 @@ export function AdminGroupsPage() {
               <div className="admin-dialog-summary-card">
                 <span>影响范围</span>
                 <strong>{toggleTarget.is_exclusive ? '专属分组' : '共享分组'}</strong>
-                <small>历史数据保留不删</small>
+                <small>{toggleTarget.id}</small>
               </div>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
+      {deleteTarget ? (
+        <Modal
+          title="删除分组"
+          size="md"
+          onClose={() => setDeleteTarget(null)}
+          footer={
+            <ModalActions>
+              <Button onClick={() => setDeleteTarget(null)}>取消</Button>
+              <Button tone="danger" disabled={deleteMutation.isPending} onClick={() => deleteMutation.mutate(deleteTarget.id)}>
+                删除
+              </Button>
+            </ModalActions>
+          }
+        >
+          <div className="admin-dialog">
+            <div className="admin-dialog-intro">
+              <strong>{deleteTarget.name}</strong>
             </div>
           </div>
         </Modal>

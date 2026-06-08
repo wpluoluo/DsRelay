@@ -377,7 +377,7 @@ export function AdminUsersPage() {
                 </ToolsMenu>
                 <Button tone="primary" onClick={openCreate}>
                   <Plus size={15} />
-                  新增用户
+                  创建用户
                 </Button>
               </ToolbarButtonRow>
             }
@@ -506,7 +506,7 @@ export function AdminUsersPage() {
                   <ListEmptyRow
                     colSpan={visibleColumns.size + 2}
                     title="暂无用户"
-                    action={<Button tone="primary" onClick={openCreate}>新增用户</Button>}
+                    action={<Button tone="primary" onClick={openCreate}>创建用户</Button>}
                   />
                 )}
               </tbody>
@@ -528,7 +528,7 @@ export function AdminUsersPage() {
 
       {draft ? (
         <Modal
-          title={draft.id ? '编辑用户' : '新增用户'}
+          title={draft.id ? '编辑用户' : '创建用户'}
           size="lg"
           onClose={() => setDraft(null)}
           footer={
@@ -641,7 +641,7 @@ export function AdminUsersPage() {
           onClose={() => setViewKeysUser(null)}
           footer={
             <ModalActions>
-              <Button onClick={() => setKeyDraft({ userId: viewKeysUser.id, name: '默认业务 Key', enabled: true })}>新增 Key</Button>
+              <Button onClick={() => setKeyDraft({ userId: viewKeysUser.id, name: '默认业务 Key', enabled: true })}>创建 Key</Button>
               <Button onClick={() => setViewKeysUser(null)}>关闭</Button>
             </ModalActions>
           }
@@ -700,7 +700,7 @@ export function AdminUsersPage() {
                       </td>
                     </tr>
                   )) : (
-                    <ListEmptyRow colSpan={6} title="暂无 API Key" action={<Button tone="primary" onClick={() => setKeyDraft({ userId: viewKeysUser.id, name: '默认业务 Key', enabled: true })}>新增 Key</Button>} />
+                    <ListEmptyRow colSpan={6} title="暂无 API Key" action={<Button tone="primary" onClick={() => setKeyDraft({ userId: viewKeysUser.id, name: '默认业务 Key', enabled: true })}>创建 Key</Button>} />
                   )}
                 </tbody>
               </table>
@@ -711,7 +711,7 @@ export function AdminUsersPage() {
 
       {keyDraft ? (
         <Modal
-          title="新增 API Key"
+          title="创建 API Key"
           size="md"
           onClose={() => setKeyDraft(null)}
           footer={

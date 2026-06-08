@@ -97,6 +97,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     {
                         "id": f"provider_{pool_index}_{route_index}",
                         "pool_name": pool_name,
+                        "pool_index": pool_index,
                         "route_url": route_url,
                         "route_index": route_index + 1,
                         "provider_name": hostname or route_url,
@@ -429,6 +430,17 @@ class AdminAnalyticsMixin(AdminServiceBase):
             raise ValueError("group name is required")
         saved = self.storage.upsert_admin_group(item)
         return {"ok": True, "item": saved}
+
+    def delete_group(self, group_id: str) -> dict:
+        if self.storage is None:
+            raise RuntimeError("storage not configured")
+        target = coerce_text(group_id)
+        if not target:
+            raise ValueError("group_id is required")
+        if not self.storage.get_admin_group(target):
+            raise ValueError("group not found")
+        self.storage.delete_admin_group(target)
+        return {"ok": True, "id": target}
 
     def list_usage(self, limit: int = 200, *, started_after=None, started_before=None) -> dict:
         rows = self._load_recent_requests(limit=max(limit, 500))

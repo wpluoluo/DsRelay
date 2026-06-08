@@ -851,6 +851,22 @@ class ProxyStorage:
         item["updated_at"] = now
         return item
 
+    def delete_admin_group(self, group_id: str) -> None:
+        target = str(group_id or "").strip()
+        if not target:
+            raise ValueError("group_id is required")
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM admin_account_groups WHERE group_id = %s", (target,))
+                cur.execute("UPDATE admin_subscription_plans SET group_id = NULL WHERE group_id = %s", (target,))
+                cur.execute("UPDATE admin_account_subscriptions SET group_id = NULL WHERE group_id = %s", (target,))
+                cur.execute("UPDATE admin_payment_orders SET group_id = NULL WHERE group_id = %s", (target,))
+                cur.execute("DELETE FROM admin_groups WHERE id = %s", (target,))
+            conn.commit()
+        finally:
+            conn.close()
+
     def replace_admin_account_groups(self, account_id: str, group_ids: list[str]) -> None:
         normalized_account_id = str(account_id or "").strip()
         if not normalized_account_id:

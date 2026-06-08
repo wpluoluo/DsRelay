@@ -17,8 +17,8 @@ export function PoolList({
   return (
     <div className="section-stack">
       <div className="split-head">
-        <div><h4>连接池管理</h4><p>线路优先级、模型映射、协议和缓存策略都在这里维护。</p></div>
-        <Button tone="primary" onClick={() => onOpenPool(null)}>添加连接池</Button>
+        <div><h4>账号列表</h4></div>
+        <Button tone="primary" onClick={() => onOpenPool(null)}>添加账号</Button>
       </div>
       {pools.length ? pools.map((pool, index) => (
         <div className="pool-card" key={`${pool.name}-${index}`}>
