@@ -186,8 +186,7 @@ export function AccountApiKeysPage() {
         >
           <div className="admin-dialog admin-dialog-result">
             <div className="admin-dialog-intro">
-              <strong>请立即保存原始 Key</strong>
-              <span>该原始 Key 只展示一次。关闭后列表只保留预览值。</span>
+              <strong>原始 Key</strong>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
@@ -202,7 +201,7 @@ export function AccountApiKeysPage() {
               </div>
               <div className="admin-dialog-summary-card">
                 <span>建议动作</span>
-                <strong>立刻复制保存</strong>
+                <strong>复制保存</strong>
                 <small>仅本次可见</small>
               </div>
             </div>

@@ -270,7 +270,6 @@ export function AdminSubscriptionsPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>向用户分配新的订阅</strong>
-              <span>订阅会直接参与请求鉴权、额度校验和消费归因。这里的操作需要和计划、分组、支付记录保持一致。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
@@ -309,7 +308,6 @@ export function AdminSubscriptionsPage() {
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
                 <strong>订阅信息</strong>
-                <span>用户与计划确认后即可直接落订阅记录</span>
               </div>
               <div className="admin-dialog-grid modal-grid">
                 <Field label="用户">
@@ -332,9 +330,6 @@ export function AdminSubscriptionsPage() {
                   </Select>
                 </Field>
               </div>
-            </div>
-            <div className="admin-dialog-note">
-              分配完成后，用户在 API Key 校验和使用记录中会立即看到新的订阅归属。
             </div>
           </div>
         </Modal>

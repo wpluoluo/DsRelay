@@ -255,8 +255,7 @@ export function AdminApiKeysPage() {
         >
           <div className="admin-dialog admin-dialog-result">
             <div className="admin-dialog-intro">
-              <strong>请立即保存原始 Key</strong>
-              <span>原始 Key 只展示这一次。关闭后列表里只保留预览值，不再回显完整内容。</span>
+              <strong>原始 Key</strong>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
@@ -271,8 +270,8 @@ export function AdminApiKeysPage() {
               </div>
               <div className="admin-dialog-summary-card">
                 <span>建议动作</span>
-                <strong>立刻复制保存</strong>
-                <small>避免原始值丢失</small>
+                <strong>复制保存</strong>
+                <small>仅本次可见</small>
               </div>
             </div>
             <div className="generated-key-box generated-key-floating">
@@ -336,9 +335,6 @@ export function AdminApiKeysPage() {
                   <TextInput value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
                 </Field>
               </div>
-            </div>
-            <div className="admin-dialog-note">
-              原始 Key 只会在生成成功后展示一次，建议在关闭前直接复制保存。
             </div>
           </div>
         </Modal>
