@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { BadgeCheck, CircleX, CreditCard, Eye, Plus, RefreshCw, ReceiptText, ShieldCheck, Wallet } from 'lucide-react';
-import { createAdminPaymentOrder, fetchAdminAccounts, fetchAdminPaymentChannels, fetchAdminPaymentOrders, fetchAdminSubscriptionPlans, updateAdminPaymentOrderStatus } from '../api';
+import { createAdminPaymentOrder, fetchAdminUsers, fetchAdminPaymentChannels, fetchAdminPaymentOrders, fetchAdminSubscriptionPlans, updateAdminPaymentOrderStatus } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
 import { ActionButton, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { queryClient } from '../state/queryClient';
@@ -12,7 +12,7 @@ const STORAGE_KEY = 'admin-payment-orders-view-state';
 
 export function AdminPaymentOrdersPage() {
   const ordersQuery = useQuery({ queryKey: ['admin-payment-orders'], queryFn: fetchAdminPaymentOrders, refetchInterval: 10000 });
-  const accountsQuery = useQuery({ queryKey: ['admin-accounts'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
+  const accountsQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, refetchInterval: 10000 });
   const plansQuery = useQuery({ queryKey: ['admin-subscription-plans'], queryFn: fetchAdminSubscriptionPlans, refetchInterval: 10000 });
   const channelsQuery = useQuery({ queryKey: ['admin-payment-channels'], queryFn: fetchAdminPaymentChannels, refetchInterval: 10000 });
   const [draft, setDraft] = useState<any | null>(null);

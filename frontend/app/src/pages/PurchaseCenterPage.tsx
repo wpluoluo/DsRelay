@@ -26,26 +26,26 @@ const DEFAULT_DRAFT: PurchaseDraft = {
 
 export function PurchaseCenterPage() {
   const {
-    accounts,
     plans,
     channels,
     orders,
     subscriptions,
-    selectedAccountId,
-    selectedAccount,
+    selectedUserId,
+    selectedUser,
+    users,
     visiblePlans,
     visibleChannels,
-    setSelectedAccountId,
+    setSelectedUserId,
   } = useAccountCenter();
   const [draft, setDraft] = useState<PurchaseDraft>(DEFAULT_DRAFT);
   const [createdOrder, setCreatedOrder] = useState<AdminPaymentOrder | null>(null);
   const [inspectOrder, setInspectOrder] = useState<AdminPaymentOrder | null>(null);
   const [confirmCreate, setConfirmCreate] = useState(false);
   const selectedPlan = visiblePlans.find((item) => item.id === draft.plan_id);
-  const selectedOrders = useMemo(() => orders.filter((item) => !selectedAccountId || item.account_id === selectedAccountId), [orders, selectedAccountId]);
+  const selectedOrders = useMemo(() => orders.filter((item) => !selectedUserId || item.account_id === selectedUserId), [orders, selectedUserId]);
   const selectedSubscriptions = useMemo(
-    () => subscriptions.filter((item) => !selectedAccountId || item.account_id === selectedAccountId),
-    [subscriptions, selectedAccountId],
+    () => subscriptions.filter((item) => !selectedUserId || item.account_id === selectedUserId),
+    [subscriptions, selectedUserId],
   );
   const paidOrders = selectedOrders.filter((item) => item.status === 'paid').length;
   const todayActualCost = selectedOrders.reduce((sum, item) => sum + Number(item.final_price_cents ?? item.amount_cents ?? 0), 0) / 100;
@@ -66,14 +66,8 @@ export function PurchaseCenterPage() {
   }
 
   useEffect(() => {
-    if (!selectedAccountId && accounts.length) {
-      setSelectedAccountId(accounts[0].id);
-    }
-  }, [selectedAccountId, setSelectedAccountId, accounts]);
-
-  useEffect(() => {
-    setDraft((current) => ({ ...current, account_id: selectedAccountId }));
-  }, [selectedAccountId]);
+    setDraft((current) => ({ ...current, account_id: selectedUserId }));
+  }, [selectedUserId]);
 
   useEffect(() => {
     if (!selectedPlan) return;
@@ -89,10 +83,10 @@ export function PurchaseCenterPage() {
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>充值/订阅</strong>
-          <span>对齐 SUB2 个人购买页，面向当前账户创建订单、选择计划并追踪最近消费。</span>
+          <span>对齐 SUB2 个人购买页，面向当前用户创建订单、选择计划并追踪最近消费。</span>
         </div>
         <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>账户</span><strong>{selectedAccount?.name || '未选择账户'}</strong><small>{selectedAccount?.source_type || '请选择账户'}</small></div>
+          <div className="sub2-inline-summary-item"><span>用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.source_type || '请选择用户'}</small></div>
           <div className="sub2-inline-summary-item"><span>可用计划</span><strong>{formatNumber(visiblePlans.length)}</strong><small>启用计划</small></div>
           <div className="sub2-inline-summary-item"><span>支付通道</span><strong>{formatNumber(visibleChannels.length)}</strong><small>当前可用</small></div>
           <div className="sub2-inline-summary-item"><span>已支付订单</span><strong>{formatNumber(paidOrders)}</strong><small>待处理 {formatNumber(selectedOrders.filter((item) => item.status === 'pending').length)}</small></div>
@@ -105,10 +99,10 @@ export function PurchaseCenterPage() {
           <PanelHead title={<><ShoppingCart size={18} />购买中心</>} action={<span className="subtle">创建订单并核对拉起参数</span>} />
           <div className="section-stack">
             <div className="form-grid">
-              <Field label="账户">
-                <Select value={selectedAccountId} onChange={(event) => setSelectedAccountId(event.target.value)}>
-                  <option value="">请选择账户</option>
-                  {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+              <Field label="用户">
+                <Select value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}>
+                  <option value="">请选择用户</option>
+                  {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
                 </Select>
               </Field>
               <Field label="订阅计划">
@@ -132,8 +126,8 @@ export function PurchaseCenterPage() {
               <div className="quick-action">
                 <span className="quick-action-icon blue"><UserRound size={20} /></span>
                 <span className="quick-action-copy">
-                  <strong>{selectedAccount?.name || '未选择账户'}</strong>
-                  <small>{selectedAccount?.group_name || selectedAccount?.source_type || '账户归属将在这里显示'}</small>
+                  <strong>{selectedUser?.name || '未选择用户'}</strong>
+                  <small>{selectedUser?.group_name || selectedUser?.source_type || '用户归属将在这里显示'}</small>
                 </span>
               </div>
               <div className="quick-action">
@@ -154,7 +148,7 @@ export function PurchaseCenterPage() {
                 <span className="quick-action-icon violet"><KeyRound size={20} /></span>
                 <span className="quick-action-copy">
                   <strong>{formatNumber(selectedSubscriptions.filter((item) => item.status === 'active').length)} 个有效订阅</strong>
-                  <small>已选账户当前订阅状态</small>
+                  <small>已选用户当前订阅状态</small>
                 </span>
               </div>
             </div>
@@ -167,7 +161,7 @@ export function PurchaseCenterPage() {
               >
                 创建订单
               </Button>
-              <Button onClick={() => setDraft((current) => ({ ...DEFAULT_DRAFT, account_id: current.account_id || selectedAccountId }))}>重置选择</Button>
+              <Button onClick={() => setDraft((current) => ({ ...DEFAULT_DRAFT, account_id: current.account_id || selectedUserId }))}>重置选择</Button>
             </div>
           </div>
         </Panel>
@@ -175,7 +169,7 @@ export function PurchaseCenterPage() {
         <Panel className="dashboard-card">
           <PanelHead title={<><Ticket size={18} />当前订阅</>} action={<span className="subtle">{selectedSubscriptions.length} 条</span>} />
           <div className="purchase-side-list">
-            {selectedSubscriptions.length ? selectedSubscriptions.slice(0, 6).map((item) => <SubscriptionCard key={item.id} item={item} />) : <Empty>当前账户暂无订阅。</Empty>}
+            {selectedSubscriptions.length ? selectedSubscriptions.slice(0, 6).map((item) => <SubscriptionCard key={item.id} item={item} />) : <Empty>当前用户暂无订阅。</Empty>}
           </div>
         </Panel>
       </div>
@@ -277,7 +271,7 @@ export function PurchaseCenterPage() {
         >
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
-                <strong>{selectedAccount?.name || '未选择账户'}</strong>
+                <strong>{selectedUser?.name || '未选择用户'}</strong>
                 <span>确认按当前计划、通道和金额创建订单。创建后会进入统一支付与履约链路。</span>
             </div>
             <div className="admin-dialog-summary">
@@ -331,7 +325,7 @@ export function PurchaseCenterPage() {
               </div>
             </div>
             <div className="admin-dialog-grid">
-              <Field label="账户"><TextInput readOnly value={inspectOrder.account_name || inspectOrder.account_id || '-'} /></Field>
+              <Field label="用户"><TextInput readOnly value={inspectOrder.account_name || inspectOrder.account_id || '-'} /></Field>
               <Field label="计划"><TextInput readOnly value={inspectOrder.plan_name || inspectOrder.plan_id || '-'} /></Field>
               <Field label="通道"><TextInput readOnly value={inspectOrder.channel_name || inspectOrder.channel_id || inspectOrder.provider || '-'} /></Field>
               <Field label="金额"><TextInput readOnly value={formatUsdCost(Number(inspectOrder.final_price_cents ?? inspectOrder.amount_cents ?? 0) / 100, 2)} /></Field>

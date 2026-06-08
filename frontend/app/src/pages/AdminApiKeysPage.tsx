@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Copy, Eye, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
-import { createAdminApiKey, fetchAdminAccounts, fetchAdminApiKeys, setAdminApiKeyEnabled } from '../api';
+import { createAdminApiKey, fetchAdminUsers, fetchAdminApiKeys, setAdminApiKeyEnabled } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
 import { ActionButton, FilterToolbar, ListEmptyRow, Pager, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { queryClient } from '../state/queryClient';
@@ -12,7 +12,7 @@ const STORAGE_KEY = 'admin-api-keys-view-state';
 
 export function AdminApiKeysPage() {
   const keysQuery = useQuery({ queryKey: ['admin-api-keys'], queryFn: fetchAdminApiKeys, refetchInterval: 10000 });
-  const accountsQuery = useQuery({ queryKey: ['admin-accounts'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
+  const accountsQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, refetchInterval: 10000 });
   const [draft, setDraft] = useState<{ account_id: string; name: string } | null>(null);
   const [generatedKey, setGeneratedKey] = useState('');
   const [copiedKeyId, setCopiedKeyId] = useState('');

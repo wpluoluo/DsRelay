@@ -8,6 +8,102 @@ from local_proxy.platform import normalize_admin_group_payload
 
 
 class AdminAnalyticsMixin(AdminServiceBase):
+    def list_provider_accounts(self, limit: int = 500) -> dict:
+        config = {}
+        if self.storage is not None:
+            try:
+                config = self.storage.load_app_config("runtime_config")
+            except Exception:
+                config = {}
+        pools = config.get("pools") if isinstance(config, dict) else []
+        if not isinstance(pools, list):
+            pools = []
+
+        usage_rows = self._load_recent_requests(limit=5000)
+        route_stats: dict[str, dict] = {}
+        for row in usage_rows:
+            route_url = coerce_text(row.get("route_url") or row.get("upstream_url"))
+            if not route_url:
+                continue
+            entry = route_stats.setdefault(
+                route_url,
+                {
+                    "request_count": 0,
+                    "error_count": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "input_bytes": 0,
+                    "output_bytes": 0,
+                    "last_seen_at": "",
+                    "model_names": set(),
+                },
+            )
+            entry["request_count"] += 1
+            if row.get("error") or safe_int(row.get("status_code")) >= 400:
+                entry["error_count"] += 1
+            entry["prompt_tokens"] += safe_int(row.get("prompt_tokens"))
+            entry["completion_tokens"] += safe_int(row.get("completion_tokens"))
+            entry["total_tokens"] += safe_int(row.get("total_tokens"))
+            entry["input_bytes"] += safe_int(row.get("input_bytes"))
+            entry["output_bytes"] += safe_int(row.get("bytes_sent"))
+            model_name = coerce_text(row.get("resolved_model") or row.get("logical_model") or row.get("model"))
+            if model_name:
+                entry["model_names"].add(model_name)
+            started_at = coerce_text(row.get("started_at"))
+            if started_at and started_at > coerce_text(entry.get("last_seen_at")):
+                entry["last_seen_at"] = started_at
+
+        items = []
+        for pool_index, pool in enumerate(pools):
+            if not isinstance(pool, dict):
+                continue
+            pool_name = coerce_text(pool.get("name")) or f"pool_{pool_index + 1}"
+            urls = pool.get("urls") if isinstance(pool.get("urls"), list) else []
+            keys = pool.get("keys") if isinstance(pool.get("keys"), list) else []
+            route_policy = pool.get("route_policy") if isinstance(pool.get("route_policy"), dict) else {}
+            for route_index, raw_url in enumerate(urls):
+                route_url = coerce_text(raw_url)
+                if not route_url:
+                    continue
+                stats = route_stats.get(route_url, {})
+                key_count = len([item for item in keys if isinstance(item, dict) and coerce_text(item.get("key"))])
+                hostname = route_url.split("://", 1)[-1].split("/", 1)[0]
+                items.append(
+                    {
+                        "id": f"provider_{pool_index}_{route_index}",
+                        "pool_name": pool_name,
+                        "route_url": route_url,
+                        "route_index": route_index + 1,
+                        "provider_name": hostname or route_url,
+                        "enabled": pool.get("enabled") is not False,
+                        "priority": safe_int(pool.get("priority")),
+                        "key_count": key_count,
+                        "request_count": safe_int(stats.get("request_count")),
+                        "error_count": safe_int(stats.get("error_count")),
+                        "prompt_tokens": safe_int(stats.get("prompt_tokens")),
+                        "completion_tokens": safe_int(stats.get("completion_tokens")),
+                        "total_tokens": safe_int(stats.get("total_tokens")),
+                        "input_bytes": safe_int(stats.get("input_bytes")),
+                        "output_bytes": safe_int(stats.get("output_bytes")),
+                        "last_seen_at": coerce_text(stats.get("last_seen_at")),
+                        "models": sorted(stats.get("model_names") or []),
+                        "protocol": coerce_text(route_policy.get("text_upstream_protocol")) or "openai_chat_completions",
+                        "cooldown_seconds": safe_int(route_policy.get("route_cooldown_seconds")),
+                        "backoff_attempts": safe_int(route_policy.get("rate_limit_retry_attempts")),
+                    }
+                )
+
+        items.sort(
+            key=lambda item: (
+                safe_int(item.get("priority")),
+                -safe_int(item.get("request_count")),
+                coerce_text(item.get("pool_name")),
+                coerce_text(item.get("route_url")),
+            )
+        )
+        return {"ok": True, "items": items[:limit], "total": len(items)}
+
     def _extract_costs(self, row: dict) -> dict:
         total_cost = safe_float(row.get("total_cost"))
         actual_cost = safe_float(row.get("actual_cost"))
@@ -186,6 +282,11 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     "group_name": coerce_text(account.get("group_name")),
                     "enabled": account.get("enabled") is not False,
                     "status": coerce_text(account.get("status")) or "active",
+                    "role": coerce_text(account.get("role")) or "user",
+                    "note": coerce_text(account.get("note")),
+                    "balance_cents": safe_int(account.get("balance_cents")),
+                    "concurrency_limit": safe_int(account.get("concurrency_limit")),
+                    "allowed_group_ids": account.get("allowed_group_ids") if isinstance(account.get("allowed_group_ids"), list) else [],
                     "request_count": safe_int(account.get("request_count")),
                     "last_seen_at": coerce_text(account.get("last_seen_at")),
                     "key_count": key_counts.get(account_id, 0),

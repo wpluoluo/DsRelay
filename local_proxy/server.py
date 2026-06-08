@@ -6287,7 +6287,7 @@ def require_proxy_api_key() -> Response | None:
             candidate, source = extract_proxy_api_key(request)
             candidate_hash = hash_proxy_api_key(candidate) if candidate else ""
             matched = storage.find_admin_api_key_by_hash(candidate_hash) if candidate_hash else {}
-            if matched and matched.get("enabled") and matched.get("user_enabled", True):
+            if matched and matched.get("enabled") and matched.get("account_enabled", True):
                 matched_account_id = str(matched.get("account_id") or "").strip()
                 memberships = []
                 active_subscription = {}
@@ -6309,8 +6309,8 @@ def require_proxy_api_key() -> Response | None:
                     "type": "account_api_key",
                     "preview": str(matched.get("key_preview") or ""),
                     "source": str(source or "authorization"),
-                    "status": str(matched.get("user_status") or ""),
-                    "allowed_group_ids": matched.get("user_allowed_group_ids") if isinstance(matched.get("user_allowed_group_ids"), list) else [],
+                    "status": str(matched.get("account_status") or ""),
+                    "allowed_group_ids": matched.get("account_allowed_group_ids") if isinstance(matched.get("account_allowed_group_ids"), list) else [],
                     "group_ids": [item for item in memberships if item],
                     "subscription_id": str(active_subscription.get("subscription_id") or ""),
                     "plan_id": str(active_subscription.get("plan_id") or ""),

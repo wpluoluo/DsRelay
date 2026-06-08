@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Ban, Calendar, Eye, Plus, RefreshCw, RotateCcw } from 'lucide-react';
-import { assignAdminAccountSubscription, extendAdminAccountSubscription, fetchAdminAccounts, fetchAdminSubscriptionPlans, fetchAdminAccountSubscriptions, resetAdminAccountSubscriptionQuota, revokeAdminAccountSubscription } from '../api';
+import { assignAdminAccountSubscription, extendAdminAccountSubscription, fetchAdminUsers, fetchAdminSubscriptionPlans, fetchAdminAccountSubscriptions, resetAdminAccountSubscriptionQuota, revokeAdminAccountSubscription } from '../api';
 import { Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
 import { ActionButton, ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { queryClient } from '../state/queryClient';
@@ -14,7 +14,7 @@ const STORAGE_KEY = 'admin-subscriptions-view-state';
 
 export function AdminSubscriptionsPage() {
   const subsQuery = useQuery({ queryKey: ['admin-subscriptions'], queryFn: fetchAdminAccountSubscriptions, refetchInterval: 10000 });
-  const accountsQuery = useQuery({ queryKey: ['admin-accounts'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
+  const accountsQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, refetchInterval: 10000 });
   const plansQuery = useQuery({ queryKey: ['admin-subscription-plans'], queryFn: fetchAdminSubscriptionPlans, refetchInterval: 10000 });
   const [draft, setDraft] = useState<any | null>(null);
   const [inspectSubscription, setInspectSubscription] = useState<any | null>(null);

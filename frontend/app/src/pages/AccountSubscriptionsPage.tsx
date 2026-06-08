@@ -6,12 +6,12 @@ import { useAccountCenter } from '../state/accountCenterContext';
 import { formatNumber, formatUsdCost } from '../utils';
 
 export function AccountSubscriptionsPage() {
-  const { selectedAccount, selectedAccountId, subscriptions } = useAccountCenter();
+  const { selectedUser, selectedUserId, subscriptions } = useAccountCenter();
   const [statusFilter, setStatusFilter] = useState('');
   const [inspectSubscription, setInspectSubscription] = useState<any | null>(null);
   const rows = useMemo(
-    () => subscriptions.filter((item) => (!selectedAccountId || item.account_id === selectedAccountId) && (!statusFilter || item.status === statusFilter)),
-    [selectedAccountId, statusFilter, subscriptions],
+    () => subscriptions.filter((item) => (!selectedUserId || item.account_id === selectedUserId) && (!statusFilter || item.status === statusFilter)),
+    [selectedUserId, statusFilter, subscriptions],
   );
   const activeRows = rows.filter((item) => item.status === 'active');
   const expiringSoon = rows.filter((item) => {
@@ -26,10 +26,10 @@ export function AccountSubscriptionsPage() {
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>我的订阅</strong>
-          <span>保持 SUB2 账户订阅的卡片式浏览方式，集中查看套餐、周期与额度使用。</span>
+          <span>保持 SUB2 用户订阅的卡片式浏览方式，集中查看套餐、周期与额度使用。</span>
         </div>
         <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>当前账户</span><strong>{selectedAccount?.name || '未选择账户'}</strong><small>{selectedAccount?.group_name || selectedAccount?.source_type || '请选择账户'}</small></div>
+          <div className="sub2-inline-summary-item"><span>当前用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '请选择用户'}</small></div>
           <div className="sub2-inline-summary-item"><span>订阅总数</span><strong>{formatNumber(rows.length)}</strong><small>有效 {formatNumber(activeRows.length)}</small></div>
           <div className="sub2-inline-summary-item"><span>即将到期</span><strong>{formatNumber(expiringSoon.length)}</strong><small>7 天内</small></div>
           <div className="sub2-inline-summary-item"><span>套餐金额</span><strong>{formatUsdCost(rows.reduce((sum, item) => sum + Number(item.price_cents || 0), 0) / 100, 2)}</strong><small>按订阅价格累计</small></div>
@@ -72,7 +72,7 @@ export function AccountSubscriptionsPage() {
               <UsageMeter label="月用量" used={Number(item.monthly_used || 0)} limit={Number(item.monthly_limit || 0)} />
             </div>
           </Panel>
-        )) : <Empty>当前账户暂无订阅。</Empty>}
+        )) : <Empty>当前用户暂无订阅。</Empty>}
       </div>
 
       {inspectSubscription ? (

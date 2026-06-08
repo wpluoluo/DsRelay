@@ -1,31 +1,34 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
+  fetchAdminApiKeys,
   fetchAdminPaymentChannels,
   fetchAdminPaymentOrders,
-  fetchAdminAccounts,
-  fetchAdminAccountSubscriptions,
   fetchAdminSubscriptionPlans,
+  fetchAdminUsers,
+  fetchAdminAccountSubscriptions,
 } from '../api';
 import type {
-  AdminAccount,
+  AdminApiKey,
   AdminAccountSubscription,
   AdminPaymentChannel,
   AdminPaymentOrder,
   AdminSubscriptionPlan,
+  AdminUser,
 } from '../types';
 
 export type AccountCenterContextValue = {
-  accounts: AdminAccount[];
-  selectedAccountId: string;
-  selectedAccount?: AdminAccount;
+  users: AdminUser[];
+  selectedUserId: string;
+  selectedUser?: AdminUser;
+  apiKeys: AdminApiKey[];
   subscriptions: AdminAccountSubscription[];
   orders: AdminPaymentOrder[];
   plans: AdminSubscriptionPlan[];
   channels: AdminPaymentChannel[];
   visiblePlans: AdminSubscriptionPlan[];
   visibleChannels: AdminPaymentChannel[];
-  setSelectedAccountId: (accountId: string) => void;
+  setSelectedUserId: (userId: string) => void;
   reload: () => Promise<void>;
   loading: boolean;
 };
@@ -33,37 +36,38 @@ export type AccountCenterContextValue = {
 const AccountCenterContext = createContext<AccountCenterContextValue | null>(null);
 
 export function AccountCenterProvider({ children }: { children: React.ReactNode }) {
-  const accountsQuery = useQuery({ queryKey: ['admin-accounts'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
+  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, refetchInterval: 10000 });
+  const keysQuery = useQuery({ queryKey: ['admin-api-keys'], queryFn: fetchAdminApiKeys, refetchInterval: 10000 });
   const plansQuery = useQuery({ queryKey: ['admin-subscription-plans'], queryFn: fetchAdminSubscriptionPlans, refetchInterval: 10000 });
   const channelsQuery = useQuery({ queryKey: ['admin-payment-channels'], queryFn: fetchAdminPaymentChannels, refetchInterval: 10000 });
   const ordersQuery = useQuery({ queryKey: ['admin-payment-orders'], queryFn: fetchAdminPaymentOrders, refetchInterval: 10000 });
   const subscriptionsQuery = useQuery({ queryKey: ['admin-subscriptions'], queryFn: fetchAdminAccountSubscriptions, refetchInterval: 10000 });
 
-  const accounts = accountsQuery.data?.items || [];
+  const users = usersQuery.data?.items || [];
+  const apiKeys = keysQuery.data?.items || [];
   const plans = plansQuery.data?.items || [];
   const channels = (channelsQuery.data?.items || []).filter((item) => item.enabled !== false);
   const orders = ordersQuery.data?.items || [];
   const subscriptions = subscriptionsQuery.data?.items || [];
-  const [selectedAccountId, setSelectedAccountId] = useState('');
+  const [selectedUserId, setSelectedUserId] = useState('');
 
   useEffect(() => {
-    if (!selectedAccountId && accounts.length) {
-      setSelectedAccountId(accounts[0].id);
+    if (!selectedUserId && users.length) {
+      setSelectedUserId(users[0].id);
     }
-  }, [accounts, selectedAccountId]);
+  }, [selectedUserId, users]);
 
-  const selectedAccount = useMemo(() => accounts.find((item) => item.id === selectedAccountId), [selectedAccountId, accounts]);
+  const selectedUser = useMemo(() => users.find((item) => item.id === selectedUserId), [selectedUserId, users]);
 
   const visiblePlans = useMemo(() => {
-    if (!selectedAccount) return plans.filter((item) => item.enabled !== false);
-    const allowedGroups = selectedAccount.allowed_group_ids || [];
+    const allowedGroups = selectedUser?.allowed_group_ids || [];
     return plans.filter((plan) => {
       if (plan.enabled === false) return false;
       if (!allowedGroups.length) return true;
       if (!plan.group_id) return true;
       return allowedGroups.includes(plan.group_id);
     });
-  }, [plans, selectedAccount]);
+  }, [plans, selectedUser]);
 
   const visibleChannels = useMemo(() => {
     const groupIds = new Set(visiblePlans.map((item) => item.group_id).filter(Boolean));
@@ -78,37 +82,47 @@ export function AccountCenterProvider({ children }: { children: React.ReactNode 
   }, [channels, visiblePlans]);
 
   const value = useMemo<AccountCenterContextValue>(() => ({
-    accounts,
-    selectedAccountId,
-    selectedAccount,
+    users,
+    selectedUserId,
+    selectedUser,
+    apiKeys,
     subscriptions,
     orders,
     plans,
     channels,
     visiblePlans,
     visibleChannels,
-    setSelectedAccountId,
+    setSelectedUserId,
     reload: async () => {
       await Promise.all([
-        accountsQuery.refetch(),
+        usersQuery.refetch(),
+        keysQuery.refetch(),
         plansQuery.refetch(),
         channelsQuery.refetch(),
         ordersQuery.refetch(),
         subscriptionsQuery.refetch(),
       ]);
     },
-    loading: accountsQuery.isLoading || plansQuery.isLoading || channelsQuery.isLoading || ordersQuery.isLoading || subscriptionsQuery.isLoading,
+    loading:
+      usersQuery.isLoading ||
+      keysQuery.isLoading ||
+      plansQuery.isLoading ||
+      channelsQuery.isLoading ||
+      ordersQuery.isLoading ||
+      subscriptionsQuery.isLoading,
   }), [
-    accounts,
-    selectedAccountId,
-    selectedAccount,
+    users,
+    selectedUserId,
+    selectedUser,
+    apiKeys,
     subscriptions,
     orders,
     plans,
     channels,
     visiblePlans,
     visibleChannels,
-    accountsQuery,
+    usersQuery,
+    keysQuery,
     plansQuery,
     channelsQuery,
     ordersQuery,

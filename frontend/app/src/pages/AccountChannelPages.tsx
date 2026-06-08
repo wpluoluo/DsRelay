@@ -37,7 +37,7 @@ export function AccountAvailableChannelsPage() {
                   <td>{item.enabled === false ? '停用' : '可用'}</td>
                 </tr>
               )) : (
-                <tr><td colSpan={3}>当前账户暂无可用渠道。</td></tr>
+                <tr><td colSpan={3}>当前用户暂无可用渠道。</td></tr>
               )}
             </tbody>
           </table>
@@ -85,19 +85,19 @@ export function AccountMonitorPage() {
 }
 
 export function AccountProfilePage() {
-  const { selectedAccount } = useAccountCenter();
+  const { selectedUser } = useAccountCenter();
   return (
     <section className="grid-page">
       {buildPageIntro('/profile')}
       <Panel>
         <PanelHead title="个人资料" />
         <div className="info-grid">
-          <div className="metric-line"><span>账户名称</span><strong>{selectedAccount?.name || '-'}</strong></div>
-          <div className="metric-line"><span>来源类型</span><strong>{selectedAccount?.source_type || '-'}</strong></div>
-          <div className="metric-line"><span>分组</span><strong>{selectedAccount?.group_name || selectedAccount?.group_id || '-'}</strong></div>
-          <div className="metric-line"><span>角色</span><strong>{selectedAccount?.role || '-'}</strong></div>
-          <div className="metric-line"><span>状态</span><strong>{selectedAccount?.status || '-'}</strong></div>
-          <div className="metric-line"><span>备注</span><strong>{selectedAccount?.note || '-'}</strong></div>
+          <div className="metric-line"><span>用户名称</span><strong>{selectedUser?.name || '-'}</strong></div>
+          <div className="metric-line"><span>来源类型</span><strong>{selectedUser?.source_type || '-'}</strong></div>
+          <div className="metric-line"><span>分组</span><strong>{selectedUser?.group_name || selectedUser?.group_id || '-'}</strong></div>
+          <div className="metric-line"><span>角色</span><strong>{selectedUser?.role || '-'}</strong></div>
+          <div className="metric-line"><span>状态</span><strong>{selectedUser?.status || '-'}</strong></div>
+          <div className="metric-line"><span>备注</span><strong>{selectedUser?.note || '-'}</strong></div>
         </div>
       </Panel>
     </section>

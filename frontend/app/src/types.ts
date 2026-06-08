@@ -241,6 +241,16 @@ export type AdminProtocolProfile = {
 
 export type AdminAccount = {
   id: string;
+  pool_name?: string;
+  route_url?: string;
+  route_index?: number;
+  provider_name?: string;
+  priority?: number;
+  key_count?: number;
+  protocol?: string;
+  cooldown_seconds?: number;
+  backoff_attempts?: number;
+  models?: string[];
   name: string;
   source_type: string;
   preview?: string;
@@ -279,6 +289,11 @@ export type AdminUser = {
   name: string;
   preview?: string;
   source_type?: string;
+  role?: string;
+  note?: string;
+  balance_cents?: number;
+  concurrency_limit?: number;
+  allowed_group_ids?: string[];
   group_id?: string;
   group_name?: string;
   enabled?: boolean;

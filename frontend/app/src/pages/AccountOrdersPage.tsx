@@ -9,7 +9,7 @@ import { useAccountCenter } from '../state/accountCenterContext';
 import { formatNumber, formatUsdCost, maskEmpty } from '../utils';
 
 export function AccountOrdersPage() {
-  const { selectedAccount, selectedAccountId, orders, reload } = useAccountCenter();
+  const { selectedUser, selectedUserId, orders, reload } = useAccountCenter();
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
@@ -31,7 +31,7 @@ export function AccountOrdersPage() {
   const filtered = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     return orders.filter((item) => {
-      if (selectedAccountId && item.account_id !== selectedAccountId) return false;
+      if (selectedUserId && item.account_id !== selectedUserId) return false;
       if (status && item.status !== status) return false;
       if (!keyword) return true;
       const haystack = [
@@ -48,7 +48,7 @@ export function AccountOrdersPage() {
         .join(' ');
       return haystack.includes(keyword);
     });
-  }, [orders, search, selectedAccountId, status]);
+  }, [orders, search, selectedUserId, status]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const rows = filtered.slice((page - 1) * pageSize, page * pageSize);
@@ -62,10 +62,10 @@ export function AccountOrdersPage() {
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>我的订单</strong>
-          <span>按 SUB2 个人订单的结构展示筛选、状态与详情，保持业务账户视角。</span>
+          <span>按 SUB2 个人订单的结构展示筛选、状态与详情，保持用户中心视角。</span>
         </div>
         <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>当前账户</span><strong>{selectedAccount?.name || '未选择账户'}</strong><small>{selectedAccount?.group_name || selectedAccount?.source_type || '业务账户'}</small></div>
+          <div className="sub2-inline-summary-item"><span>当前用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '平台用户'}</small></div>
           <div className="sub2-inline-summary-item"><span>订单总数</span><strong>{formatNumber(filtered.length)}</strong><small>当前筛选范围</small></div>
           <div className="sub2-inline-summary-item"><span>待支付</span><strong>{formatNumber(pendingCount)}</strong><small>已支付 {formatNumber(paidCount)}</small></div>
           <div className="sub2-inline-summary-item"><span>失败订单</span><strong>{formatNumber(failedCount)}</strong><small>累计金额 {formatUsdCost(totalAmount / 100, 2)}</small></div>
@@ -126,7 +126,7 @@ export function AccountOrdersPage() {
                 )) : (
                   <tr>
                     <td colSpan={7}>
-                      <EmptyState title="暂无订单" description="当前账户在筛选条件下没有订单记录。" />
+                      <EmptyState title="暂无订单" description="当前用户在筛选条件下没有订单记录。" />
                     </td>
                   </tr>
                 )}
