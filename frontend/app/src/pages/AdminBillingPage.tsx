@@ -321,7 +321,7 @@ export function AdminBillingPage() {
             <input className="input" type="datetime-local" value={dateTo} onChange={(event) => { setDateTo(event.target.value); setTimePreset('all'); setPage(1); }} />
             <select className="select" value={scope} onChange={(event) => { setScope(event.target.value as BillingScopeKey); setPage(1); }}>
               <option value="usage">请求明细</option>
-              <option value="account">按账户</option>
+              <option value="account">按用户</option>
               <option value="group">按分组</option>
               <option value="plan">按计划</option>
               <option value="subscription">按订阅</option>
@@ -360,7 +360,7 @@ export function AdminBillingPage() {
                       {visibleColumns.has('tokens') ? <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{formatTokenCount(item.total_tokens || 0)}</strong><small>读 {formatNumber(item.cache_read_tokens || 0)} / 写 {formatNumber(item.cache_write_tokens || 0)}</small></div></td> : null}
                       {visibleColumns.has('input') ? <td><strong className="sub2-number-cell">{formatByteCount(item.input_bytes || 0)}</strong></td> : null}
                       {visibleColumns.has('output') ? <td><strong className="sub2-number-cell">{formatByteCount(item.output_bytes || 0)}</strong></td> : null}
-                      <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{formatUsdCost(item.actual_cost || item.total_cost || 0)}</strong><small>标准 {formatUsdCost(item.total_cost || 0)} / 账户 {formatUsdCost(item.account_cost || 0)}</small></div></td>
+                      <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{formatUsdCost(item.actual_cost || item.total_cost || 0)}</strong><small>标准 {formatUsdCost(item.total_cost || 0)} / 用户 {formatUsdCost(item.account_cost || 0)}</small></div></td>
                       {visibleColumns.has('status') ? <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{maskEmpty(item.error ? `${item.status_code || 0} · ${item.error}` : item.status_code || '-')}</strong><small>{item.local_cache_status || item.upstream_cache_status || '无缓存标记'}</small></div></td> : null}
                       <td>
                         <RowActions>
@@ -413,7 +413,7 @@ export function AdminBillingPage() {
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
-                <span>账户</span>
+                <span>用户</span>
                 <strong>{inspectUsage.consumer_name || inspectUsage.consumer_id || '-'}</strong>
                 <small>{inspectUsage.consumer_preview || inspectUsage.consumer_type || '-'}</small>
               </div>
@@ -425,7 +425,7 @@ export function AdminBillingPage() {
               <div className="admin-dialog-summary-card">
                 <span>成本</span>
                 <strong>{formatUsdCost(inspectUsage.actual_cost || inspectUsage.total_cost || 0)}</strong>
-                <small>账户 {formatUsdCost(inspectUsage.account_cost || 0)}</small>
+                <small>用户 {formatUsdCost(inspectUsage.account_cost || 0)}</small>
               </div>
             </div>
             <div className="admin-dialog-section">
@@ -493,7 +493,7 @@ function AggregateBillingTable({
     <table>
       <thead>
         <tr>
-          <th>{scope === 'account' ? '账户' : scope === 'group' ? '分组' : scope === 'plan' ? '计划' : scope === 'subscription' ? '订阅' : '订单'}</th>
+          <th>{scope === 'account' ? '用户' : scope === 'group' ? '分组' : scope === 'plan' ? '计划' : scope === 'subscription' ? '订阅' : '订单'}</th>
           <th>归属</th>
           <th>请求</th>
           <th>Token</th>
@@ -554,7 +554,7 @@ function resolveAggregateMeta(
       key: item.group_id || item.group_name || 'group',
       title: item.group_name || item.group_id || '未分组',
       subtitle: item.group_id || '-',
-      owner: `${formatNumber(item.account_ids?.length || 0)} 账户`,
+      owner: `${formatNumber(item.account_ids?.length || 0)} 用户`,
       ownerExtra: `${formatNumber(item.subscription_ids?.length || 0)} 订阅`,
     };
   }
@@ -600,7 +600,6 @@ function AggregateBillingDetail({
     <div className="admin-dialog">
       <div className="admin-dialog-intro">
         <strong>{meta.title}</strong>
-        <span>查看该聚合对象在当前时间范围内的请求量、成本和归属信息。</span>
       </div>
       <div className="admin-dialog-summary">
         <div className="admin-dialog-summary-card">

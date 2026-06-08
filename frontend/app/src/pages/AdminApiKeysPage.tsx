@@ -303,11 +303,10 @@ export function AdminApiKeysPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>为指定用户生成新的调用 Key</strong>
-              <span>生成后会直接建立用户归属，后续请求会按这个 Key 做订阅可用性校验和消费归因。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
-                <span>账户 Key</span>
+                <span>用户 Key</span>
                 <strong>{formatNumber(items.length)}</strong>
                 <small>当前列表全量</small>
               </div>
@@ -325,7 +324,6 @@ export function AdminApiKeysPage() {
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
                 <strong>基础信息</strong>
-                <span>先归属用户，再命名，再生成</span>
               </div>
               <div className="admin-dialog-grid modal-grid">
                 <Field label="归属用户">
@@ -377,7 +375,6 @@ export function AdminApiKeysPage() {
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
                 <strong>归属信息</strong>
-                <span>用户与订阅关系</span>
               </div>
               <div className="admin-dialog-grid">
                 <Field label="用户 ID"><TextInput value={inspectKey.account_id || ''} readOnly /></Field>

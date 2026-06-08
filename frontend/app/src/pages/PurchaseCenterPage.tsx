@@ -126,7 +126,7 @@ export function PurchaseCenterPage() {
                 <span className="quick-action-icon blue"><UserRound size={20} /></span>
                 <span className="quick-action-copy">
                   <strong>{selectedUser?.name || '未选择用户'}</strong>
-                  <small>{selectedUser?.group_name || selectedUser?.source_type || '用户归属将在这里显示'}</small>
+                  <small>{selectedUser?.group_name || selectedUser?.source_type || '-'}</small>
                 </span>
               </div>
               <div className="quick-action">
@@ -349,7 +349,7 @@ function SubscriptionCard({ item }: { item: AdminAccountSubscription }) {
       </div>
       <div className="channel-card-body">
         <MetricLine label="订阅 ID" value={item.id} />
-        <MetricLine label="账户" value={item.account_name || item.account_id} />
+        <MetricLine label="用户" value={item.account_name || item.account_id} />
         <MetricLine label="到期" value={formatDateTime(item.expires_at)} />
       </div>
     </div>

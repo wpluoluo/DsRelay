@@ -80,10 +80,9 @@ export function AccountApiKeysPage() {
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>我的 API Key</strong>
-          <span>管理当前用户名下的调用 Key。这里使用用户中心语义，不再混用后台账号对象。</span>
         </div>
         <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>当前用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '请选择用户'}</small></div>
+          <div className="sub2-inline-summary-item"><span>当前用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '-'}</small></div>
           <div className="sub2-inline-summary-item"><span>Key 数量</span><strong>{formatNumber(rows.length)}</strong><small>启用 {formatNumber(activeRows.length)}</small></div>
           <div className="sub2-inline-summary-item"><span>订阅覆盖</span><strong>{formatNumber(coveredRows.length)}</strong><small>未覆盖 {formatNumber(uncoveredRows.length)}</small></div>
           <div className="sub2-inline-summary-item"><span>最近生成</span><strong>{generatedKey ? '已生成' : '无'}</strong><small>{generatedKey ? '原始 Key 待复制' : '暂无新 Key'}</small></div>
@@ -128,7 +127,7 @@ export function AccountApiKeysPage() {
               <thead>
                 <tr>
                   <th>名称</th>
-                  <th>账户</th>
+                  <th>用户</th>
                   <th>订阅</th>
                   <th>Key 预览</th>
                   <th>最近使用</th>
@@ -204,7 +203,7 @@ export function AccountApiKeysPage() {
               <div className="admin-dialog-summary-card">
                 <span>绑定用户</span>
                 <strong>{selectedUser?.name || '当前用户'}</strong>
-                <small>{selectedUser?.group_name || selectedUser?.source_type || '平台用户'}</small>
+                <small>{selectedUser?.group_name || selectedUser?.source_type || '-'}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>订阅校验</span>
@@ -273,7 +272,7 @@ export function AccountApiKeysPage() {
               <div className="admin-dialog-summary-card">
                 <span>当前用户</span>
                 <strong>{selectedUser?.name || '未选择用户'}</strong>
-                <small>{selectedUser?.group_name || selectedUser?.source_type || '平台用户'}</small>
+                <small>{selectedUser?.group_name || selectedUser?.source_type || '-'}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>Base URL</span>
@@ -331,7 +330,6 @@ export function AccountApiKeysPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{inspectKey.name}</strong>
-              <span>这里可以直接核对当前用户 Key 的订阅覆盖和启用状态。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">

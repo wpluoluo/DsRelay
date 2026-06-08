@@ -121,7 +121,7 @@ export function AdminPaymentOrdersPage() {
           <div className="sub2-inline-summary-item"><span>已支付</span><strong>{paidCount}</strong><small>待支付 {pendingCount}</small></div>
           <div className="sub2-inline-summary-item"><span>失败订单</span><strong>{failedCount}</strong><small>需要人工跟进</small></div>
           <div className="sub2-inline-summary-item"><span>履约日志</span><strong>{fulfilledCount}</strong><small>已关联订阅或履约记录</small></div>
-          <div className="sub2-inline-summary-item"><span>人工订单</span><strong>{manualCount}</strong><small>后台创建或补单</small></div>
+          <div className="sub2-inline-summary-item"><span>人工订单</span><strong>{manualCount}</strong><small>后台创建</small></div>
           <div className="sub2-inline-summary-item"><span>累计订单金额</span><strong>${formatCost(totalAmount / 100, 2)}</strong><small>订单金额合计</small></div>
         </div>
       </div>
@@ -288,7 +288,7 @@ export function AdminPaymentOrdersPage() {
               <div className="admin-dialog-summary-card">
                 <span>失败订单</span>
                 <strong>{failedCount}</strong>
-                <small>适合人工补单</small>
+                <small>待处理</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>当前金额</span>
@@ -412,7 +412,7 @@ function OrderInspect({ item, includePayload, includeOrderPayload }: { item: Adm
           <small>{item.currency || 'USD'}</small>
         </div>
         <div className="admin-dialog-summary-card">
-          <span>订阅归属</span>
+          <span>订阅关联</span>
           <strong>{item.subscription_id || '-'}</strong>
           <small>{item.plan_name || item.plan_id || '未绑定计划'}</small>
         </div>

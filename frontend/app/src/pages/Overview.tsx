@@ -42,7 +42,7 @@ export function Overview({ state }: { state: DashboardState }) {
       to: '/admin/usage',
       icon: <Coins size={20} />,
       title: '使用记录',
-      desc: '按账户、分组、计划和订单查看明细',
+      desc: '按用户、分组、计划和订单查看明细',
       tone: 'green',
     },
   ]), []);
@@ -61,7 +61,7 @@ export function Overview({ state }: { state: DashboardState }) {
       </div>
 
       <div className="dashboard-stats-grid">
-        <DashboardStat icon={<Users size={18} />} label="账户" value={formatNumber(overview.account_count ?? 0)} sub={`Top ${formatNumber(topAccounts.length)} 已加载`} tone="green" />
+        <DashboardStat icon={<Users size={18} />} label="用户" value={formatNumber(overview.account_count ?? 0)} sub={`Top ${formatNumber(topAccounts.length)} 已加载`} tone="green" />
         <DashboardStat icon={<FolderTree size={18} />} label="分组" value={formatNumber(overview.group_count ?? 0)} sub={`Top ${formatNumber(topGroups.length)} 已加载`} tone="amber" />
         <DashboardStat icon={<ListChecks size={18} />} label="请求" value={formatNumber(summary.request_count ?? overview.request_count ?? 0)} sub={`错误 ${formatNumber(summary.error_count ?? overview.error_count ?? 0)}`} tone="violet" />
         <DashboardStat icon={<Coins size={18} />} label="总 Token" value={formatTokenCount(summary.total_tokens ?? overview.total_tokens ?? 0)} sub={`输入 ${formatNumber(summary.input_bytes ?? overview.input_bytes ?? 0)} · 输出 ${formatNumber(summary.output_bytes ?? overview.output_bytes ?? 0)}`} tone="indigo" />
@@ -70,7 +70,7 @@ export function Overview({ state }: { state: DashboardState }) {
       <div className="dashboard-stats-grid">
         <DashboardStat icon={<Coins size={18} />} label="标准成本" value={formatUsdCost(summary.total_cost ?? 0)} sub="按标准口径累计" tone="slate" />
         <DashboardStat icon={<Coins size={18} />} label="实际成本" value={formatUsdCost(summary.actual_cost ?? 0)} sub="按实际结算累计" tone="green" />
-        <DashboardStat icon={<Coins size={18} />} label="账户成本" value={formatUsdCost(summary.account_cost ?? 0)} sub={`覆盖请求 ${formatNumber(summary.covered_request_count ?? 0)}`} tone="rose" />
+        <DashboardStat icon={<Coins size={18} />} label="用户成本" value={formatUsdCost(summary.account_cost ?? 0)} sub={`覆盖请求 ${formatNumber(summary.covered_request_count ?? 0)}`} tone="rose" />
       </div>
 
       <div className="dashboard-main-grid">
@@ -96,7 +96,7 @@ export function Overview({ state }: { state: DashboardState }) {
 
       <div className="dashboard-charts-grid">
         <Panel className="dashboard-card">
-          <PanelHead title="重点账户" action={<Link to="/admin/accounts" className="panel-link">查看全部 <ArrowRight size={14} /></Link>} />
+          <PanelHead title="重点用户" action={<Link to="/admin/users" className="panel-link">查看全部 <ArrowRight size={14} /></Link>} />
           <div className="recent-usage-list">
             {topAccounts.length ? topAccounts.map((item) => (
               <div className="recent-usage-item" key={item.id}>
@@ -112,7 +112,7 @@ export function Overview({ state }: { state: DashboardState }) {
                   </span>
                 </div>
               </div>
-            )) : <Empty>暂无账户数据。</Empty>}
+            )) : <Empty>暂无用户数据。</Empty>}
           </div>
         </Panel>
 

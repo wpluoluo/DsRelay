@@ -350,7 +350,6 @@ export function AdminSubscriptionsPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{inspectSubscription.account_name || inspectSubscription.account_id}</strong>
-              <span>查看订阅归属、用量和到期信息，便于管理员快速核验。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
