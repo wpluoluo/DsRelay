@@ -11,7 +11,7 @@ class AdminAccountsMixin(AdminServiceBase):
     def get_account(self, account_id: str) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
-        item = self.storage.get_admin_user(account_id)
+        item = self.storage.get_admin_account(account_id)
         if not item:
             raise ValueError("account not found")
         return {"ok": True, "item": item}
@@ -30,20 +30,20 @@ class AdminAccountsMixin(AdminServiceBase):
         group_ids = self._normalize_group_ids(payload.get("group_ids") if isinstance(payload.get("group_ids"), list) else [])
         self._validate_group_set(group_ids)
         self._validate_group_set(item["allowed_group_ids"])
-        saved = self.storage.upsert_admin_user(item)
-        self.storage.replace_admin_user_groups(saved["id"], group_ids)
+        saved = self.storage.upsert_admin_account(item)
+        self.storage.replace_admin_account_groups(saved["id"], group_ids)
         return {"ok": True, "item": saved}
 
     def set_account_balance(self, account_id: str, payload: dict) -> dict:
         current = self._require_account(account_id)
         current["balance_cents"] = max(0, int(payload.get("balance_cents") or 0))
-        saved = self.storage.upsert_admin_user(current)
+        saved = self.storage.upsert_admin_account(current)
         return {"ok": True, "item": saved}
 
     def set_account_concurrency(self, account_id: str, payload: dict) -> dict:
         current = self._require_account(account_id)
         current["concurrency_limit"] = max(0, int(payload.get("concurrency_limit") or 0))
-        saved = self.storage.upsert_admin_user(current)
+        saved = self.storage.upsert_admin_account(current)
         return {"ok": True, "item": saved}
 
     def set_account_allowed_groups(self, account_id: str, payload: dict) -> dict:
@@ -51,7 +51,7 @@ class AdminAccountsMixin(AdminServiceBase):
         allowed_group_ids = payload.get("allowed_group_ids") if isinstance(payload.get("allowed_group_ids"), list) else []
         current["allowed_group_ids"] = self._normalize_group_ids(allowed_group_ids)
         self._validate_group_set(current["allowed_group_ids"])
-        saved = self.storage.upsert_admin_user(current)
+        saved = self.storage.upsert_admin_account(current)
         return {"ok": True, "item": saved}
 
     def set_account_membership_groups(self, account_id: str, payload: dict) -> dict:
@@ -60,8 +60,8 @@ class AdminAccountsMixin(AdminServiceBase):
         normalized_group_ids = self._normalize_group_ids(group_ids)
         self._validate_group_set(normalized_group_ids)
         self._validate_account_allowed_groups(current, normalized_group_ids)
-        self.storage.replace_admin_user_groups(current["id"], normalized_group_ids)
-        refreshed = self.storage.get_admin_user(current["id"]) or current
+        self.storage.replace_admin_account_groups(current["id"], normalized_group_ids)
+        refreshed = self.storage.get_admin_account(current["id"]) or current
         refreshed["group_ids"] = normalized_group_ids
         return {"ok": True, "item": refreshed}
 
@@ -75,13 +75,13 @@ class AdminAccountsMixin(AdminServiceBase):
                 "enabled": payload.get("enabled", current.get("enabled")),
             }
         )
-        saved = self.storage.upsert_admin_user(merged)
+        saved = self.storage.upsert_admin_account(merged)
         return {"ok": True, "item": saved}
 
     def _require_account(self, account_id: str) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
-        current = self.storage.get_admin_user(account_id)
+        current = self.storage.get_admin_account(account_id)
         if not current:
             raise ValueError("account not found")
         return current

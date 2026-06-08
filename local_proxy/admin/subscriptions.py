@@ -50,7 +50,7 @@ class AdminSubscriptionsMixin(AdminServiceBase):
     def list_account_subscriptions(self) -> dict:
         if self.storage is None:
             return {"ok": True, "items": [], "total": 0}
-        items = self.storage.list_admin_user_subscriptions()
+        items = self.storage.list_admin_account_subscriptions()
         groups = {str(item.get("id") or ""): item for item in self.list_groups().get("items", [])}
         plans = {str(item.get("id") or ""): item for item in self.storage.list_admin_subscription_plans()}
         normalized = []
@@ -80,7 +80,7 @@ class AdminSubscriptionsMixin(AdminServiceBase):
         plan_id = coerce_text(payload.get("plan_id"))
         if not account_id or not plan_id:
             raise ValueError("account_id and plan_id are required")
-        account = self.storage.get_admin_user(account_id)
+        account = self.storage.get_admin_account(account_id)
         if not account:
             raise ValueError("account not found")
         self._validate_account_active(account)
@@ -103,7 +103,7 @@ class AdminSubscriptionsMixin(AdminServiceBase):
             "weekly_used": safe_int(payload.get("weekly_used")),
             "monthly_used": safe_int(payload.get("monthly_used")),
         }
-        return {"ok": True, "item": self.storage.upsert_admin_user_subscription(item)}
+        return {"ok": True, "item": self.storage.upsert_admin_account_subscription(item)}
 
     def extend_subscription(self, subscription_id: str, payload: dict) -> dict:
         if self.storage is None:
@@ -111,19 +111,19 @@ class AdminSubscriptionsMixin(AdminServiceBase):
         extra_days = safe_int(payload.get("days"))
         if extra_days <= 0:
             raise ValueError("days must be greater than 0")
-        return {"ok": True, "item": self.storage.extend_admin_user_subscription(subscription_id, extra_days)}
+        return {"ok": True, "item": self.storage.extend_admin_account_subscription(subscription_id, extra_days)}
 
     def revoke_subscription(self, subscription_id: str) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
-        return {"ok": True, "item": self.storage.revoke_admin_user_subscription(subscription_id)}
+        return {"ok": True, "item": self.storage.revoke_admin_account_subscription(subscription_id)}
 
     def reset_subscription_quota(self, subscription_id: str, payload: dict) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
         return {
             "ok": True,
-            "item": self.storage.reset_admin_user_subscription_quota(
+            "item": self.storage.reset_admin_account_subscription_quota(
                 subscription_id,
                 daily=payload.get("daily") is True,
                 weekly=payload.get("weekly") is True,

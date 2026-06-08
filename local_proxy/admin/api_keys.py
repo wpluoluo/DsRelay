@@ -43,7 +43,7 @@ class AdminApiKeysMixin(AdminServiceBase):
             raise ValueError("account_id is required")
         account = self._require_account(account_id)
         self._validate_account_active(account)
-        membership_rows = self.storage.list_admin_user_groups()
+        membership_rows = self.storage.list_admin_account_groups()
         group_ids = [
             coerce_text(row.get("group_id"))
             for row in membership_rows

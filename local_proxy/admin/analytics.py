@@ -167,7 +167,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     "input_bytes": 0,
                     "output_bytes": 0,
                 }
-            for row in self.storage.list_admin_user_groups():
+            for row in self.storage.list_admin_account_groups():
                 account_id = coerce_text(row.get("user_id"))
                 group_id = coerce_text(row.get("group_id"))
                 if account_id and group_id:
@@ -302,7 +302,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
         orders_by_account_plan: dict[tuple[str, str], list[dict]] = {}
         if self.storage is not None:
             try:
-                for item in self.storage.list_admin_user_subscriptions():
+                for item in self.storage.list_admin_account_subscriptions():
                     if isinstance(item, dict):
                         subscriptions[coerce_text(item.get("id"))] = item
             except Exception:

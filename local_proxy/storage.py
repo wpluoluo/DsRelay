@@ -625,7 +625,7 @@ class ProxyStorage:
             return {}
         return payload if isinstance(payload, dict) else {}
 
-    def list_admin_users(self) -> list[dict]:
+    def list_admin_accounts(self) -> list[dict]:
         rows = []
         conn = self._connect()
         try:
@@ -670,25 +670,34 @@ class ProxyStorage:
             conn.close()
         return rows
 
-    def get_admin_user(self, user_id: str) -> dict:
-        target = str(user_id or "").strip()
+    def list_admin_users(self) -> list[dict]:
+        return self.list_admin_accounts()
+
+    def get_admin_account(self, account_id: str) -> dict:
+        target = str(account_id or "").strip()
         if not target:
             return {}
-        for item in self.list_admin_users():
+        for item in self.list_admin_accounts():
             if str(item.get("id") or "") == target:
                 return item
         return {}
 
-    def get_admin_user_by_external_key(self, external_key: str) -> dict:
+    def get_admin_user(self, user_id: str) -> dict:
+        return self.get_admin_account(user_id)
+
+    def get_admin_account_by_external_key(self, external_key: str) -> dict:
         target = str(external_key or "").strip()
         if not target:
             return {}
-        for item in self.list_admin_users():
+        for item in self.list_admin_accounts():
             if str(item.get("external_key") or "") == target:
                 return item
         return {}
 
-    def upsert_admin_user(self, payload: dict) -> dict:
+    def get_admin_user_by_external_key(self, external_key: str) -> dict:
+        return self.get_admin_account_by_external_key(external_key)
+
+    def upsert_admin_account(self, payload: dict) -> dict:
         now = time.time()
         item = {
             "id": str(payload.get("id") or "").strip(),
@@ -741,6 +750,9 @@ class ProxyStorage:
         item["created_at"] = created_at
         item["updated_at"] = now
         return item
+
+    def upsert_admin_user(self, payload: dict) -> dict:
+        return self.upsert_admin_account(payload)
 
     def list_admin_groups(self) -> list[dict]:
         rows = []
@@ -835,29 +847,32 @@ class ProxyStorage:
         item["updated_at"] = now
         return item
 
-    def replace_admin_user_groups(self, user_id: str, group_ids: list[str]) -> None:
-        normalized_user_id = str(user_id or "").strip()
-        if not normalized_user_id:
-            raise ValueError("missing user_id")
+    def replace_admin_account_groups(self, account_id: str, group_ids: list[str]) -> None:
+        normalized_account_id = str(account_id or "").strip()
+        if not normalized_account_id:
+            raise ValueError("missing account_id")
         normalized_group_ids = sorted({str(group_id or "").strip() for group_id in (group_ids or []) if str(group_id or "").strip()})
         now = time.time()
         conn = self._connect()
         try:
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM admin_user_groups WHERE user_id = %s", (normalized_user_id,))
+                cur.execute("DELETE FROM admin_user_groups WHERE user_id = %s", (normalized_account_id,))
                 if normalized_group_ids:
                     cur.executemany(
                         """
                         INSERT INTO admin_user_groups (user_id, group_id, created_at)
                         VALUES (%s, %s, %s)
                         """,
-                        [(normalized_user_id, group_id, now) for group_id in normalized_group_ids],
+                        [(normalized_account_id, group_id, now) for group_id in normalized_group_ids],
                     )
             conn.commit()
         finally:
             conn.close()
 
-    def list_admin_user_groups(self) -> list[dict]:
+    def replace_admin_user_groups(self, user_id: str, group_ids: list[str]) -> None:
+        self.replace_admin_account_groups(user_id, group_ids)
+
+    def list_admin_account_groups(self) -> list[dict]:
         rows = []
         conn = self._connect()
         try:
@@ -880,6 +895,9 @@ class ProxyStorage:
         finally:
             conn.close()
         return rows
+
+    def list_admin_user_groups(self) -> list[dict]:
+        return self.list_admin_account_groups()
 
     def list_admin_api_keys(self) -> list[dict]:
         rows = []
@@ -1106,7 +1124,7 @@ class ProxyStorage:
         item["updated_at"] = now
         return item
 
-    def list_admin_user_subscriptions(self) -> list[dict]:
+    def list_admin_account_subscriptions(self) -> list[dict]:
         rows = []
         conn = self._connect()
         try:
@@ -1148,11 +1166,14 @@ class ProxyStorage:
             conn.close()
         return rows
 
-    def upsert_admin_user_subscription(self, payload: dict) -> dict:
+    def list_admin_user_subscriptions(self) -> list[dict]:
+        return self.list_admin_account_subscriptions()
+
+    def upsert_admin_account_subscription(self, payload: dict) -> dict:
         now = time.time()
         item = {
             "id": str(payload.get("id") or "").strip(),
-            "user_id": str(payload.get("user_id") or "").strip(),
+            "user_id": str(payload.get("user_id") or payload.get("account_id") or "").strip(),
             "plan_id": str(payload.get("plan_id") or "").strip(),
             "group_id": str(payload.get("group_id") or "").strip(),
             "status": str(payload.get("status") or "active").strip() or "active",
@@ -1197,6 +1218,9 @@ class ProxyStorage:
         item["created_at"] = created_at
         item["updated_at"] = now
         return item
+
+    def upsert_admin_user_subscription(self, payload: dict) -> dict:
+        return self.upsert_admin_account_subscription(payload)
 
     def list_admin_payment_channels(self) -> list[dict]:
         rows = []
@@ -1544,7 +1568,7 @@ class ProxyStorage:
             "updated_at": float(row[7] or 0.0),
         }
 
-    def get_admin_user_subscription(self, subscription_id: str) -> dict:
+    def get_admin_account_subscription(self, subscription_id: str) -> dict:
         target = str(subscription_id or "").strip()
         if not target:
             return {}
@@ -1569,6 +1593,7 @@ class ProxyStorage:
         return {
             "id": str(row[0] or ""),
             "user_id": str(row[1] or ""),
+            "account_id": str(row[1] or ""),
             "plan_id": str(row[2] or ""),
             "group_id": str(row[3] or ""),
             "status": str(row[4] or ""),
@@ -1581,8 +1606,11 @@ class ProxyStorage:
             "updated_at": float(row[11] or 0.0),
         }
 
-    def get_active_subscription_context_for_user(self, user_id: str) -> dict:
-        target = str(user_id or "").strip()
+    def get_admin_user_subscription(self, subscription_id: str) -> dict:
+        return self.get_admin_account_subscription(subscription_id)
+
+    def get_active_subscription_context_for_account(self, account_id: str) -> dict:
+        target = str(account_id or "").strip()
         if not target:
             return {}
         now = time.time()
@@ -1612,6 +1640,7 @@ class ProxyStorage:
         return {
             "subscription_id": str(row[0] or ""),
             "user_id": str(row[1] or ""),
+            "account_id": str(row[1] or ""),
             "plan_id": str(row[2] or ""),
             "group_id": str(row[3] or ""),
             "status": str(row[4] or ""),
@@ -1622,8 +1651,11 @@ class ProxyStorage:
             "group_name": str(row[9] or ""),
         }
 
-    def extend_admin_user_subscription(self, subscription_id: str, extra_days: int) -> dict:
-        current = self.get_admin_user_subscription(subscription_id)
+    def get_active_subscription_context_for_user(self, user_id: str) -> dict:
+        return self.get_active_subscription_context_for_account(user_id)
+
+    def extend_admin_account_subscription(self, subscription_id: str, extra_days: int) -> dict:
+        current = self.get_admin_account_subscription(subscription_id)
         if not current:
             raise ValueError("subscription not found")
         now = time.time()
@@ -1632,18 +1664,24 @@ class ProxyStorage:
         next_expires = base + max(0, int(extra_days)) * 86400
         current["expires_at"] = next_expires
         current["updated_at"] = now
-        return self.upsert_admin_user_subscription(current)
+        return self.upsert_admin_account_subscription(current)
 
-    def revoke_admin_user_subscription(self, subscription_id: str) -> dict:
-        current = self.get_admin_user_subscription(subscription_id)
+    def extend_admin_user_subscription(self, subscription_id: str, extra_days: int) -> dict:
+        return self.extend_admin_account_subscription(subscription_id, extra_days)
+
+    def revoke_admin_account_subscription(self, subscription_id: str) -> dict:
+        current = self.get_admin_account_subscription(subscription_id)
         if not current:
             raise ValueError("subscription not found")
         current["status"] = "revoked"
         current["updated_at"] = time.time()
-        return self.upsert_admin_user_subscription(current)
+        return self.upsert_admin_account_subscription(current)
 
-    def reset_admin_user_subscription_quota(self, subscription_id: str, *, daily: bool, weekly: bool, monthly: bool) -> dict:
-        current = self.get_admin_user_subscription(subscription_id)
+    def revoke_admin_user_subscription(self, subscription_id: str) -> dict:
+        return self.revoke_admin_account_subscription(subscription_id)
+
+    def reset_admin_account_subscription_quota(self, subscription_id: str, *, daily: bool, weekly: bool, monthly: bool) -> dict:
+        current = self.get_admin_account_subscription(subscription_id)
         if not current:
             raise ValueError("subscription not found")
         if daily:
@@ -1653,7 +1691,10 @@ class ProxyStorage:
         if monthly:
             current["monthly_used"] = 0
         current["updated_at"] = time.time()
-        return self.upsert_admin_user_subscription(current)
+        return self.upsert_admin_account_subscription(current)
+
+    def reset_admin_user_subscription_quota(self, subscription_id: str, *, daily: bool, weekly: bool, monthly: bool) -> dict:
+        return self.reset_admin_account_subscription_quota(subscription_id, daily=daily, weekly=weekly, monthly=monthly)
 
     def save_app_config(self, payload: dict, config_key: str = "runtime_config") -> None:
         if not isinstance(payload, dict):

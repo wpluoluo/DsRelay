@@ -52,7 +52,7 @@ class AdminServiceBase:
     def _managed_accounts(self) -> dict[str, dict]:
         if self.storage is None:
             return {}
-        items = self.storage.list_admin_users()
+        items = self.storage.list_admin_accounts()
         return {str(item.get("external_key") or ""): item for item in items if isinstance(item, dict)}
 
     def _group_map(self) -> tuple[dict[str, dict], dict[str, list[str]]]:
@@ -62,7 +62,7 @@ class AdminServiceBase:
             return groups, memberships
         for group in self.storage.list_admin_groups():
             groups[str(group.get("id") or "")] = group
-        for row in self.storage.list_admin_user_groups():
+        for row in self.storage.list_admin_account_groups():
             account_id = str(row.get("user_id") or "")
             group_id = str(row.get("group_id") or "")
             if account_id and group_id:
@@ -119,7 +119,7 @@ class AdminServiceBase:
     def _require_account(self, account_id: str) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
-        account = self.storage.get_admin_user(account_id)
+        account = self.storage.get_admin_account(account_id)
         if not account:
             raise ValueError("account not found")
         return account
@@ -128,7 +128,7 @@ class AdminServiceBase:
         if self.storage is None:
             return {}
         try:
-            item = self.storage.get_active_subscription_context_for_user(account_id)
+            item = self.storage.get_active_subscription_context_for_account(account_id)
         except Exception:
             item = {}
         return item if isinstance(item, dict) else {}

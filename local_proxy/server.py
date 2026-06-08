@@ -6299,13 +6299,13 @@ def require_proxy_api_key() -> Response | None:
                 try:
                     memberships = [
                         str(row.get("group_id") or "").strip()
-                        for row in storage.list_admin_user_groups()
+                        for row in storage.list_admin_account_groups()
                         if str(row.get("user_id") or "").strip() == matched_account_id
                     ]
                 except Exception:
                     memberships = []
                 try:
-                    active_subscription = storage.get_active_subscription_context_for_user(matched_account_id)
+                    active_subscription = storage.get_active_subscription_context_for_account(matched_account_id)
                 except Exception:
                     active_subscription = {}
                 REQUEST_LOCAL.proxy_consumer = {

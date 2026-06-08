@@ -115,7 +115,7 @@ class AdminPaymentsMixin(AdminServiceBase):
         amount_cents = safe_int(payload.get("amount_cents"))
         if not account_id or not plan_id:
             raise ValueError("account_id and plan_id are required")
-        account = self.storage.get_admin_user(account_id)
+        account = self.storage.get_admin_account(account_id)
         if not account:
             raise ValueError("account not found")
         self._validate_account_active(account)
@@ -230,7 +230,7 @@ class AdminPaymentsMixin(AdminServiceBase):
         plan = next((item for item in self.list_subscription_plans().get("items", []) if coerce_text(item.get("id")) == plan_id), None)
         if not plan:
             raise ValueError("subscription plan not found")
-        account = self.storage.get_admin_user(coerce_text(current.get("user_id")))
+        account = self.storage.get_admin_account(coerce_text(current.get("account_id") or current.get("user_id")))
         if not account:
             raise ValueError("account not found")
         resolved_group_id = self._resolve_plan_group_id(plan, current)
@@ -240,10 +240,10 @@ class AdminPaymentsMixin(AdminServiceBase):
 
         now = payload.get("paid_at") or time.time()
         expires_at = float(now) + max(1, safe_int(plan.get("validity_days") or 30)) * 86400
-        subscription = self.storage.upsert_admin_user_subscription(
+        subscription = self.storage.upsert_admin_account_subscription(
             {
                 "id": coerce_text(current.get("subscription_id")) or f"sub_{uuid.uuid4().hex[:16]}",
-                "user_id": coerce_text(current.get("user_id")),
+                "account_id": coerce_text(current.get("account_id") or current.get("user_id")),
                 "plan_id": plan_id,
                 "group_id": resolved_group_id,
                 "status": "active",
