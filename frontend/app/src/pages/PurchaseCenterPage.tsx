@@ -5,11 +5,11 @@ import { createAdminPaymentOrder } from '../api';
 import { Badge, Button, Empty, Field, Metric, Modal, ModalActions, Panel, PanelHead, Select, TextArea, TextInput } from '../components';
 import { queryClient } from '../state/queryClient';
 import { useAccountCenter } from '../state/accountCenterContext';
-import type { AdminAccountSubscription, AdminPaymentOrder } from '../types';
-import { formatNumber, formatUsdCost } from '../utils';
+import type { AdminPaymentOrder, AdminUserSubscription } from '../types';
+import { buildBusinessUserPayload, formatNumber, formatUsdCost, getBusinessUserId, getBusinessUserName } from '../utils';
 
 type PurchaseDraft = {
-  account_id: string;
+  user_id: string;
   plan_id: string;
   channel_id: string;
   amount_cents: number;
@@ -17,7 +17,7 @@ type PurchaseDraft = {
 };
 
 const DEFAULT_DRAFT: PurchaseDraft = {
-  account_id: '',
+  user_id: '',
   plan_id: '',
   channel_id: '',
   amount_cents: 0,
@@ -42,9 +42,9 @@ export function PurchaseCenterPage() {
   const [inspectOrder, setInspectOrder] = useState<AdminPaymentOrder | null>(null);
   const [confirmCreate, setConfirmCreate] = useState(false);
   const selectedPlan = visiblePlans.find((item) => item.id === draft.plan_id);
-  const selectedOrders = useMemo(() => orders.filter((item) => !selectedUserId || item.account_id === selectedUserId), [orders, selectedUserId]);
+  const selectedOrders = useMemo(() => orders.filter((item) => !selectedUserId || getBusinessUserId(item) === selectedUserId), [orders, selectedUserId]);
   const selectedSubscriptions = useMemo(
-    () => subscriptions.filter((item) => !selectedUserId || item.account_id === selectedUserId),
+    () => subscriptions.filter((item) => !selectedUserId || getBusinessUserId(item) === selectedUserId),
     [subscriptions, selectedUserId],
   );
   const paidOrders = selectedOrders.filter((item) => item.status === 'paid').length;
@@ -56,7 +56,7 @@ export function PurchaseCenterPage() {
       setCreatedOrder(result?.item || null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['admin-payment-orders'] }),
-        queryClient.invalidateQueries({ queryKey: ['admin-subscriptions'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin-user-subscriptions'] }),
       ]);
     },
   });
@@ -66,7 +66,7 @@ export function PurchaseCenterPage() {
   }
 
   useEffect(() => {
-    setDraft((current) => ({ ...current, account_id: selectedUserId }));
+    setDraft((current) => ({ ...current, user_id: selectedUserId }));
   }, [selectedUserId]);
 
   useEffect(() => {
@@ -133,7 +133,7 @@ export function PurchaseCenterPage() {
                 <span className="quick-action-icon amber"><Ticket size={20} /></span>
                 <span className="quick-action-copy">
                   <strong>{selectedPlan?.name || '未选择计划'}</strong>
-                  <small>{selectedPlan ? `有效期 ${selectedPlan.validity_days || 0} 天 · 价格 ${formatUsdCost(Number(selectedPlan.final_price_cents || selectedPlan.price_cents || 0) / 100, 2)}` : '计划有效期、价格与限额将在这里显示'}</small>
+                  <small>{selectedPlan ? `有效期 ${selectedPlan.validity_days || 0} 天 · 价格 ${formatUsdCost(Number(selectedPlan.final_price_cents || selectedPlan.price_cents || 0) / 100, 2)}` : '未选择计划'}</small>
                 </span>
               </div>
               <div className="quick-action">
@@ -155,12 +155,12 @@ export function PurchaseCenterPage() {
             <div className="button-row">
               <Button
                 tone="primary"
-                disabled={createMutation.isPending || !draft.account_id || !draft.plan_id}
+                disabled={createMutation.isPending || !draft.user_id || !draft.plan_id}
                 onClick={() => setConfirmCreate(true)}
               >
                 创建订单
               </Button>
-              <Button onClick={() => setDraft((current) => ({ ...DEFAULT_DRAFT, account_id: current.account_id || selectedUserId }))}>重置选择</Button>
+              <Button onClick={() => setDraft((current) => ({ ...DEFAULT_DRAFT, user_id: current.user_id || selectedUserId }))}>重置选择</Button>
             </div>
           </div>
         </Panel>
@@ -193,7 +193,7 @@ export function PurchaseCenterPage() {
               {selectedOrders.length ? selectedOrders.map((item) => (
                 <tr key={item.id}>
                   <td><strong>{item.id}</strong><small>{item.provider_order_id || item.resume_token || '-'}</small></td>
-                  <td>{item.account_name || item.account_id}</td>
+                  <td>{getBusinessUserName(item)}</td>
                   <td>{item.plan_name || item.plan_id}</td>
                   <td>{item.channel_name || item.channel_id || item.provider || '-'}</td>
                   <td>{formatUsdCost(Number(item.final_price_cents ?? item.amount_cents ?? 0) / 100, 2)}</td>
@@ -226,7 +226,7 @@ export function PurchaseCenterPage() {
               <div className="admin-dialog-summary-card">
                 <span>状态</span>
                 <strong>{createdOrder.status || '-'}</strong>
-                <small>{createdOrder.account_name || createdOrder.account_id || '-'}</small>
+                <small>{getBusinessUserName(createdOrder)}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>计划</span>
@@ -256,10 +256,10 @@ export function PurchaseCenterPage() {
               <Button onClick={() => setConfirmCreate(false)}>取消</Button>
               <Button
                 tone="primary"
-                disabled={createMutation.isPending || !draft.account_id || !draft.plan_id}
+                disabled={createMutation.isPending || !draft.user_id || !draft.plan_id}
                 onClick={() => {
                   setConfirmCreate(false);
-                  createMutation.mutate(draft);
+                  createMutation.mutate(buildBusinessUserPayload(draft.user_id, { plan_id: draft.plan_id, channel_id: draft.channel_id, amount_cents: draft.amount_cents, currency: draft.currency }));
                 }}
               >
                 确认创建
@@ -321,7 +321,7 @@ export function PurchaseCenterPage() {
               </div>
             </div>
             <div className="admin-dialog-grid">
-              <Field label="用户"><TextInput readOnly value={inspectOrder.account_name || inspectOrder.account_id || '-'} /></Field>
+              <Field label="用户"><TextInput readOnly value={getBusinessUserName(inspectOrder)} /></Field>
               <Field label="计划"><TextInput readOnly value={inspectOrder.plan_name || inspectOrder.plan_id || '-'} /></Field>
               <Field label="通道"><TextInput readOnly value={inspectOrder.channel_name || inspectOrder.channel_id || inspectOrder.provider || '-'} /></Field>
               <Field label="金额"><TextInput readOnly value={formatUsdCost(Number(inspectOrder.final_price_cents ?? inspectOrder.amount_cents ?? 0) / 100, 2)} /></Field>
@@ -336,7 +336,7 @@ export function PurchaseCenterPage() {
   );
 }
 
-function SubscriptionCard({ item }: { item: AdminAccountSubscription }) {
+function SubscriptionCard({ item }: { item: AdminUserSubscription }) {
   const tone = item.status === 'active' ? 'ok' : item.status === 'expired' ? 'warn' : 'bad';
   return (
     <div className="channel-card">
@@ -346,7 +346,7 @@ function SubscriptionCard({ item }: { item: AdminAccountSubscription }) {
       </div>
       <div className="channel-card-body">
         <MetricLine label="订阅 ID" value={item.id} />
-        <MetricLine label="用户" value={item.account_name || item.account_id} />
+        <MetricLine label="用户" value={getBusinessUserName(item)} />
         <MetricLine label="到期" value={formatDateTime(item.expires_at)} />
       </div>
     </div>

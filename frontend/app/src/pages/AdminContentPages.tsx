@@ -106,7 +106,6 @@ function ContentTable({
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{query.data?.label || '内容维护'}</strong>
-              <span>这里直接维护当前模块的标题、状态和正文内容。</span>
             </div>
             <div className="admin-dialog-grid modal-grid">
               <Field label="标题"><TextInput value={draft.title || ''} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></Field>

@@ -1,59 +1,107 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
 
 from local_proxy.platform import normalize_admin_account_payload
 
-from .base import AdminServiceBase, coerce_text
+from .base import AdminServiceBase, coerce_text, safe_int
+
+
+def _normalize_user_extra(payload: dict, current: dict | None = None) -> dict:
+    current_extra = current.get("extra") if isinstance(current, dict) and isinstance(current.get("extra"), dict) else {}
+    extra = {**current_extra}
+    if "email" in payload:
+        extra["email"] = coerce_text(payload.get("email"))
+    if "username" in payload:
+        extra["username"] = coerce_text(payload.get("username"))
+    if "rpm_limit" in payload:
+        extra["rpm_limit"] = max(0, safe_int(payload.get("rpm_limit")))
+    password = coerce_text(payload.get("password"))
+    if password:
+        extra["password_hash"] = hashlib.sha256(password.encode("utf-8")).hexdigest()
+        extra["password_set"] = True
+    elif "password" in payload and not password:
+        extra.pop("password_hash", None)
+        extra["password_set"] = False
+    return extra
 
 
 class AdminUsersMixin(AdminServiceBase):
     def create_user(self, payload: dict) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
-        external_key = coerce_text(payload.get("external_key")) or f"user_{uuid.uuid4().hex[:16]}"
+        email = coerce_text(payload.get("email"))
+        username = coerce_text(payload.get("username"))
+        display_name = coerce_text(payload.get("name")) or username or email
+        external_key = coerce_text(payload.get("external_key") or payload.get("user_key")) or email or f"user_{uuid.uuid4().hex[:16]}"
+        allowed_group_ids = self._normalize_group_ids(payload.get("allowed_group_ids") if isinstance(payload.get("allowed_group_ids"), list) else [])
+        group_ids = self._normalize_group_ids(payload.get("group_ids") if isinstance(payload.get("group_ids"), list) else [])
+        self._validate_group_set(group_ids)
+        self._validate_group_set(allowed_group_ids)
         item = normalize_admin_account_payload(
             {
                 **payload,
-                "id": coerce_text(payload.get("id")) or f"user_{uuid.uuid4().hex[:16]}",
+                "id": coerce_text(payload.get("id") or payload.get("user_id")) or f"user_{uuid.uuid4().hex[:16]}",
+                "name": display_name,
                 "external_key": external_key,
                 "source_type": "managed",
-                "role": "user",
+                "role": coerce_text(payload.get("role")) or "user",
+                "status": coerce_text(payload.get("status")) or ("active" if payload.get("enabled") is not False else "disabled"),
+                "balance_cents": safe_int(payload.get("balance_cents") if "balance_cents" in payload else payload.get("balance")),
+                "concurrency_limit": safe_int(payload.get("concurrency_limit") if "concurrency_limit" in payload else payload.get("concurrency")),
+                "allowed_group_ids": allowed_group_ids,
+                "extra": _normalize_user_extra(payload),
             }
         )
         if not item["name"]:
             raise ValueError("name is required")
-        group_ids = self._normalize_group_ids(payload.get("group_ids") if isinstance(payload.get("group_ids"), list) else [])
-        self._validate_group_set(group_ids)
         saved = self.storage.upsert_admin_account(item)
         self.storage.replace_admin_account_groups(saved["id"], group_ids)
         refreshed = self.storage.get_admin_account(saved["id"]) or saved
         refreshed["group_ids"] = group_ids
+        refreshed.update(self._get_account_subscription_status(saved["id"]))
         return {"ok": True, "item": refreshed}
 
     def update_user(self, user_id: str, payload: dict) -> dict:
         current = self._require_account(user_id)
-        item = normalize_admin_account_payload(
-            {
-                **current,
-                **payload,
-                "id": current["id"],
-                "external_key": coerce_text(payload.get("external_key")) or coerce_text(current.get("external_key")),
-                "source_type": "managed",
-                "role": "user",
-            }
+        email = coerce_text(payload.get("email"))
+        username = coerce_text(payload.get("username"))
+        display_name = coerce_text(payload.get("name")) or username or email or coerce_text(current.get("name"))
+        allowed_group_ids = (
+            self._normalize_group_ids(payload.get("allowed_group_ids"))
+            if isinstance(payload.get("allowed_group_ids"), list)
+            else self._normalize_group_ids(current.get("allowed_group_ids") if isinstance(current.get("allowed_group_ids"), list) else [])
         )
-        if not item["name"]:
-            raise ValueError("name is required")
         group_ids = payload.get("group_ids")
         normalized_group_ids = (
             self._normalize_group_ids(group_ids) if isinstance(group_ids, list) else self._normalize_group_ids(current.get("group_ids") if isinstance(current.get("group_ids"), list) else [])
         )
         self._validate_group_set(normalized_group_ids)
+        self._validate_group_set(allowed_group_ids)
+        item = normalize_admin_account_payload(
+            {
+                **current,
+                **payload,
+                "id": current["id"],
+                "name": display_name,
+                "external_key": coerce_text(payload.get("external_key") or payload.get("user_key")) or coerce_text(current.get("external_key")),
+                "source_type": "managed",
+                "role": coerce_text(payload.get("role")) or coerce_text(current.get("role")) or "user",
+                "status": coerce_text(payload.get("status")) or ("active" if payload.get("enabled", current.get("enabled")) is not False else "disabled"),
+                "balance_cents": safe_int(payload.get("balance_cents") if "balance_cents" in payload else current.get("balance_cents")),
+                "concurrency_limit": safe_int(payload.get("concurrency_limit") if "concurrency_limit" in payload else current.get("concurrency_limit")),
+                "allowed_group_ids": allowed_group_ids,
+                "extra": _normalize_user_extra(payload, current),
+            }
+        )
+        if not item["name"]:
+            raise ValueError("name is required")
         saved = self.storage.upsert_admin_account(item)
         self.storage.replace_admin_account_groups(saved["id"], normalized_group_ids)
         refreshed = self.storage.get_admin_account(saved["id"]) or saved
         refreshed["group_ids"] = normalized_group_ids
+        refreshed.update(self._get_account_subscription_status(saved["id"]))
         return {"ok": True, "item": refreshed}
 
     def set_user_enabled(self, user_id: str, enabled: bool) -> dict:

@@ -3728,6 +3728,10 @@ def build_request_meta(
                 "proxy_consumer_status": str(consumer_meta.get("status") or ""),
                 "proxy_consumer_group_ids": consumer_meta.get("group_ids") if isinstance(consumer_meta.get("group_ids"), list) else [],
                 "proxy_consumer_allowed_group_ids": consumer_meta.get("allowed_group_ids") if isinstance(consumer_meta.get("allowed_group_ids"), list) else [],
+                "proxy_api_key_id": str(consumer_meta.get("api_key_id") or ""),
+                "proxy_api_key_name": str(consumer_meta.get("api_key_name") or ""),
+                "proxy_api_key_preview": str(consumer_meta.get("api_key_preview") or ""),
+                "proxy_api_key_type": str(consumer_meta.get("api_key_type") or ""),
                 "proxy_subscription_id": str(consumer_meta.get("subscription_id") or ""),
                 "proxy_plan_id": str(consumer_meta.get("plan_id") or ""),
                 "proxy_plan_name": str(consumer_meta.get("plan_name") or ""),
@@ -5756,9 +5760,12 @@ def proxy_response(
                     return
                 finally:
                     close_response_quietly(upstream_response)
+                    duration_ms = int((time.perf_counter() - started_at) * 1000)
+                    response_preview = build_preview_summary(preview_parts)
+                    completed_response_body = None
+                    tail_summary = " || ".join(stream_tail_lines[-4:])
+                    finish_reason_summary = ", ".join(terminal_finish_reasons[-4:])
                     if not delegated_response:
-                        duration_ms = int((time.perf_counter() - started_at) * 1000)
-                        response_preview = build_preview_summary(preview_parts)
                         if stream_client_gone:
                             resume_save_meta = save_interruption_resume_snapshot(
                                 execution=execution,
@@ -5771,7 +5778,6 @@ def proxy_response(
                             )
                         elif not stream_error and not resume_save_meta:
                             resume_save_meta = clear_interruption_resume_records(execution)
-                        completed_response_body = None
                         if (
                             not stream_error
                             and not stream_client_gone
@@ -5780,8 +5786,6 @@ def proxy_response(
                         ):
                             ensure_openai_response_usage(completed_response_body, request_payload)
                             attach_execution_response_body(execution, completed_response_body)
-                        tail_summary = " || ".join(stream_tail_lines[-4:])
-                        finish_reason_summary = ", ".join(terminal_finish_reasons[-4:])
                         if stream_client_gone:
                             proxy_logger.info(
                                 "request_id=%s 上游=%s 线路=%s 状态=%s 流式=true 客户端已断开=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s 结束原因=%s 末尾片段=%s",
@@ -6279,6 +6283,10 @@ def require_proxy_api_key() -> Response | None:
             "type": str(result.key_type or "unknown"),
             "preview": str(result.key_preview or ""),
             "source": str(result.source or ""),
+            "api_key_id": str(result.key_id or ""),
+            "api_key_name": str(result.key_name or ("环境 Key" if result.key_type == "env" else "托管 Key")),
+            "api_key_preview": str(result.key_preview or ""),
+            "api_key_type": str(result.key_type or "unknown"),
         }
         return None
 
@@ -6309,6 +6317,10 @@ def require_proxy_api_key() -> Response | None:
                     "type": "account_api_key",
                     "preview": str(matched.get("key_preview") or ""),
                     "source": str(source or "authorization"),
+                    "api_key_id": str(matched.get("id") or ""),
+                    "api_key_name": str(matched.get("name") or ""),
+                    "api_key_preview": str(matched.get("key_preview") or ""),
+                    "api_key_type": "account_api_key",
                     "status": str(matched.get("account_status") or ""),
                     "allowed_group_ids": matched.get("account_allowed_group_ids") if isinstance(matched.get("account_allowed_group_ids"), list) else [],
                     "group_ids": [item for item in memberships if item],

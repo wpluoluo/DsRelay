@@ -6,7 +6,7 @@ import { Badge, Button, Field, Modal, ModalActions, Select, TextArea, TextInput 
 import { EmptyState, FilterToolbar, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow } from '../components/admin';
 import { queryClient } from '../state/queryClient';
 import { useAccountCenter } from '../state/accountCenterContext';
-import { formatNumber, formatUsdCost, maskEmpty } from '../utils';
+import { formatNumber, formatUsdCost, getBusinessUserId, getBusinessUserName, maskEmpty } from '../utils';
 
 export function AccountOrdersPage() {
   const { selectedUser, selectedUserId, orders, reload } = useAccountCenter();
@@ -31,7 +31,7 @@ export function AccountOrdersPage() {
   const filtered = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     return orders.filter((item) => {
-      if (selectedUserId && item.account_id !== selectedUserId) return false;
+      if (selectedUserId && getBusinessUserId(item) !== selectedUserId) return false;
       if (status && item.status !== status) return false;
       if (!keyword) return true;
       const haystack = [
@@ -107,7 +107,7 @@ export function AccountOrdersPage() {
               <tbody>
                 {rows.length ? rows.map((item) => (
                   <tr key={item.id}>
-                    <td><div className="sub2-cell-stack"><strong>{item.id}</strong><small>{item.account_name || item.account_id}</small></div></td>
+                    <td><div className="sub2-cell-stack"><strong>{item.id}</strong><small>{getBusinessUserName(item)}</small></div></td>
                     <td><div className="sub2-cell-stack"><strong>{item.plan_name || item.plan_id}</strong><small>{item.group_name || item.group_id || '-'}</small></div></td>
                     <td><div className="sub2-cell-stack"><strong>{item.channel_name || item.channel_id || item.provider || '-'}</strong><small>{item.provider_order_id || item.resume_token || '-'}</small></div></td>
                     <td><strong className="sub2-number-cell">{formatUsdCost(Number(item.final_price_cents ?? item.amount_cents ?? 0) / 100, 2)}</strong></td>
@@ -161,7 +161,6 @@ export function AccountOrdersPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{cancelTarget.id}</strong>
-              <span>这会把当前待处理订单状态改为 `cancelled`，不会删除历史记录。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">

@@ -2690,6 +2690,23 @@ def normalize_tool_message_chain(messages: list, tool_schemas: dict | None = Non
         pending_ids = []
         pending_assistant_ids = set()
 
+    def append_message_without_orphan_tool_calls(message: dict) -> None:
+        nonlocal repaired, pending_assistant_index, pending_ids, pending_assistant_ids
+        call_ids = tool_call_ids_from_message(message)
+        if message.get("role") != "assistant" or not call_ids:
+            normalized.append(message)
+            return
+        if message_has_meaningful_assistant_content(message):
+            cleaned = dict(message)
+            cleaned.pop("tool_calls", None)
+            normalized.append(cleaned)
+            repaired += 1
+            return
+        normalized.append(message)
+        pending_assistant_index = len(normalized) - 1
+        pending_ids = list(call_ids)
+        pending_assistant_ids = set(call_ids)
+
     for message in messages:
         if not isinstance(message, dict):
             finalize_pending_without_full_tool_results()
@@ -2715,13 +2732,7 @@ def normalize_tool_message_chain(messages: list, tool_schemas: dict | None = Non
             repaired += 1
             continue
 
-        normalized.append(message)
-        if role == "assistant":
-            call_ids = tool_call_ids_from_message(message)
-            if call_ids:
-                pending_assistant_index = len(normalized) - 1
-                pending_ids = list(call_ids)
-                pending_assistant_ids = set(call_ids)
+        append_message_without_orphan_tool_calls(message)
 
     if pending_ids:
         finalize_pending_without_full_tool_results()

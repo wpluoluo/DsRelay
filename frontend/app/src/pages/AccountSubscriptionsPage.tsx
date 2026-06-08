@@ -3,14 +3,14 @@ import { CreditCard, Eye, Ticket } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Button, Empty, Field, Modal, ModalActions, Panel, PanelHead, Select, TextInput } from '../components';
 import { useAccountCenter } from '../state/accountCenterContext';
-import { formatNumber, formatUsdCost } from '../utils';
+import { formatNumber, formatUsdCost, getBusinessUserId } from '../utils';
 
 export function AccountSubscriptionsPage() {
   const { selectedUser, selectedUserId, subscriptions } = useAccountCenter();
   const [statusFilter, setStatusFilter] = useState('');
   const [inspectSubscription, setInspectSubscription] = useState<any | null>(null);
   const rows = useMemo(
-    () => subscriptions.filter((item) => (!selectedUserId || item.account_id === selectedUserId) && (!statusFilter || item.status === statusFilter)),
+    () => subscriptions.filter((item) => (!selectedUserId || getBusinessUserId(item) === selectedUserId) && (!statusFilter || item.status === statusFilter)),
     [selectedUserId, statusFilter, subscriptions],
   );
   const activeRows = rows.filter((item) => item.status === 'active');

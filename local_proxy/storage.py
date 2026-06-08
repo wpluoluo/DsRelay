@@ -927,6 +927,15 @@ class ProxyStorage:
             conn.close()
         return rows
 
+    def get_admin_api_key(self, key_id: str) -> dict:
+        target = str(key_id or "").strip()
+        if not target:
+            return {}
+        for item in self.list_admin_api_keys():
+            if str(item.get("id") or "") == target:
+                return item
+        return {}
+
     def upsert_admin_api_key(self, payload: dict) -> dict:
         now = time.time()
         item = {
@@ -970,6 +979,18 @@ class ProxyStorage:
         item["created_at"] = created_at
         item["updated_at"] = now
         return item
+
+    def delete_admin_api_key(self, key_id: str) -> None:
+        target = str(key_id or "").strip()
+        if not target:
+            raise ValueError("key_id is required")
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM admin_api_keys WHERE id = %s", (target,))
+            conn.commit()
+        finally:
+            conn.close()
 
     def touch_admin_api_key(self, key_id: str) -> None:
         now = time.time()

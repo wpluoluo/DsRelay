@@ -6,11 +6,11 @@ import {
   fetchAdminPaymentOrders,
   fetchAdminSubscriptionPlans,
   fetchAdminUsers,
-  fetchAdminAccountSubscriptions,
+  fetchAdminUserSubscriptions,
 } from '../api';
 import type {
   AdminApiKey,
-  AdminAccountSubscription,
+  AdminUserSubscription,
   AdminPaymentChannel,
   AdminPaymentOrder,
   AdminSubscriptionPlan,
@@ -22,7 +22,7 @@ export type AccountCenterContextValue = {
   selectedUserId: string;
   selectedUser?: AdminUser;
   apiKeys: AdminApiKey[];
-  subscriptions: AdminAccountSubscription[];
+  subscriptions: AdminUserSubscription[];
   orders: AdminPaymentOrder[];
   plans: AdminSubscriptionPlan[];
   channels: AdminPaymentChannel[];
@@ -41,7 +41,7 @@ export function AccountCenterProvider({ children }: { children: React.ReactNode 
   const plansQuery = useQuery({ queryKey: ['admin-subscription-plans'], queryFn: fetchAdminSubscriptionPlans, refetchInterval: 10000 });
   const channelsQuery = useQuery({ queryKey: ['admin-payment-channels'], queryFn: fetchAdminPaymentChannels, refetchInterval: 10000 });
   const ordersQuery = useQuery({ queryKey: ['admin-payment-orders'], queryFn: fetchAdminPaymentOrders, refetchInterval: 10000 });
-  const subscriptionsQuery = useQuery({ queryKey: ['admin-subscriptions'], queryFn: fetchAdminAccountSubscriptions, refetchInterval: 10000 });
+  const subscriptionsQuery = useQuery({ queryKey: ['admin-user-subscriptions'], queryFn: fetchAdminUserSubscriptions, refetchInterval: 10000 });
 
   const users = usersQuery.data?.items || [];
   const apiKeys = keysQuery.data?.items || [];

@@ -46,47 +46,6 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
     def admin_users_delete(user_id: str):
         return jsonify(analytics_service.delete_user(user_id))
 
-    @app.post("/admin/accounts")
-    @admin_required
-    def admin_accounts_upsert():
-        payload = request.get_json(silent=True) or {}
-        return jsonify(analytics_service.upsert_account(payload))
-
-    @app.get("/admin/accounts/<account_id>")
-    @admin_required
-    def admin_account_get(account_id: str):
-        return jsonify(analytics_service.get_account(account_id))
-
-    @app.post("/admin/accounts/<account_id>/balance")
-    @admin_required
-    def admin_account_balance(account_id: str):
-        payload = request.get_json(silent=True) or {}
-        return jsonify(analytics_service.set_account_balance(account_id, payload))
-
-    @app.post("/admin/accounts/<account_id>/concurrency")
-    @admin_required
-    def admin_account_concurrency(account_id: str):
-        payload = request.get_json(silent=True) or {}
-        return jsonify(analytics_service.set_account_concurrency(account_id, payload))
-
-    @app.post("/admin/accounts/<account_id>/allowed-groups")
-    @admin_required
-    def admin_account_allowed_groups(account_id: str):
-        payload = request.get_json(silent=True) or {}
-        return jsonify(analytics_service.set_account_allowed_groups(account_id, payload))
-
-    @app.post("/admin/accounts/<account_id>/memberships")
-    @admin_required
-    def admin_account_memberships(account_id: str):
-        payload = request.get_json(silent=True) or {}
-        return jsonify(analytics_service.set_account_membership_groups(account_id, payload))
-
-    @app.post("/admin/accounts/<account_id>/role-status")
-    @admin_required
-    def admin_account_role_status(account_id: str):
-        payload = request.get_json(silent=True) or {}
-        return jsonify(analytics_service.set_account_role_status(account_id, payload))
-
     @app.get("/admin/groups")
     @admin_required
     def admin_groups():
@@ -129,11 +88,22 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.create_api_key(payload))
 
+    @app.post("/admin/api-keys/<key_id>")
+    @admin_required
+    def admin_api_keys_update(key_id: str):
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.update_api_key(key_id, payload))
+
     @app.post("/admin/api-keys/<key_id>/enabled")
     @admin_required
     def admin_api_keys_enabled(key_id: str):
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.set_api_key_enabled(key_id, payload.get("enabled") is True))
+
+    @app.delete("/admin/api-keys/<key_id>")
+    @admin_required
+    def admin_api_keys_delete(key_id: str):
+        return jsonify(analytics_service.delete_api_key(key_id))
 
     @app.get("/admin/subscription-plans")
     @admin_required

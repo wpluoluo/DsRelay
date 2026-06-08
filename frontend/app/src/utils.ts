@@ -54,6 +54,26 @@ export function maskEmpty(value: unknown): string {
   return text || '-';
 }
 
+export function getBusinessUserId(item: Record<string, unknown> | null | undefined): string {
+  if (!item) return '';
+  return String(item.user_id || item.consumer_id || item.account_id || '').trim();
+}
+
+export function getBusinessUserName(item: Record<string, unknown> | null | undefined): string {
+  if (!item) return '-';
+  const id = getBusinessUserId(item);
+  return maskEmpty(item.user_name || item.consumer_name || item.account_name || id);
+}
+
+export function getBusinessUserKey(item: Record<string, unknown> | null | undefined): string {
+  if (!item) return '';
+  return String(item.user_key || item.consumer_preview || item.external_key || '').trim();
+}
+
+export function buildBusinessUserPayload(userId: string, payload: Record<string, unknown> = {}): Record<string, unknown> {
+  return { ...payload, user_id: userId };
+}
+
 export function splitLines(value: unknown): string[] {
   return String(value || '')
     .split(/\r?\n/)
@@ -100,4 +120,31 @@ export function writeStorageJSON(key: string, value: unknown) {
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
   } catch {}
+}
+
+export async function copyTextToClipboard(value: string): Promise<boolean> {
+  const text = String(value || '');
+  if (!text) return false;
+  try {
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {}
+  try {
+    const element = document.createElement('textarea');
+    element.value = text;
+    element.setAttribute('readonly', 'true');
+    element.style.position = 'fixed';
+    element.style.left = '-9999px';
+    element.style.top = '0';
+    document.body.appendChild(element);
+    element.focus();
+    element.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(element);
+    return ok;
+  } catch {
+    return false;
+  }
 }

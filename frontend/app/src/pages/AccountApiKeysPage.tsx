@@ -1,68 +1,198 @@
-import { useMemo, useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { Copy, Eye, KeyRound, MoreHorizontal, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
-import { createAdminApiKey, setAdminApiKeyEnabled } from '../api';
+import { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { Copy, Edit, Eye, KeyRound, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { createAdminApiKey, deleteAdminApiKey, fetchAdminUsage, setAdminApiKeyEnabled, updateAdminApiKey } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
-import { EmptyState, FilterToolbar, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow } from '../components/admin';
+import {
+  ColumnMenu,
+  EmptyState,
+  FilterToolbar,
+  Pager,
+  RowAction,
+  RowActions,
+  SearchField,
+  TablePageLayout,
+  ToolbarButtonRow,
+  ToolsMenu,
+} from '../components/admin';
 import { queryClient } from '../state/queryClient';
 import { useAccountCenter } from '../state/accountCenterContext';
-import { formatNumber, maskEmpty } from '../utils';
+import type { AdminApiKey } from '../types';
+import { buildBusinessUserPayload, copyTextToClipboard, formatNumber, formatTokenCount, formatUsdCost, getBusinessUserId, getBusinessUserName, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
+
+type KeyDraft = {
+  id?: string;
+  user_id: string;
+  name: string;
+  enabled: boolean;
+};
+
+type StatusFilter = '' | 'enabled' | 'disabled';
+type SubscriptionFilter = '' | 'active' | 'inactive';
+type ColumnKey = 'owner' | 'subscription' | 'preview' | 'usage' | 'lastUsed' | 'status';
+
+const DEFAULT_VISIBLE_COLUMNS: ColumnKey[] = ['owner', 'subscription', 'preview', 'usage', 'lastUsed', 'status'];
+const STORAGE_KEY = 'account-api-keys-view-state';
 
 export function AccountApiKeysPage() {
   const { selectedUserId, selectedUser, users, apiKeys, reload } = useAccountCenter();
-  const [draft, setDraft] = useState<{ account_id: string; name: string } | null>(null);
+  const usageQuery = useQuery({ queryKey: ['admin-usage'], queryFn: () => fetchAdminUsage(), refetchInterval: 10000 });
+  const savedState = readStorageJSON(STORAGE_KEY, {
+    search: '',
+    statusFilter: '' as StatusFilter,
+    subscriptionFilter: '' as SubscriptionFilter,
+    pageSize: 20,
+    visibleColumns: DEFAULT_VISIBLE_COLUMNS,
+  });
+
+  const [draft, setDraft] = useState<KeyDraft | null>(null);
   const [generatedKey, setGeneratedKey] = useState('');
   const [copiedKeyId, setCopiedKeyId] = useState('');
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [showTools, setShowTools] = useState(false);
-  const [inspectKey, setInspectKey] = useState<any | null>(null);
-  const [toggleTarget, setToggleTarget] = useState<any | null>(null);
+  const [search, setSearch] = useState(savedState.search);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(savedState.statusFilter || '');
+  const [subscriptionFilter, setSubscriptionFilter] = useState<SubscriptionFilter>(savedState.subscriptionFilter || '');
+  const [inspectKey, setInspectKey] = useState<AdminApiKey | null>(null);
+  const [toggleTarget, setToggleTarget] = useState<AdminApiKey | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AdminApiKey | null>(null);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
+  const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
 
   const createMutation = useMutation({
     mutationFn: createAdminApiKey,
     onSuccess: async (result) => {
       setGeneratedKey(result.generated_key || '');
       setDraft(null);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['admin-api-keys'] }),
-        reload(),
-      ]);
+      await refreshKeyData();
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ keyId, payload }: { keyId: string; payload: Record<string, unknown> }) => updateAdminApiKey(keyId, payload),
+    onSuccess: async () => {
+      setDraft(null);
+      await refreshKeyData();
     },
   });
 
   const toggleMutation = useMutation({
     mutationFn: ({ keyId, enabled }: { keyId: string; enabled: boolean }) => setAdminApiKeyEnabled(keyId, enabled),
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['admin-api-keys'] }),
-        reload(),
-      ]);
+      setToggleTarget(null);
+      await refreshKeyData();
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (keyId: string) => deleteAdminApiKey(keyId),
+    onSuccess: async () => {
+      setDeleteTarget(null);
+      await refreshKeyData();
     },
   });
 
   const rows = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     return apiKeys.filter((item) => {
-      if (selectedUserId && item.account_id !== selectedUserId) return false;
-      if (statusFilter && String(item.enabled !== false ? 'enabled' : 'disabled') !== statusFilter) return false;
+      if (selectedUserId && getBusinessUserId(item) !== selectedUserId) return false;
+      if (statusFilter) {
+        const enabledValue = statusFilter === 'enabled';
+        if ((item.enabled !== false) !== enabledValue) return false;
+      }
+      if (subscriptionFilter === 'active' && !item.subscription_active) return false;
+      if (subscriptionFilter === 'inactive' && item.subscription_active) return false;
       if (!keyword) return true;
-      const hay = `${item.name || ''} ${item.key_preview || ''} ${item.active_plan_name || ''}`.toLowerCase();
+      const hay = [
+        item.name,
+        getBusinessUserName(item),
+        getBusinessUserId(item),
+        item.key_preview,
+        item.active_plan_name,
+        item.active_group_name,
+      ]
+        .map((value) => String(value || '').toLowerCase())
+        .join(' ');
       return hay.includes(keyword);
     });
-  }, [apiKeys, search, selectedUserId, statusFilter]);
+  }, [apiKeys, search, selectedUserId, statusFilter, subscriptionFilter]);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   const pagedRows = rows.slice((page - 1) * pageSize, page * pageSize);
   const activeRows = rows.filter((item) => item.enabled !== false);
   const coveredRows = rows.filter((item) => item.subscription_active);
   const uncoveredRows = rows.filter((item) => !item.subscription_active);
+  const selectedUserKeys = selectedUserId ? apiKeys.filter((item) => getBusinessUserId(item) === selectedUserId).length : apiKeys.length;
+  const usageByKey = useMemo(() => {
+    const usage = new Map<string, { requests: number; tokens: number; cost: number; last_used_at: string }>();
+    for (const item of usageQuery.data?.items || []) {
+      const keyId = String(item.api_key_id || '').trim();
+      if (!keyId) continue;
+      if (selectedUserId && item.consumer_id !== selectedUserId) continue;
+      const current = usage.get(keyId) || { requests: 0, tokens: 0, cost: 0, last_used_at: '' };
+      current.requests += 1;
+      current.tokens += Number(item.total_tokens || 0) || Number(item.prompt_tokens || 0) + Number(item.completion_tokens || 0);
+      current.cost += Number(item.actual_cost || 0) || Number(item.total_cost || 0) || 0;
+      if (!current.last_used_at || String(item.started_at || '') > current.last_used_at) {
+        current.last_used_at = String(item.started_at || '');
+      }
+      usage.set(keyId, current);
+    }
+    return usage;
+  }, [selectedUserId, usageQuery.data?.items]);
+
+  useEffect(() => {
+    writeStorageJSON(STORAGE_KEY, {
+      search,
+      statusFilter,
+      subscriptionFilter,
+      pageSize,
+      visibleColumns: Array.from(visibleColumns),
+    });
+  }, [pageSize, search, statusFilter, subscriptionFilter, visibleColumns]);
+
+  function openCreate() {
+    setDraft({ user_id: selectedUserId || users[0]?.id || '', name: '', enabled: true });
+  }
+
+  function openEdit(item: AdminApiKey) {
+    setDraft({
+      id: item.id,
+      user_id: getBusinessUserId(item) || selectedUserId || '',
+      name: item.name || '',
+      enabled: item.enabled !== false,
+    });
+  }
+
+  function submitDraft() {
+    if (!draft) return;
+    const payload = buildBusinessUserPayload(draft.user_id, { name: draft.name, enabled: draft.enabled });
+    if (draft.id) {
+      updateMutation.mutate({ keyId: draft.id, payload });
+      return;
+    }
+    createMutation.mutate(payload);
+  }
+
+  function toggleColumn(key: ColumnKey) {
+    setVisibleColumns((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  async function refreshKeyData() {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['admin-api-keys'] }),
+      reload(),
+    ]);
+  }
 
   async function copyText(value: string, keyId?: string) {
     try {
-      await navigator.clipboard.writeText(value);
+      const ok = await copyTextToClipboard(value);
+      if (!ok) return;
       if (keyId) {
         setCopiedKeyId(keyId);
         window.setTimeout(() => setCopiedKeyId(''), 1200);
@@ -74,13 +204,13 @@ export function AccountApiKeysPage() {
     <section className="grid-page">
       <div className="sub2-page-head">
         <div className="sub2-page-title">
-          <strong>我的 API Key</strong>
+          <strong>API 密钥</strong>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>当前用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '-'}</small></div>
-          <div className="sub2-inline-summary-item"><span>Key 数量</span><strong>{formatNumber(rows.length)}</strong><small>启用 {formatNumber(activeRows.length)}</small></div>
+          <div className="sub2-inline-summary-item"><span>Key 数量</span><strong>{formatNumber(selectedUserKeys)}</strong><small>当前筛选 {formatNumber(rows.length)}</small></div>
+          <div className="sub2-inline-summary-item"><span>启用 Key</span><strong>{formatNumber(activeRows.length)}</strong><small>停用 {formatNumber(rows.length - activeRows.length)}</small></div>
           <div className="sub2-inline-summary-item"><span>订阅覆盖</span><strong>{formatNumber(coveredRows.length)}</strong><small>未覆盖 {formatNumber(uncoveredRows.length)}</small></div>
-          <div className="sub2-inline-summary-item"><span>最近生成</span><strong>{generatedKey ? '已生成' : '无'}</strong><small>{generatedKey ? '仅本次可见' : '-'}</small></div>
         </div>
       </div>
 
@@ -90,26 +220,45 @@ export function AccountApiKeysPage() {
             right={
               <ToolbarButtonRow>
                 <Button onClick={() => void reload()}><RefreshCw size={15} />刷新</Button>
-                <details className="sub2-menu" open={showTools} onToggle={(event) => setShowTools((event.target as HTMLDetailsElement).open)}>
-                  <summary>
-                    <MoreHorizontal size={14} />
-                    <span>更多工具</span>
-                  </summary>
-                  <div className="sub2-menu-panel">
-                    <button type="button" onClick={() => { setSearch(''); setStatusFilter(''); setPage(1); setShowTools(false); }}>
-                      <span>清空筛选</span>
-                    </button>
-                  </div>
-                </details>
-                <Button tone="primary" onClick={() => setDraft({ account_id: selectedUserId || users[0]?.id || '', name: '' })}><Plus size={15} />生成 Key</Button>
+                <ColumnMenu
+                  label="列设置"
+                  items={[
+                    { key: 'owner', label: '归属用户', checked: visibleColumns.has('owner'), onToggle: () => toggleColumn('owner') },
+                    { key: 'subscription', label: '订阅', checked: visibleColumns.has('subscription'), onToggle: () => toggleColumn('subscription') },
+                    { key: 'preview', label: 'Key 预览', checked: visibleColumns.has('preview'), onToggle: () => toggleColumn('preview') },
+                    { key: 'usage', label: '使用记录', checked: visibleColumns.has('usage'), onToggle: () => toggleColumn('usage') },
+                    { key: 'lastUsed', label: '最近使用', checked: visibleColumns.has('lastUsed'), onToggle: () => toggleColumn('lastUsed') },
+                    { key: 'status', label: '状态', checked: visibleColumns.has('status'), onToggle: () => toggleColumn('status') },
+                  ]}
+                />
+                <ToolsMenu>
+                  <button type="button" onClick={() => { setSearch(''); setStatusFilter(''); setSubscriptionFilter(''); setPage(1); }}>
+                    <span>清空筛选</span>
+                  </button>
+                  <button type="button" onClick={() => { setSubscriptionFilter('active'); setPage(1); }}>
+                    <span>仅看有效订阅</span>
+                  </button>
+                  <button type="button" onClick={() => { setStatusFilter('disabled'); setPage(1); }}>
+                    <span>仅看停用 Key</span>
+                  </button>
+                  <button type="button" onClick={() => { setPageSize(50); setPage(1); }}>
+                    <span>切换 50 / 页</span>
+                  </button>
+                </ToolsMenu>
+                <Button tone="primary" onClick={openCreate}><Plus size={15} />创建 Key</Button>
               </ToolbarButtonRow>
             }
           >
-            <SearchField value={search} placeholder="搜索 Key 名称 / 预览 / 计划" onChange={(value) => { setSearch(value); setPage(1); }} />
-            <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}>
+            <SearchField value={search} placeholder="搜索名称 / 用户 / Key / 计划" onChange={(value) => { setSearch(value); setPage(1); }} />
+            <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StatusFilter); setPage(1); }}>
               <option value="">全部状态</option>
               <option value="enabled">启用</option>
               <option value="disabled">停用</option>
+            </Select>
+            <Select value={subscriptionFilter} onChange={(event) => { setSubscriptionFilter(event.target.value as SubscriptionFilter); setPage(1); }}>
+              <option value="">全部订阅</option>
+              <option value="active">订阅有效</option>
+              <option value="inactive">无可用订阅</option>
             </Select>
           </FilterToolbar>
         )}
@@ -119,41 +268,71 @@ export function AccountApiKeysPage() {
               <thead>
                 <tr>
                   <th>名称</th>
-                  <th>用户</th>
-                  <th>订阅</th>
-                  <th>Key 预览</th>
-                  <th>最近使用</th>
-                  <th>状态</th>
+                  {visibleColumns.has('owner') ? <th>用户</th> : null}
+                  {visibleColumns.has('subscription') ? <th>订阅</th> : null}
+                  {visibleColumns.has('preview') ? <th>Key 预览</th> : null}
+                  {visibleColumns.has('usage') ? <th>使用记录</th> : null}
+                  {visibleColumns.has('lastUsed') ? <th>最近使用</th> : null}
+                  {visibleColumns.has('status') ? <th>状态</th> : null}
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody>
-                {pagedRows.length ? pagedRows.map((item) => (
+                {pagedRows.length ? pagedRows.map((item) => {
+                  const liveUsage = usageByKey.get(item.id);
+                  const usage = liveUsage || {
+                    requests: Number(item.request_count || 0),
+                    tokens: Number(item.total_tokens || 0),
+                    cost: Number(item.actual_cost || 0) || Number(item.total_cost || 0),
+                    last_used_at: item.last_used_request_at || '',
+                  };
+                  return (
                   <tr key={item.id}>
                     <td><div className="sub2-cell-stack"><strong>{item.name}</strong><small>{item.id}</small></div></td>
-                    <td><div className="sub2-cell-stack"><strong>{maskEmpty(item.account_name || item.account_id)}</strong><small>{item.account_id}</small></div></td>
-                    <td><div className="sub2-cell-stack"><strong>{item.subscription_active ? (item.active_plan_name || '订阅有效') : '无可用订阅'}</strong><small>{item.active_group_name || item.active_group_id || item.active_subscription_status || '-'}</small></div></td>
-                    <td>
-                      <div className="key-value-cell">
-                        <code>{item.key_preview}</code>
-                        <button type="button" className={copiedKeyId === item.id ? 'copied' : ''} onClick={() => copyText(item.key_preview, item.id)} aria-label="复制 Key 预览">
-                          <Copy size={14} />
-                        </button>
-                      </div>
-                    </td>
-                    <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{formatTimestamp(item.last_used_at)}</strong><small>{item.updated_at ? `更新 ${formatTimestamp(item.updated_at)}` : '暂无更新'}</small></div></td>
-                    <td><Badge tone={item.enabled === false ? 'warn' : 'ok'}>{item.enabled === false ? '停用' : '启用'}</Badge></td>
+                    {visibleColumns.has('owner') ? (
+                      <td><div className="sub2-cell-stack"><strong>{getBusinessUserName(item)}</strong><small>{getBusinessUserId(item)}</small></div></td>
+                    ) : null}
+                    {visibleColumns.has('subscription') ? (
+                      <td><div className="sub2-cell-stack"><strong>{item.subscription_active ? (item.active_plan_name || '订阅有效') : '无可用订阅'}</strong><small>{item.active_group_name || item.active_group_id || item.active_subscription_status || '-'}</small></div></td>
+                    ) : null}
+                    {visibleColumns.has('preview') ? (
+                      <td>
+                        <div className="key-value-cell">
+                          <code>{item.key_preview}</code>
+                          <button type="button" className={copiedKeyId === item.id ? 'copied' : ''} onClick={() => copyText(item.key_preview, item.id)} aria-label="复制 Key 预览">
+                            <Copy size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    ) : null}
+                    {visibleColumns.has('usage') ? (
+                      <td>
+                        <div className="sub2-cell-stack sub2-cell-stack-tight">
+                          <strong>{formatNumber(usage.requests)} 次</strong>
+                          <small>{formatTokenCount(usage.tokens)} · {formatUsdCost(usage.cost)}</small>
+                        </div>
+                      </td>
+                    ) : null}
+                    {visibleColumns.has('lastUsed') ? (
+                      <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{usage.last_used_at || item.last_used_request_at || formatTimestamp(item.last_used_at)}</strong><small>{item.updated_at ? `更新 ${formatTimestamp(item.updated_at)}` : '暂无更新'}</small></div></td>
+                    ) : null}
+                    {visibleColumns.has('status') ? (
+                      <td><Badge tone={item.enabled === false ? 'warn' : 'ok'}>{item.enabled === false ? '停用' : '启用'}</Badge></td>
+                    ) : null}
                     <td>
                       <RowActions>
                         <RowAction icon={Eye} label="详情" onClick={() => setInspectKey(item)} />
+                        <RowAction icon={Edit} label="编辑" onClick={() => openEdit(item)} />
                         <RowAction icon={item.enabled === false ? ShieldCheck : KeyRound} label={item.enabled === false ? '启用' : '停用'} tone={item.enabled === false ? 'default' : 'warn'} onClick={() => setToggleTarget(item)} />
+                        <RowAction icon={Trash2} label="删除" tone="danger" onClick={() => setDeleteTarget(item)} />
                       </RowActions>
                     </td>
                   </tr>
-                )) : (
+                );
+                }) : (
                   <tr>
-                    <td colSpan={7}>
-                      <EmptyState title="暂无 API Key" description="当前用户还没有可用的 API Key。" />
+                    <td colSpan={visibleColumns.size + 2}>
+                      <EmptyState title="暂无 API Key" description="当前筛选条件下没有 API Key。" action={<Button tone="primary" onClick={openCreate}>创建 Key</Button>} />
                     </td>
                   </tr>
                 )}
@@ -185,26 +364,6 @@ export function AccountApiKeysPage() {
           }
         >
           <div className="admin-dialog admin-dialog-result">
-            <div className="admin-dialog-intro">
-              <strong>原始 Key</strong>
-            </div>
-            <div className="admin-dialog-summary">
-              <div className="admin-dialog-summary-card">
-                <span>绑定用户</span>
-                <strong>{selectedUser?.name || '当前用户'}</strong>
-                <small>{selectedUser?.group_name || selectedUser?.source_type || '-'}</small>
-              </div>
-              <div className="admin-dialog-summary-card">
-                <span>订阅校验</span>
-                <strong>已生效</strong>
-                <small>订阅校验生效</small>
-              </div>
-              <div className="admin-dialog-summary-card">
-                <span>建议动作</span>
-                <strong>复制保存</strong>
-                <small>仅本次可见</small>
-              </div>
-            </div>
             <div className="generated-key-box generated-key-floating">
               <div className="generated-key-title">原始 Key</div>
               <div className="generated-key-row">
@@ -218,31 +377,38 @@ export function AccountApiKeysPage() {
 
       {draft ? (
         <Modal
-          title="生成用户 API Key"
+          title={draft.id ? '编辑 API Key' : '创建 API Key'}
           size="md"
           onClose={() => setDraft(null)}
           footer={
             <ModalActions>
               <Button onClick={() => setDraft(null)}>取消</Button>
-              <Button tone="primary" disabled={createMutation.isPending || !draft.account_id || !draft.name.trim()} onClick={() => createMutation.mutate(draft)}>
-                生成
+              <Button
+                tone="primary"
+                disabled={createMutation.isPending || updateMutation.isPending || !draft.user_id || !draft.name.trim()}
+                onClick={submitDraft}
+              >
+                保存
               </Button>
             </ModalActions>
           }
         >
-            <div className="admin-dialog">
-            <div className="admin-dialog-intro">
-              <strong>生成当前用户 Key</strong>
-            </div>
+          <div className="admin-dialog">
             <div className="admin-dialog-grid modal-grid">
               <Field label="归属用户">
-                <Select value={draft.account_id} onChange={(e) => setDraft({ ...draft, account_id: e.target.value })}>
+                <Select value={draft.user_id} onChange={(e) => setDraft({ ...draft, user_id: e.target.value })}>
                   <option value="">请选择用户</option>
                   {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
                 </Select>
               </Field>
               <Field label="Key 名称">
                 <TextInput value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+              </Field>
+              <Field label="状态">
+                <Select value={draft.enabled ? 'enabled' : 'disabled'} onChange={(e) => setDraft({ ...draft, enabled: e.target.value === 'enabled' })}>
+                  <option value="enabled">启用</option>
+                  <option value="disabled">停用</option>
+                </Select>
               </Field>
             </div>
           </div>
@@ -263,8 +429,8 @@ export function AccountApiKeysPage() {
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
                 <span>用户</span>
-                <strong>{maskEmpty(inspectKey.account_name || inspectKey.account_id)}</strong>
-                <small>{inspectKey.account_id}</small>
+                <strong>{getBusinessUserName(inspectKey)}</strong>
+                <small>{getBusinessUserId(inspectKey)}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>订阅</span>
@@ -289,7 +455,7 @@ export function AccountApiKeysPage() {
 
       {toggleTarget ? (
         <Modal
-          title={toggleTarget.enabled === false ? '确认启用 Key' : '确认停用 Key'}
+          title={toggleTarget.enabled === false ? '启用 Key' : '停用 Key'}
           size="md"
           onClose={() => setToggleTarget(null)}
           footer={
@@ -298,7 +464,7 @@ export function AccountApiKeysPage() {
               <Button
                 tone={toggleTarget.enabled === false ? 'primary' : 'danger'}
                 disabled={toggleMutation.isPending}
-                onClick={() => toggleMutation.mutate({ keyId: toggleTarget.id, enabled: toggleTarget.enabled === false }, { onSuccess: () => setToggleTarget(null) })}
+                onClick={() => toggleMutation.mutate({ keyId: toggleTarget.id, enabled: toggleTarget.enabled === false })}
               >
                 确认
               </Button>
@@ -308,7 +474,28 @@ export function AccountApiKeysPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{toggleTarget.name}</strong>
-              <span>{toggleTarget.enabled === false ? '启用后该 Key 可以继续用于业务请求。' : '停用后该 Key 将立即不能再发起新请求。'}</span>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
+      {deleteTarget ? (
+        <Modal
+          title="删除 API Key"
+          size="md"
+          onClose={() => setDeleteTarget(null)}
+          footer={
+            <ModalActions>
+              <Button onClick={() => setDeleteTarget(null)}>取消</Button>
+              <Button tone="danger" disabled={deleteMutation.isPending} onClick={() => deleteMutation.mutate(deleteTarget.id)}>
+                删除
+              </Button>
+            </ModalActions>
+          }
+        >
+          <div className="admin-dialog">
+            <div className="admin-dialog-intro">
+              <strong>{deleteTarget.name}</strong>
             </div>
           </div>
         </Modal>

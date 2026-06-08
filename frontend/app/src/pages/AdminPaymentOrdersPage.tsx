@@ -6,7 +6,7 @@ import { Badge, Button, Field, Modal, ModalActions, Select, TextInput } from '..
 import { ActionButton, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { queryClient } from '../state/queryClient';
 import type { AdminPaymentOrder } from '../types';
-import { formatCost, formatNumber, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
+import { buildBusinessUserPayload, formatCost, formatNumber, getBusinessUserId, getBusinessUserName, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
 
 const STORAGE_KEY = 'admin-payment-orders-view-state';
 
@@ -48,7 +48,7 @@ export function AdminPaymentOrdersPage() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['admin-payment-orders'] }),
-        queryClient.invalidateQueries({ queryKey: ['admin-subscriptions'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin-user-subscriptions'] }),
       ]);
     },
   });
@@ -58,14 +58,14 @@ export function AdminPaymentOrdersPage() {
   const plans = plansQuery.data?.items || [];
   const channels = channelsQuery.data?.items || [];
   const selectedPlan = draft?.plan_id ? plans.find((plan) => plan.id === draft.plan_id) : undefined;
-  const selectedUser = draft?.account_id ? users.find((user) => user.id === draft.account_id) : undefined;
+  const selectedUser = draft?.user_id ? users.find((user) => user.id === draft.user_id) : undefined;
   const selectedChannel = draft?.channel_id ? channels.find((channel) => channel.id === draft.channel_id) : undefined;
 
   const filteredItems = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     return items.filter((item) => {
       if (keyword) {
-        const haystack = [item.id, item.account_name, item.account_id, item.plan_name, item.plan_id, item.channel_name, item.provider_order_id].map((value) => String(value || '').toLowerCase()).join(' ');
+        const haystack = [item.id, getBusinessUserName(item), getBusinessUserId(item), item.plan_name, item.plan_id, item.channel_name, item.provider_order_id].map((value) => String(value || '').toLowerCase()).join(' ');
         if (!haystack.includes(keyword)) return false;
       }
       if (statusFilter && item.status !== statusFilter) return false;
@@ -142,7 +142,7 @@ export function AdminPaymentOrdersPage() {
                     <span>切换 50 / 页</span>
                   </button>
                 </ToolsMenu>
-                <Button tone="primary" onClick={() => setDraft({ account_id: '', plan_id: '', channel_id: '', amount_cents: 0, currency: 'CNY' })}>
+                <Button tone="primary" onClick={() => setDraft({ user_id: '', plan_id: '', channel_id: '', amount_cents: 0, currency: 'CNY' })}>
                   <Plus size={15} />创建订单
                 </Button>
               </ToolbarButtonRow>
@@ -187,7 +187,7 @@ export function AdminPaymentOrdersPage() {
                         <small>{item.provider_order_id || item.resume_token || '-'}</small>
                       </div>
                     </td>
-                    <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.account_name || item.account_id}</strong><small>{item.account_id}</small></div></td>
+                    <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{getBusinessUserName(item)}</strong><small>{getBusinessUserId(item)}</small></div></td>
                     <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.plan_name || item.plan_id}</strong><small>{item.plan_id}</small></div></td>
                     <td>
                       <div className="sub2-cell-stack sub2-cell-stack-tight">
@@ -223,14 +223,14 @@ export function AdminPaymentOrdersPage() {
                         <ToolsMenu label="订单操作" icon={false}>
                           <button
                             type="button"
-                            onClick={() => setStatusTarget({ id: item.id, status: 'paid', title: '确认完成订单', subtitle: `${item.account_name || item.account_id || item.id} · ${item.plan_name || item.plan_id || '-'}` })}
+                            onClick={() => setStatusTarget({ id: item.id, status: 'paid', title: '确认完成订单', subtitle: `${getBusinessUserName(item) || item.id} · ${item.plan_name || item.plan_id || '-'}` })}
                           >
                             <span>标记已支付</span>
                             <BadgeCheck size={14} />
                           </button>
                           <button
                             type="button"
-                            onClick={() => setStatusTarget({ id: item.id, status: 'failed', title: '确认标记失败', subtitle: `${item.account_name || item.account_id || item.id} · ${item.plan_name || item.plan_id || '-'}` })}
+                            onClick={() => setStatusTarget({ id: item.id, status: 'failed', title: '确认标记失败', subtitle: `${getBusinessUserName(item) || item.id} · ${item.plan_name || item.plan_id || '-'}` })}
                           >
                             <span>标记失败</span>
                             <CircleX size={14} />
@@ -248,7 +248,7 @@ export function AdminPaymentOrdersPage() {
                     colSpan={10}
                     title="暂无订单"
                     description="当前没有可展示的订单记录。"
-                    action={<Button tone="primary" onClick={() => setDraft({ account_id: '', plan_id: '', channel_id: '', amount_cents: 0, currency: 'CNY' })}>创建订单</Button>}
+                    action={<Button tone="primary" onClick={() => setDraft({ user_id: '', plan_id: '', channel_id: '', amount_cents: 0, currency: 'CNY' })}>创建订单</Button>}
                   />
                 )}
               </tbody>
@@ -273,7 +273,7 @@ export function AdminPaymentOrdersPage() {
           title="创建订单"
           size="md"
           onClose={() => setDraft(null)}
-          footer={<ModalActions><Button onClick={() => setDraft(null)}>取消</Button><Button tone="primary" disabled={createMutation.isPending || !draft.account_id || !draft.plan_id} onClick={() => createMutation.mutate(draft)}>创建</Button></ModalActions>}
+          footer={<ModalActions><Button onClick={() => setDraft(null)}>取消</Button><Button tone="primary" disabled={createMutation.isPending || !draft.user_id || !draft.plan_id} onClick={() => createMutation.mutate(buildBusinessUserPayload(draft.user_id, { plan_id: draft.plan_id, channel_id: draft.channel_id, amount_cents: draft.amount_cents, currency: draft.currency }))}>创建</Button></ModalActions>}
         >
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
@@ -319,14 +319,11 @@ export function AdminPaymentOrdersPage() {
                 <span>用户、计划、通道和金额会直接进入订单主记录</span>
               </div>
               <div className="admin-dialog-grid modal-grid">
-                <Field label="用户"><Select value={draft.account_id} onChange={(e) => setDraft({ ...draft, account_id: e.target.value })}><option value="">请选择用户</option>{users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</Select></Field>
+                <Field label="用户"><Select value={draft.user_id} onChange={(e) => setDraft({ ...draft, user_id: e.target.value })}><option value="">请选择用户</option>{users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</Select></Field>
                 <Field label="计划"><Select value={draft.plan_id} onChange={(e) => setDraft({ ...draft, plan_id: e.target.value })}><option value="">请选择计划</option>{plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</Select></Field>
                 <Field label="通道"><Select value={draft.channel_id} onChange={(e) => setDraft({ ...draft, channel_id: e.target.value })}><option value="">不指定</option>{channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}</Select></Field>
                 <Field label="金额(分)"><TextInput type="number" value={String(draft.amount_cents)} onChange={(e) => setDraft({ ...draft, amount_cents: Number(e.target.value || 0) })} /></Field>
               </div>
-            </div>
-            <div className="admin-dialog-note">
-              创建后的订单会进入主列表，可继续在列表中完成、失败或查看载荷详情。
             </div>
           </div>
         </Modal>
@@ -384,11 +381,6 @@ export function AdminPaymentOrdersPage() {
                 <small>{statusTarget.status === 'paid' ? '可能生成订阅履约' : '不会再继续支付流程'}</small>
               </div>
             </div>
-            <div className="admin-dialog-note">
-              {statusTarget.status === 'paid'
-                ? '确认后会把订单标记为已支付，并进入后续订阅履约链。'
-                : '确认后会把订单标记为失败，适用于人工终止或支付异常场景。'}
-            </div>
           </div>
         </Modal>
       ) : null}
@@ -419,7 +411,7 @@ function OrderInspect({ item, includePayload, includeOrderPayload }: { item: Adm
         <div className="admin-dialog-summary-card">
           <span>履约日志</span>
           <strong>{Array.isArray(item.fulfillment_logs) ? item.fulfillment_logs.length : 0} 条</strong>
-          <small>{item.account_name || item.account_id || '未识别用户'}</small>
+          <small>{getBusinessUserName(item) || '未识别用户'}</small>
         </div>
       </div>
       {includePayload ? (

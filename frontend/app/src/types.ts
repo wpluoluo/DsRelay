@@ -199,7 +199,7 @@ export type AdminOverviewPayload = {
   input_bytes?: number;
   output_bytes?: number;
   error_count?: number;
-  top_accounts?: AdminAccount[];
+  top_accounts?: AdminUser[];
   top_groups?: AdminGroup[];
 };
 
@@ -213,7 +213,7 @@ export type AdminProtocolProfile = {
   parameter_keys?: string[];
 };
 
-export type AdminAccount = {
+export type AdminProviderAccount = {
   id: string;
   pool_name?: string;
   route_url?: string;
@@ -261,6 +261,25 @@ export type AdminAccount = {
 export type AdminUser = {
   id: string;
   name: string;
+  user_id?: string;
+  user_name?: string;
+  user_key?: string;
+  user_preview?: string;
+  user_source_type?: string;
+  user_role?: string;
+  user_status?: string;
+  user_enabled?: boolean;
+  user_email?: string;
+  user_username?: string;
+  user_rpm_limit?: number;
+  user_password_set?: boolean;
+  user_balance_cents?: number;
+  user_concurrency_limit?: number;
+  user_allowed_group_ids?: string[];
+  email?: string;
+  username?: string;
+  rpm_limit?: number;
+  password_set?: boolean;
   external_key?: string;
   preview?: string;
   source_type?: string;
@@ -275,6 +294,12 @@ export type AdminUser = {
   enabled?: boolean;
   status?: string;
   request_count?: number;
+  error_count?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  input_bytes?: number;
+  output_bytes?: number;
   last_seen_at?: string;
   key_count?: number;
   active_key_count?: number;
@@ -311,6 +336,10 @@ export type AdminUsageItem = {
   consumer_name?: string;
   consumer_type?: string;
   consumer_preview?: string;
+  api_key_id?: string;
+  api_key_name?: string;
+  api_key_preview?: string;
+  api_key_type?: string;
   subscription_id?: string;
   plan_id?: string;
   plan_name?: string;
@@ -359,6 +388,8 @@ export type AdminBillingSummary = {
 export type AdminBillingAccountItem = {
   account_id: string;
   account_name?: string;
+  user_id?: string;
+  user_name?: string;
   consumer_type?: string;
   group_ids?: string[];
   group_names?: string[];
@@ -384,6 +415,7 @@ export type AdminBillingGroupItem = {
   group_id?: string;
   group_name?: string;
   account_ids?: string[];
+  user_ids?: string[];
   plan_ids?: string[];
   subscription_ids?: string[];
   request_count?: number;
@@ -404,6 +436,7 @@ export type AdminBillingPlanItem = {
   group_name?: string;
   plan_price_cents?: number;
   account_ids?: string[];
+  user_ids?: string[];
   subscription_ids?: string[];
   request_count?: number;
   error_count?: number;
@@ -421,6 +454,8 @@ export type AdminBillingSubscriptionItem = {
   status?: string;
   account_id?: string;
   account_name?: string;
+  user_id?: string;
+  user_name?: string;
   plan_id?: string;
   plan_name?: string;
   group_id?: string;
@@ -444,6 +479,8 @@ export type AdminBillingOrderItem = {
   subscription_id?: string;
   account_id?: string;
   account_name?: string;
+  user_id?: string;
+  user_name?: string;
   plan_id?: string;
   plan_name?: string;
   group_id?: string;
@@ -489,6 +526,12 @@ export type AdminApiKey = {
   account_source_type?: string;
   account_enabled?: boolean;
   account_note?: string;
+  user_id?: string;
+  user_name?: string;
+  user_key?: string;
+  user_source_type?: string;
+  user_enabled?: boolean;
+  user_note?: string;
   name: string;
   key_preview: string;
   enabled?: boolean;
@@ -503,6 +546,16 @@ export type AdminApiKey = {
   active_group_name?: string;
   active_subscription_status?: string;
   active_subscription_expires_at?: number | string | null;
+  request_count?: number;
+  error_count?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  input_bytes?: number;
+  output_bytes?: number;
+  actual_cost?: number;
+  total_cost?: number;
+  last_used_request_at?: string;
 };
 
 export type AdminSubscriptionPlan = {
@@ -521,10 +574,13 @@ export type AdminSubscriptionPlan = {
   note?: string;
 };
 
-export type AdminAccountSubscription = {
+export type AdminUserSubscription = {
   id: string;
   account_id: string;
   account_name?: string;
+  user_id?: string;
+  user_name?: string;
+  user_key?: string;
   plan_id: string;
   plan_name?: string;
   group_id?: string;
@@ -575,6 +631,9 @@ export type AdminPaymentOrder = {
   id: string;
   account_id: string;
   account_name?: string;
+  user_id?: string;
+  user_name?: string;
+  user_key?: string;
   plan_id: string;
   plan_name?: string;
   group_id?: string;

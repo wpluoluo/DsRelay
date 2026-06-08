@@ -104,7 +104,7 @@ class AdminServiceBase:
             return
         denied = [group_id for group_id in self._normalize_group_ids(target_group_ids) if group_id not in allowed]
         if denied:
-            raise ValueError(f"account is not allowed to access groups: {', '.join(denied)}")
+            raise ValueError(f"user is not allowed to access groups: {', '.join(denied)}")
 
     def _resolve_plan_group_id(self, plan: dict, payload: dict | None = None) -> str:
         payload = payload if isinstance(payload, dict) else {}
@@ -121,7 +121,7 @@ class AdminServiceBase:
             raise RuntimeError("storage not configured")
         account = self.storage.get_admin_account(account_id)
         if not account:
-            raise ValueError("account not found")
+            raise ValueError("user not found")
         return account
 
     def _get_active_subscription_context(self, account_id: str) -> dict:
@@ -151,10 +151,10 @@ class AdminServiceBase:
 
     def _validate_account_active(self, account: dict) -> None:
         if account.get("enabled") is False:
-            raise ValueError("account is disabled")
+            raise ValueError("user is disabled")
         status = coerce_text(account.get("status")) or "active"
         if status != "active":
-            raise ValueError(f"account status is not active: {status}")
+            raise ValueError(f"user status is not active: {status}")
 
     def _payment_channel_policy(self, channel: dict) -> dict:
         config = channel.get("config") if isinstance(channel.get("config"), dict) else {}
@@ -200,12 +200,22 @@ class AdminServiceBase:
         managed_accounts = self._managed_accounts()
         external_key = consumer_id if consumer_id != "anonymous" else ""
         stored = managed_accounts.get(external_key, {})
+        extra = stored.get("extra") if isinstance(stored.get("extra"), dict) else {}
         return {
             "id": coerce_text(stored.get("id")) or consumer_id,
             "name": coerce_text(stored.get("name")) or consumer_name,
             "source_type": coerce_text(stored.get("source_type")) or consumer_type,
             "preview": preview,
             "external_key": external_key,
+            "role": coerce_text(stored.get("role")) or "user",
+            "status": coerce_text(stored.get("status")) or "active",
+            "balance_cents": safe_int(stored.get("balance_cents")),
+            "concurrency_limit": safe_int(stored.get("concurrency_limit")),
+            "allowed_group_ids": stored.get("allowed_group_ids") if isinstance(stored.get("allowed_group_ids"), list) else [],
+            "extra": extra,
+            "email": coerce_text(extra.get("email")),
+            "username": coerce_text(extra.get("username")),
+            "rpm_limit": safe_int(extra.get("rpm_limit")),
             "enabled": stored.get("enabled") is not False if stored else True,
             "note": coerce_text(stored.get("note")),
         }

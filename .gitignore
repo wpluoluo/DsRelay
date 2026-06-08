@@ -16,3 +16,4 @@ var/
 
 __served_dashboard.html
 current_dashboard_response.html
+local-proxy-*.tar

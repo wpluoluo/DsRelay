@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download, RefreshCw } from 'lucide-react';
 import { fetchAdminUsage } from '../api';
@@ -7,26 +7,42 @@ import { EmptyState, FilterToolbar, Pager, SearchField, TablePageLayout, Toolbar
 import { RequestRow } from '../features/requests/RequestsView';
 import { useAccountCenter } from '../state/accountCenterContext';
 import type { RequestEntry } from '../types';
-import { formatMs, formatNumber, formatTokenCount, formatUsdCost } from '../utils';
+import { formatMs, formatNumber, formatTokenCount, formatUsdCost, getBusinessUserId, readStorageJSON, writeStorageJSON } from '../utils';
+
+const STORAGE_KEY = 'account-usage-view-state';
 
 export function AccountUsagePage() {
   const { selectedUser, selectedUserId, apiKeys } = useAccountCenter();
   const usageQuery = useQuery({ queryKey: ['admin-usage'], queryFn: () => fetchAdminUsage(), refetchInterval: 10000 });
-  const [filters, setFilters] = useState({ start: '', end: '', model: '', status: 'all', apiKeyId: '' });
+  const savedState = readStorageJSON(STORAGE_KEY, {
+    start: '',
+    end: '',
+    model: '',
+    status: 'all',
+    apiKeyId: '',
+    pageSize: 20,
+  });
+  const [filters, setFilters] = useState({
+    start: savedState.start || '',
+    end: savedState.end || '',
+    model: savedState.model || '',
+    status: savedState.status || 'all',
+    apiKeyId: savedState.apiKeyId || '',
+  });
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
 
   const rows = useMemo<RequestEntry[]>(() => {
     const items = usageQuery.data?.items || [];
     const modelNeedle = filters.model.trim().toLowerCase();
     const start = filters.start ? new Date(filters.start).getTime() : 0;
     const end = filters.end ? new Date(filters.end).getTime() : 0;
-    const currentKeyIds = new Set(apiKeys.filter((item) => !selectedUserId || item.account_id === selectedUserId).map((item) => item.id));
+    const currentKeyIds = new Set(apiKeys.filter((item) => !selectedUserId || getBusinessUserId(item) === selectedUserId).map((item) => item.id));
     return items
       .filter((row) => {
         if (selectedUserId && row.consumer_id !== selectedUserId) return false;
-        if (filters.apiKeyId && String((row as any).api_key_id || '') !== filters.apiKeyId) return false;
-        if (currentKeyIds.size && (row as any).api_key_id && !currentKeyIds.has(String((row as any).api_key_id))) return false;
+        if (filters.apiKeyId && String(row.api_key_id || '') !== filters.apiKeyId) return false;
+        if (currentKeyIds.size && row.api_key_id && !currentKeyIds.has(String(row.api_key_id))) return false;
         const started = row.started_at ? new Date(String(row.started_at).replace(',', '.')).getTime() : 0;
         if (start && started && started < start) return false;
         if (end && started && started > end) return false;
@@ -79,6 +95,15 @@ export function AccountUsagePage() {
 
   const averageDuration = stats.requests ? Math.round(stats.duration / stats.requests) : 0;
 
+  useEffect(() => {
+    writeStorageJSON(STORAGE_KEY, { ...filters, pageSize });
+  }, [filters, pageSize]);
+
+  function resetFilters() {
+    setFilters({ start: '', end: '', model: '', status: 'all', apiKeyId: '' });
+    setPage(1);
+  }
+
   function exportCurrentView() {
     const lines = [
       ['时间', '模型', '请求Token', '回复Token', '缓存读取Token', '缓存写入Token', '消费', '耗时', '状态', '线路'].join('\t'),
@@ -124,6 +149,7 @@ export function AccountUsagePage() {
             right={(
               <ToolbarButtonRow>
                 <Button onClick={() => void usageQuery.refetch()}><RefreshCw size={15} />刷新</Button>
+                <Button onClick={resetFilters}>清空筛选</Button>
                 <Button onClick={exportCurrentView}><Download size={15} />导出</Button>
               </ToolbarButtonRow>
             )}
@@ -131,7 +157,7 @@ export function AccountUsagePage() {
             <SearchField value={filters.model} placeholder="搜索模型 / 入口 / 线路" onChange={(value) => { setFilters((current) => ({ ...current, model: value })); setPage(1); }} />
             <Select value={filters.apiKeyId} onChange={(event) => { setFilters((current) => ({ ...current, apiKeyId: event.target.value })); setPage(1); }}>
               <option value="">全部 API Key</option>
-              {apiKeys.filter((item) => !selectedUserId || item.account_id === selectedUserId).map((item) => (
+              {apiKeys.filter((item) => !selectedUserId || getBusinessUserId(item) === selectedUserId).map((item) => (
                 <option key={item.id} value={item.id}>{item.name}</option>
               ))}
             </Select>

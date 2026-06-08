@@ -59,7 +59,7 @@ export function AdminGroupsPage() {
       setDraft(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['admin-groups'] }),
-        queryClient.invalidateQueries({ queryKey: ['admin-accounts'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
         queryClient.invalidateQueries({ queryKey: ['admin-overview'] }),
       ]);
     },

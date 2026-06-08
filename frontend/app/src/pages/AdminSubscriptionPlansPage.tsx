@@ -99,7 +99,6 @@ export function AdminSubscriptionPlansPage() {
       <div className="sub2-page-head">
         <div className="sub2-page-title">
           <strong>订阅计划</strong>
-          <span>计划、分组、价格与额度统一在一个列表里维护，保持和 SUB2 一致的计划管理视图。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>计划数</span><strong>{formatNumber(filteredItems.length)}</strong><small>当前筛选范围</small></div>
