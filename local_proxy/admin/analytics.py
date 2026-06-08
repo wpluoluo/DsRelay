@@ -420,6 +420,9 @@ class AdminAnalyticsMixin(AdminServiceBase):
     def upsert_group(self, payload: dict) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
+        copy_source_group_ids = self._normalize_group_ids(
+            payload.get("copy_accounts_from_group_ids") if isinstance(payload.get("copy_accounts_from_group_ids"), list) else []
+        )
         item = normalize_admin_group_payload(
             {
                 **payload,
@@ -428,7 +431,25 @@ class AdminAnalyticsMixin(AdminServiceBase):
         )
         if not item["name"]:
             raise ValueError("group name is required")
+        if copy_source_group_ids:
+            self._validate_group_ids_exist(copy_source_group_ids)
         saved = self.storage.upsert_admin_group(item)
+        if copy_source_group_ids:
+            target_group_id = coerce_text(saved.get("id"))
+            existing_rows = self.storage.list_admin_account_groups()
+            membership_by_account: dict[str, set[str]] = {}
+            source_account_ids: set[str] = set()
+            for row in existing_rows:
+                account_id = coerce_text(row.get("account_id"))
+                group_id = coerce_text(row.get("group_id"))
+                if not account_id or not group_id:
+                    continue
+                membership_by_account.setdefault(account_id, set()).add(group_id)
+                if group_id in copy_source_group_ids:
+                    source_account_ids.add(account_id)
+            for account_id in sorted(source_account_ids):
+                next_group_ids = sorted(membership_by_account.get(account_id, set()) | {target_group_id})
+                self.storage.replace_admin_account_groups(account_id, next_group_ids)
         return {"ok": True, "item": saved}
 
     def delete_group(self, group_id: str) -> dict:

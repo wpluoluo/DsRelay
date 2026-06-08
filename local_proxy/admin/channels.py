@@ -30,6 +30,8 @@ def _normalize_channel_payload(payload: dict, *, current: dict | None = None) ->
                 "model": model,
                 "input_price": safe_float(row.get("input_price")),
                 "output_price": safe_float(row.get("output_price")),
+                "cache_write_price": safe_float(row.get("cache_write_price")),
+                "cache_read_price": safe_float(row.get("cache_read_price")),
                 "unit": coerce_text(row.get("unit")) or "1M tokens",
             }
         )

@@ -524,6 +524,8 @@ export type AdminChannelPricing = {
   model: string;
   input_price?: number;
   output_price?: number;
+  cache_write_price?: number;
+  cache_read_price?: number;
   unit?: string;
 };
 

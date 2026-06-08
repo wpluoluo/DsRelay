@@ -14,12 +14,17 @@ type ChannelDraft = {
   id?: string;
   name: string;
   description: string;
-  platform: string;
   billing_model_source: string;
-  group_ids: string[];
+  platform_configs: ChannelPlatformConfig[];
   model_pricing_text: string;
   enabled: boolean;
   sort_order: number;
+};
+
+type ChannelPlatformConfig = {
+  platform: string;
+  enabled: boolean;
+  group_ids: string[];
 };
 
 type StatusFilter = '' | 'enabled' | 'disabled';
@@ -27,9 +32,14 @@ type StatusFilter = '' | 'enabled' | 'disabled';
 const EMPTY_DRAFT: ChannelDraft = {
   name: '',
   description: '',
-  platform: '',
   billing_model_source: 'channel_mapped',
-  group_ids: [],
+  platform_configs: [
+    { platform: 'openai', enabled: true, group_ids: [] },
+    { platform: 'anthropic', enabled: false, group_ids: [] },
+    { platform: 'gemini', enabled: false, group_ids: [] },
+    { platform: 'deepseek', enabled: false, group_ids: [] },
+    { platform: 'openai-compatible', enabled: false, group_ids: [] },
+  ],
   model_pricing_text: '',
   enabled: true,
   sort_order: 0,
@@ -122,33 +132,50 @@ export function AdminChannelsPricingPage() {
       id: item.id,
       name: item.name || '',
       description: item.description || '',
-      platform: item.platform || '',
       billing_model_source: item.billing_model_source || 'channel_mapped',
-      group_ids: item.group_ids || [],
+      platform_configs: platformConfigsFromChannel(item),
       model_pricing_text: pricingText(item.model_pricing || []),
       enabled: item.enabled !== false,
       sort_order: Number(item.sort_order || 0),
     });
   }
 
-  function toggleGroup(groupId: string) {
+  function togglePlatform(platform: string) {
     if (!draft) return;
-    const values = new Set(draft.group_ids);
+    setDraft({
+      ...draft,
+      platform_configs: draft.platform_configs.map((item) => (item.platform === platform ? { ...item, enabled: !item.enabled } : item)),
+    });
+  }
+
+  function toggleGroup(platform: string, groupId: string) {
+    if (!draft) return;
+    const platformConfig = draft.platform_configs.find((item) => item.platform === platform);
+    const values = new Set(platformConfig?.group_ids || []);
     if (values.has(groupId)) values.delete(groupId);
     else values.add(groupId);
-    setDraft({ ...draft, group_ids: Array.from(values) });
+    setDraft({
+      ...draft,
+      platform_configs: draft.platform_configs.map((item) => (item.platform === platform ? { ...item, group_ids: Array.from(values) } : item)),
+    });
   }
 
   function submitDraft() {
     if (!draft) return;
+    const enabledPlatforms = draft.platform_configs.filter((item) => item.enabled);
+    const primaryPlatform = enabledPlatforms[0]?.platform || draft.platform_configs[0]?.platform || '';
+    const groupIds = Array.from(new Set(enabledPlatforms.flatMap((item) => item.group_ids)));
     saveMutation.mutate({
       id: draft.id,
       name: draft.name,
       description: draft.description,
-      platform: draft.platform,
+      platform: primaryPlatform,
       billing_model_source: draft.billing_model_source,
-      group_ids: draft.group_ids,
+      group_ids: groupIds,
       model_pricing: parsePricingText(draft.model_pricing_text),
+      features_config: {
+        platform_configs: draft.platform_configs,
+      },
       enabled: draft.enabled,
       sort_order: draft.sort_order,
     });
@@ -182,7 +209,7 @@ export function AdminChannelsPricingPage() {
                     <span>切换 50 / 页</span>
                   </button>
                 </ToolsMenu>
-                <Button tone="primary" onClick={openCreate}><Plus size={15} />添加渠道</Button>
+                <Button tone="primary" data-tour="channels-create-btn" onClick={openCreate}><Plus size={15} />创建渠道</Button>
               </ToolbarButtonRow>
             }
           >
@@ -243,7 +270,7 @@ export function AdminChannelsPricingPage() {
                     </td>
                   </tr>
                 )) : (
-                  <ListEmptyRow colSpan={8} title="暂无渠道数据" action={<Button tone="primary" onClick={openCreate}>添加渠道</Button>} />
+                  <ListEmptyRow colSpan={8} title="暂无渠道数据" action={<Button tone="primary" data-tour="channels-create-btn" onClick={openCreate}>创建渠道</Button>} />
                 )}
               </tbody>
             </table>
@@ -264,7 +291,7 @@ export function AdminChannelsPricingPage() {
 
       {draft ? (
         <Modal
-          title={draft.id ? '编辑渠道' : '添加渠道'}
+          title={draft.id ? '编辑渠道' : '创建渠道'}
           size="lg"
           onClose={() => setDraft(null)}
           footer={
@@ -279,7 +306,6 @@ export function AdminChannelsPricingPage() {
               <div className="admin-dialog-section-head"><strong>基础信息</strong></div>
               <div className="admin-dialog-grid">
                 <Field label="渠道名称"><TextInput value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></Field>
-                <Field label="平台"><TextInput value={draft.platform} onChange={(event) => setDraft({ ...draft, platform: event.target.value })} /></Field>
                 <Field label="排序"><TextInput type="number" value={String(draft.sort_order)} onChange={(event) => setDraft({ ...draft, sort_order: Number(event.target.value || 0) })} /></Field>
                 <Field label="状态">
                   <Select value={draft.enabled ? '1' : '0'} onChange={(event) => setDraft({ ...draft, enabled: event.target.value === '1' })}>
@@ -297,13 +323,28 @@ export function AdminChannelsPricingPage() {
               <Field label="描述" full><TextArea rows={3} value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></Field>
             </div>
             <div className="admin-dialog-section">
-              <div className="admin-dialog-section-head"><strong>分组</strong></div>
-              <div className="cap-grid">
-                {groups.map((group) => (
-                  <label key={group.id} className="toggle">
-                    <input type="checkbox" checked={draft.group_ids.includes(group.id)} onChange={() => toggleGroup(group.id)} />
-                    <span>{group.name}</span>
-                  </label>
+              <div className="admin-dialog-section-head"><strong>平台配置</strong></div>
+              <div className="channel-platform-grid">
+                {draft.platform_configs.map((platformConfig) => (
+                  <div className="channel-platform-card" key={platformConfig.platform}>
+                    <div className="channel-platform-card-head">
+                      <label className="toggle">
+                        <input type="checkbox" checked={platformConfig.enabled} onChange={() => togglePlatform(platformConfig.platform)} />
+                        <span>{platformConfig.platform}</span>
+                      </label>
+                      <small>{formatNumber(platformConfig.group_ids.length)} 个分组</small>
+                    </div>
+                    {platformConfig.enabled ? (
+                      <div className="sub2-check-grid">
+                        {groups.filter((group) => !group.platform || group.platform === platformConfig.platform).map((group) => (
+                          <label key={group.id} className="sub2-check-item">
+                            <input type="checkbox" checked={platformConfig.group_ids.includes(group.id)} onChange={() => toggleGroup(platformConfig.platform, group.id)} />
+                            <span>{group.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                 ))}
               </div>
             </div>
@@ -312,7 +353,7 @@ export function AdminChannelsPricingPage() {
                 rows={5}
                 value={draft.model_pricing_text}
                 onChange={(event) => setDraft({ ...draft, model_pricing_text: event.target.value })}
-                placeholder="model,input_price,output_price"
+                placeholder="model,input_price,output_price,cache_write_price,cache_read_price"
               />
             </Field>
           </div>
@@ -390,7 +431,7 @@ export function AdminChannelsMonitorPage() {
           <table>
             <thead>
               <tr>
-                <th>渠道</th>
+                <th>上游账号</th>
                 <th>优先级</th>
                 <th>线路数</th>
                 <th>Key</th>
@@ -402,7 +443,7 @@ export function AdminChannelsMonitorPage() {
                 <tr key={`${pool.name || 'pool'}-${index}`}>
                   <td>
                     <div className="sub2-cell-stack sub2-cell-stack-tight">
-                      <strong>{pool.name || `渠道 ${index + 1}`}</strong>
+                      <strong>{pool.name || `上游账号 ${index + 1}`}</strong>
                       <small>{pool.urls?.[0] || '-'}</small>
                     </div>
                   </td>
@@ -424,8 +465,35 @@ export function AdminChannelsMonitorPage() {
 
 function pricingText(rows: AdminChannelPricing[]) {
   return rows
-    .map((item) => [item.model, item.input_price ?? 0, item.output_price ?? 0].join(','))
+    .map((item) => [item.model, item.input_price ?? 0, item.output_price ?? 0, item.cache_write_price ?? 0, item.cache_read_price ?? 0].join(','))
     .join('\n');
+}
+
+function platformConfigsFromChannel(item: AdminChannel): ChannelPlatformConfig[] {
+  const features = item.features_config || {};
+  const rawConfigs = Array.isArray(features.platform_configs) ? features.platform_configs : [];
+  const configs = rawConfigs
+    .map((row) => {
+      if (!row || typeof row !== 'object') return null;
+      const record = row as Record<string, unknown>;
+      const platform = String(record.platform || '').trim();
+      if (!platform) return null;
+      const rawGroupIds = Array.isArray(record.group_ids) ? record.group_ids : [];
+      return {
+        platform,
+        enabled: record.enabled !== false,
+        group_ids: rawGroupIds.map((groupId) => String(groupId || '').trim()).filter(Boolean),
+      };
+    })
+    .filter((row): row is ChannelPlatformConfig => Boolean(row));
+  const defaults = EMPTY_DRAFT.platform_configs.map((defaultItem) => {
+    const existing = configs.find((row) => row.platform === defaultItem.platform);
+    return existing || { ...defaultItem, enabled: defaultItem.platform === item.platform, group_ids: item.platform === defaultItem.platform ? item.group_ids || [] : [] };
+  });
+  for (const config of configs) {
+    if (!defaults.some((item) => item.platform === config.platform)) defaults.push(config);
+  }
+  return defaults;
 }
 
 function parsePricingText(value: string): AdminChannelPricing[] {
@@ -434,11 +502,13 @@ function parsePricingText(value: string): AdminChannelPricing[] {
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
-      const [model, inputPrice, outputPrice] = line.split(',').map((part) => part.trim());
+      const [model, inputPrice, outputPrice, cacheWritePrice, cacheReadPrice] = line.split(',').map((part) => part.trim());
       return {
         model,
         input_price: Number(inputPrice || 0),
         output_price: Number(outputPrice || 0),
+        cache_write_price: Number(cacheWritePrice || 0),
+        cache_read_price: Number(cacheReadPrice || 0),
         unit: '1M tokens',
       };
     })

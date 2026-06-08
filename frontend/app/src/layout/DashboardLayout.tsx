@@ -2,15 +2,14 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
 import { ChevronDown, RefreshCw } from 'lucide-react';
-import { fetchDashboardState, saveConfig, testPool } from '../api';
+import { fetchDashboardState, saveConfig } from '../api';
 import { Badge, Button } from '../components';
-import { PoolModal } from '../features/config/PoolModal';
 import { configFromState, normalizePool } from '../features/config/model';
 import type { ConfigTab } from '../features/config/model';
 import { DashboardProvider } from '../state/dashboardContext';
 import { queryClient } from '../state/queryClient';
 import { AccountCenterProvider } from '../state/accountCenterContext';
-import type { Pool, PoolTestResult, RuntimeConfig } from '../types';
+import type { RuntimeConfig } from '../types';
 import { adminNavSections, type NavItem } from '../navigation';
 
 export function DashboardLayout() {
@@ -20,9 +19,6 @@ export function DashboardLayout() {
   const [draft, setDraft] = useState<RuntimeConfig>({ pools: [] });
   const [dirty, setDirty] = useState(false);
   const [status, setStatus] = useState('');
-  const [poolIndex, setPoolIndex] = useState<number | null>(null);
-  const [poolDraft, setPoolDraft] = useState<Pool | null>(null);
-  const [poolTest, setPoolTest] = useState<PoolTestResult | null>(null);
 
   const stateQuery = useQuery({
     queryKey: ['dashboard-state'],
@@ -73,26 +69,6 @@ export function DashboardLayout() {
     setStatus('配置已修改，点击保存并生效。');
   }
 
-  function updatePools(nextPools: Pool[]) {
-    patchDraft({ pools: nextPools.map(normalizePool) });
-  }
-
-  function openPool(index: number | null) {
-    setPoolTest(null);
-    setPoolIndex(index);
-    setPoolDraft(normalizePool(index == null ? undefined : pools[index]));
-  }
-
-  function savePoolDraft() {
-    if (!poolDraft) return;
-    const next = pools.slice();
-    if (poolIndex == null) next.push(normalizePool(poolDraft));
-    else next[poolIndex] = normalizePool(poolDraft);
-    updatePools(next);
-    setPoolDraft(null);
-    setPoolIndex(null);
-  }
-
   const contextValue = {
     state,
     stateQuery,
@@ -104,15 +80,6 @@ export function DashboardLayout() {
     setConfigTab,
     patchDraft,
     saveConfig: () => saveMutation.mutate(draft),
-    openPool,
-    deletePool: (index: number) => updatePools(pools.filter((_, i) => i !== index)),
-    movePool: (index: number, direction: number) => {
-      const next = pools.slice();
-      const target = index + direction;
-      if (target < 0 || target >= next.length) return;
-      [next[index], next[target]] = [next[target], next[index]];
-      updatePools(next);
-    },
   };
 
   return (
@@ -124,13 +91,11 @@ export function DashboardLayout() {
             <div className="brand-copy"><strong>DsRelay</strong><span>管理控制台</span></div>
           </div>
           <nav className="sidebar-nav">
-            {adminNavSections.map((section, sectionIndex) => (
+            {adminNavSections.map((section) => (
               <div className="sidebar-section" key={section.key}>
-                {sectionIndex > 0 ? (
-                  <div className="sidebar-section-title">
-                    <span>{section.title}</span>
-                  </div>
-                ) : null}
+                <div className="sidebar-section-title">
+                  <span>{section.title}</span>
+                </div>
                 <div className="sidebar-section-links">
                   {section.items.map((item) => (
                     <SidebarItem
@@ -166,20 +131,6 @@ export function DashboardLayout() {
           </AccountCenterProvider>
         </main>
 
-        {poolDraft ? (
-          <PoolModal
-            pool={poolDraft}
-            title={poolIndex == null ? '添加账号' : '编辑账号'}
-            testResult={poolTest}
-            onChange={setPoolDraft}
-            onClose={() => { setPoolDraft(null); setPoolIndex(null); }}
-            onSave={savePoolDraft}
-            onTest={async () => {
-              if (poolIndex == null) return setPoolTest({ ok: false, message: '新账号保存后再测试。' });
-              setPoolTest(await testPool(poolIndex, poolDraft.name));
-            }}
-          />
-        ) : null}
       </div>
     </DashboardProvider>
   );

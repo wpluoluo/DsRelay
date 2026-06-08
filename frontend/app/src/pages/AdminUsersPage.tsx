@@ -401,9 +401,9 @@ export function AdminUsersPage() {
                     <span>切换 50 / 页</span>
                   </button>
                 </ToolsMenu>
-                <Button tone="primary" onClick={openCreate}>
+                <Button tone="primary" data-tour="users-create-btn" onClick={openCreate}>
                   <Plus size={15} />
-                  添加用户
+                  创建用户
                 </Button>
               </ToolbarButtonRow>
             }
@@ -545,7 +545,7 @@ export function AdminUsersPage() {
                   <ListEmptyRow
                     colSpan={visibleColumns.size + 2}
                     title="暂无用户"
-                    action={<Button tone="primary" onClick={openCreate}>添加用户</Button>}
+                    action={<Button tone="primary" data-tour="users-create-btn" onClick={openCreate}>创建用户</Button>}
                   />
                 )}
               </tbody>
@@ -567,7 +567,7 @@ export function AdminUsersPage() {
 
       {draft ? (
         <Modal
-          title={draft.id ? '编辑用户' : '添加用户'}
+          title={draft.id ? '编辑用户' : '创建用户'}
           size="lg"
           onClose={() => setDraft(null)}
           footer={

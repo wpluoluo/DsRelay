@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Edit, Eye, Plus, RefreshCw, Server, Trash2 } from 'lucide-react';
-import { fetchAdminProviderAccounts } from '../api';
-import { Badge, Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { Download, Edit, Eye, Plus, RefreshCw, Server, Trash2 } from 'lucide-react';
+import { fetchAdminProviderAccounts, saveConfig, testPool } from '../api';
+import { Badge, Button, Field, Modal, ModalActions, NumberInput, Select, TextArea, TextInput, Toggle } from '../components';
 import {
   ActionButton,
   ColumnMenu,
@@ -17,8 +17,12 @@ import {
   ToolsMenu,
 } from '../components/admin';
 import type { AdminProviderAccount } from '../types';
-import { formatByteCount, formatNumber, formatTokenCount, readStorageJSON, writeStorageJSON } from '../utils';
+import type { Pool, PoolTestResult, RuntimeConfig } from '../types';
+import { splitLines, textFromLines, formatByteCount, formatNumber, formatTokenCount, readStorageJSON, writeStorageJSON } from '../utils';
 import { useDashboard } from '../state/dashboardContext';
+import { queryClient } from '../state/queryClient';
+import { defaultPolicy, normalizePool } from '../features/config/model';
+import { PoolTestView } from '../features/routes/RouteTable';
 
 type StatusFilter = '' | 'enabled' | 'disabled';
 type HealthFilter = '' | 'error' | 'used' | 'unused';
@@ -51,6 +55,32 @@ export function AdminAccountsPage() {
   const [visibleColumns, setVisibleColumns] = useState<Set<AccountColumnKey>>(new Set(initialVisibleColumns.length ? initialVisibleColumns : DEFAULT_VISIBLE_COLUMNS));
   const [inspectAccount, setInspectAccount] = useState<AdminProviderAccount | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminProviderAccount | null>(null);
+  const [accountIndex, setAccountIndex] = useState<number | null>(null);
+  const [accountDraft, setAccountDraft] = useState<Pool | null>(null);
+  const [accountTest, setAccountTest] = useState<PoolTestResult | null>(null);
+  const [accountStatus, setAccountStatus] = useState('');
+
+  const savePoolsMutation = useMutation({
+    mutationFn: (config: RuntimeConfig) => saveConfig(config),
+    onSuccess: async (state) => {
+      queryClient.setQueryData(['dashboard-state'], state);
+      setAccountDraft(null);
+      setAccountIndex(null);
+      setAccountTest(null);
+      setAccountStatus('账号已保存。');
+      await queryClient.invalidateQueries({ queryKey: ['admin-provider-accounts'] });
+    },
+    onError: (error) => {
+      setAccountStatus(error instanceof Error ? error.message : '账号保存失败');
+    },
+  });
+  const testMutation = useMutation({
+    mutationFn: async ({ index, pool }: { index: number; pool: Pool }) => testPool(index, pool.name),
+    onSuccess: setAccountTest,
+    onError: (error) => {
+      setAccountTest({ ok: false, message: error instanceof Error ? error.message : '测试失败' });
+    },
+  });
 
   const items = accountsQuery.data?.items || [];
   const poolOptions = useMemo(() => Array.from(new Set(items.map((item) => item.pool_name).filter(Boolean))).sort(), [items]);
@@ -115,10 +145,48 @@ export function AdminAccountsPage() {
     setPage(1);
   }
 
+  function exportFilteredAccounts() {
+    const payload = JSON.stringify(filteredItems, null, 2);
+    const blob = new Blob([payload], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `provider-accounts-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function openAccountForm(index: number | null) {
+    setAccountStatus('');
+    setAccountTest(null);
+    setAccountIndex(index);
+    setAccountDraft(normalizePool(index == null ? undefined : dashboard.pools[index]));
+  }
+
+  function saveAccountPools(nextPools: Pool[]) {
+    const nextConfig = { ...dashboard.draft, pools: nextPools.map(normalizePool) };
+    savePoolsMutation.mutate(nextConfig);
+  }
+
+  function saveAccountDraft() {
+    if (!accountDraft) return;
+    const next = dashboard.pools.slice();
+    if (accountIndex == null) next.push(normalizePool(accountDraft));
+    else next[accountIndex] = normalizePool(accountDraft);
+    saveAccountPools(next);
+  }
+
   function confirmDeleteAccount() {
     if (!deleteTarget) return;
-    const poolIndex = resolvePoolIndex(deleteTarget);
-    dashboard.deletePool(poolIndex);
+    const index = resolvePoolIndex(deleteTarget);
+    if (index < 0 || index >= dashboard.pools.length) {
+      setAccountStatus('账号不存在或已被删除。');
+      setDeleteTarget(null);
+      return;
+    }
+    saveAccountPools(dashboard.pools.filter((_, itemIndex) => itemIndex !== index));
     setDeleteTarget(null);
   }
 
@@ -147,9 +215,22 @@ export function AdminAccountsPage() {
                     { key: 'status', label: '状态', checked: visibleColumns.has('status'), onToggle: () => toggleColumn('status') },
                   ]}
                 />
+                <ToolsMenu label="自动刷新">
+                  <button type="button" onClick={() => accountsQuery.refetch()}>
+                    <span>立即刷新</span>
+                    <RefreshCw size={14} />
+                  </button>
+                  <button type="button" onClick={() => accountsQuery.refetch()}>
+                    <span>使用当前 10 秒刷新</span>
+                    <RefreshCw size={14} />
+                  </button>
+                </ToolsMenu>
                 <ToolsMenu>
                   <button type="button" onClick={resetFilters}>
                     <span>清空筛选</span>
+                  </button>
+                  <button type="button" onClick={() => { setHealthFilter('used'); setPage(1); }}>
+                    <span>仅看有请求</span>
                   </button>
                   <button type="button" onClick={() => { setHealthFilter('error'); setPage(1); }}>
                     <span>仅看异常</span>
@@ -160,8 +241,16 @@ export function AdminAccountsPage() {
                   <button type="button" onClick={() => { setPageSize(50); setPage(1); }}>
                     <span>切换 50 / 页</span>
                   </button>
+                  <button type="button" onClick={() => setInspectAccount(pagedItems[0] || null)} disabled={!pagedItems.length}>
+                    <span>查看首条详情</span>
+                    <Eye size={14} />
+                  </button>
+                  <button type="button" onClick={exportFilteredAccounts}>
+                    <span>数据导出</span>
+                    <Download size={14} />
+                  </button>
                 </ToolsMenu>
-                <Button tone="primary" onClick={() => dashboard.openPool(null)}><Plus size={15} />添加账号</Button>
+                <Button tone="primary" data-tour="accounts-create-btn" onClick={() => openAccountForm(null)}><Plus size={15} />添加账号</Button>
               </ToolbarButtonRow>
             }
           >
@@ -188,7 +277,7 @@ export function AdminAccountsPage() {
           </FilterToolbar>
         }
         table={
-          <div className="table-wrap table-scroll">
+          <div className="table-wrap table-scroll table-wide">
             <table>
               <thead>
                 <tr>
@@ -262,7 +351,7 @@ export function AdminAccountsPage() {
                     <td>
                       <RowActions>
                         <RowAction icon={Eye} label="详情" onClick={() => setInspectAccount(item)} />
-                        <RowAction icon={Edit} label="编辑" onClick={() => dashboard.openPool(resolvePoolIndex(item))} />
+                        <RowAction icon={Edit} label="编辑" onClick={() => openAccountForm(resolvePoolIndex(item))} />
                         <RowAction icon={Trash2} label="删除" tone="danger" onClick={() => setDeleteTarget(item)} />
                       </RowActions>
                     </td>
@@ -271,7 +360,7 @@ export function AdminAccountsPage() {
                   <ListEmptyRow
                     colSpan={visibleColumns.size + 2}
                     title="暂无账号数据"
-                    action={<Button tone="primary" onClick={() => dashboard.openPool(null)}><Plus size={14} />添加账号</Button>}
+                    action={<Button tone="primary" data-tour="accounts-create-btn" onClick={() => openAccountForm(null)}><Plus size={14} />添加账号</Button>}
                   />
                 )}
               </tbody>
@@ -371,7 +460,165 @@ export function AdminAccountsPage() {
           </div>
         </Modal>
       ) : null}
+
+      {accountDraft ? (
+        <ProviderAccountModal
+          pool={accountDraft}
+          title={accountIndex == null ? '添加账号' : '编辑账号'}
+          saving={savePoolsMutation.isPending}
+          testing={testMutation.isPending}
+          status={accountStatus}
+          testResult={accountTest}
+          canTest={accountIndex != null}
+          onChange={setAccountDraft}
+          onClose={() => { setAccountDraft(null); setAccountIndex(null); setAccountTest(null); setAccountStatus(''); }}
+          onSave={saveAccountDraft}
+          onTest={() => {
+            if (accountIndex == null) {
+              setAccountTest({ ok: false, message: '新账号保存后再测试。' });
+              return;
+            }
+            testMutation.mutate({ index: accountIndex, pool: accountDraft });
+          }}
+        />
+      ) : null}
     </section>
+  );
+}
+
+function ProviderAccountModal({
+  pool,
+  title,
+  saving,
+  testing,
+  status,
+  testResult,
+  canTest,
+  onChange,
+  onClose,
+  onSave,
+  onTest,
+}: {
+  pool: Pool;
+  title: string;
+  saving: boolean;
+  testing: boolean;
+  status: string;
+  testResult: PoolTestResult | null;
+  canTest: boolean;
+  onChange: (pool: Pool) => void;
+  onClose: () => void;
+  onSave: () => void;
+  onTest: () => void;
+}) {
+  const p = normalizePool(pool);
+  const policy = { ...defaultPolicy, ...(p.route_policy || {}) };
+  const patch = (next: Partial<Pool>) => onChange(normalizePool({ ...p, ...next }));
+  const patchPolicy = (next: Record<string, unknown>) => patch({ route_policy: { ...policy, ...next } });
+
+  return (
+    <Modal
+      title={title}
+      size="lg"
+      onClose={onClose}
+      footer={
+        <ModalActions>
+          <Button onClick={onTest} disabled={!canTest || testing}>{testing ? '测试中' : '测试线路'}</Button>
+          <Button onClick={onClose}>取消</Button>
+          <Button tone="primary" disabled={saving || !String(p.name || '').trim()} onClick={onSave}>{saving ? '保存中' : '保存账号'}</Button>
+        </ModalActions>
+      }
+    >
+      <div className="admin-dialog provider-account-dialog">
+        <div className="admin-dialog-section">
+          <div className="admin-dialog-section-head">
+            <strong>基础信息</strong>
+          </div>
+          <div className="admin-dialog-grid modal-grid">
+            <Field label="账号名称"><TextInput value={p.name || ''} onChange={(event) => patch({ name: event.target.value })} /></Field>
+            <Field label="优先级"><NumberInput value={p.priority ?? 100} onChange={(event) => patch({ priority: Number(event.target.value || 100) })} /></Field>
+            <Toggle label="启用账号" checked={p.enabled !== false} onChange={(enabled) => patch({ enabled })} />
+          </div>
+          <Field label="上游地址" full>
+            <TextArea rows={3} value={textFromLines(p.urls)} onChange={(event) => patch({ urls: splitLines(event.target.value) })} />
+          </Field>
+          <Field label="API Key" full>
+            <TextArea rows={3} value={(p.keys || []).map((item) => item.key).join('\n')} onChange={(event) => patch({ keys: splitLines(event.target.value).map((key) => ({ key })) })} />
+          </Field>
+        </div>
+        <div className="admin-dialog-section">
+          <div className="admin-dialog-section-head">
+            <strong>模型与协议</strong>
+          </div>
+          <Field label="该账号支持模型" full>
+            <TextArea rows={4} value={p.supported_models_text || ''} onChange={(event) => patch({ supported_models_text: event.target.value })} />
+          </Field>
+          <Field label="模型映射" full>
+            <TextArea rows={4} value={p.model_aliases_text || ''} onChange={(event) => patch({ model_aliases_text: event.target.value })} />
+          </Field>
+          <div className="admin-dialog-grid modal-grid">
+            <Field label="文本上游协议">
+              <Select value={policy.text_upstream_protocol} onChange={(event) => patchPolicy({ text_upstream_protocol: event.target.value })}>
+                <option value="auto">自动</option>
+                <option value="openai">OpenAI 兼容</option>
+                <option value="responses">Responses</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="gemini">Gemini</option>
+              </Select>
+            </Field>
+            <Field label="思考强度">
+              <Select value={policy.reasoning_effort} onChange={(event) => patchPolicy({ reasoning_effort: event.target.value })}>
+                <option value="low">低</option>
+                <option value="medium">中</option>
+                <option value="high">高</option>
+              </Select>
+            </Field>
+            <Field label="输出上限"><NumberInput value={policy.max_output_tokens} onChange={(event) => patchPolicy({ max_output_tokens: Number(event.target.value || 0) })} /></Field>
+          </div>
+        </div>
+        <div className="admin-dialog-section">
+          <div className="admin-dialog-section-head">
+            <strong>缓存与退避</strong>
+          </div>
+          <div className="admin-dialog-grid modal-grid">
+            <Field label="本地精确缓存">
+              <Select value={policy.prompt_cache_mode} onChange={(event) => patchPolicy({ prompt_cache_mode: event.target.value })}>
+                <option value="off">关闭</option>
+                <option value="exact">开启</option>
+              </Select>
+            </Field>
+            <Field label="上游缓存 Hint">
+              <Select value={policy.prompt_cache_hints_mode} onChange={(event) => patchPolicy({ prompt_cache_hints_mode: event.target.value })}>
+                <option value="off">关闭</option>
+                <option value="auto">自动判断</option>
+                <option value="passthrough">仅透传</option>
+              </Select>
+            </Field>
+            <Field label="缓存提供方">
+              <Select value={policy.prompt_cache_provider} onChange={(event) => patchPolicy({ prompt_cache_provider: event.target.value })}>
+                <option value="auto">自动识别</option>
+                <option value="openai">OpenAI</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="deepseek">DeepSeek</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="gemini">Gemini</option>
+                <option value="observe">仅观测</option>
+                <option value="none">不支持</option>
+              </Select>
+            </Field>
+            <Field label="基础冷却秒数"><NumberInput value={policy.route_cooldown_seconds} onChange={(event) => patchPolicy({ route_cooldown_seconds: Number(event.target.value || 0) })} /></Field>
+            <Field label="冷却指数"><NumberInput step="0.1" value={policy.route_cooldown_multiplier} onChange={(event) => patchPolicy({ route_cooldown_multiplier: Number(event.target.value || 1) })} /></Field>
+            <Field label="最大冷却秒数"><NumberInput value={policy.route_cooldown_max_seconds} onChange={(event) => patchPolicy({ route_cooldown_max_seconds: Number(event.target.value || 0) })} /></Field>
+            <Field label="429 重试次数"><NumberInput value={policy.rate_limit_retry_attempts} onChange={(event) => patchPolicy({ rate_limit_retry_attempts: Number(event.target.value || 0) })} /></Field>
+            <Field label="429 初始退避毫秒"><NumberInput value={policy.rate_limit_backoff_initial_ms} onChange={(event) => patchPolicy({ rate_limit_backoff_initial_ms: Number(event.target.value || 0) })} /></Field>
+            <Field label="429 退避倍率"><NumberInput step="0.1" value={policy.rate_limit_backoff_multiplier} onChange={(event) => patchPolicy({ rate_limit_backoff_multiplier: Number(event.target.value || 1) })} /></Field>
+            <Field label="429 最大退避毫秒"><NumberInput value={policy.rate_limit_backoff_max_ms} onChange={(event) => patchPolicy({ rate_limit_backoff_max_ms: Number(event.target.value || 0) })} /></Field>
+          </div>
+        </div>
+        {status ? <div className={status.includes('失败') ? 'status-msg err' : 'status-msg'}>{status}</div> : null}
+        {testResult ? <PoolTestView result={testResult} /> : null}
+      </div>
+    </Modal>
   );
 }
 

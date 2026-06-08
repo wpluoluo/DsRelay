@@ -14,9 +14,6 @@ export type DashboardContextValue = {
   setConfigTab: (tab: ConfigTab) => void;
   patchDraft: (patch: Partial<RuntimeConfig>) => void;
   saveConfig: () => void;
-  openPool: (index: number | null) => void;
-  deletePool: (index: number) => void;
-  movePool: (index: number, direction: number) => void;
 };
 
 const DashboardContext = createContext<DashboardContextValue | null>(null);
