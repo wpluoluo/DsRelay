@@ -168,7 +168,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     "output_bytes": 0,
                 }
             for row in self.storage.list_admin_account_groups():
-                account_id = coerce_text(row.get("user_id"))
+                account_id = coerce_text(row.get("account_id"))
                 group_id = coerce_text(row.get("group_id"))
                 if account_id and group_id:
                     memberships.setdefault(account_id, []).append(group_id)
@@ -315,7 +315,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     if subscription_id:
                         orders_by_subscription.setdefault(subscription_id, []).append(order)
                     account_plan_key = (
-                        coerce_text(order.get("user_id")),
+                        coerce_text(order.get("account_id")),
                         coerce_text(order.get("plan_id")),
                     )
                     if account_plan_key[0] and account_plan_key[1]:
@@ -398,8 +398,8 @@ class AdminAnalyticsMixin(AdminServiceBase):
                         {
                             "order_id": order_id,
                             "subscription_id": coerce_text(chosen_order.get("subscription_id")),
-                            "account_id": coerce_text(chosen_order.get("account_id") or chosen_order.get("user_id")),
-                            "account_name": coerce_text(chosen_order.get("account_name") or chosen_order.get("user_name")) or account_name,
+                            "account_id": coerce_text(chosen_order.get("account_id")),
+                            "account_name": coerce_text(chosen_order.get("account_name")) or account_name,
                             "plan_id": coerce_text(chosen_order.get("plan_id")) or plan_id,
                             "plan_name": coerce_text(chosen_order.get("plan_name")) or plan_name,
                             "group_id": coerce_text(chosen_order.get("group_id")) or group_id,

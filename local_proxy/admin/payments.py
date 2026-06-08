@@ -89,7 +89,7 @@ class AdminPaymentsMixin(AdminServiceBase):
         channels = {str(item.get("id") or ""): item for item in self.list_payment_channels().get("items", [])}
         items = []
         for row in self.storage.list_admin_payment_orders():
-            storage_account_id = coerce_text(row.get("user_id"))
+            storage_account_id = coerce_text(row.get("account_id"))
             payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
             items.append(
                 {
@@ -109,7 +109,7 @@ class AdminPaymentsMixin(AdminServiceBase):
     def create_payment_order(self, payload: dict) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
-        account_id = coerce_text(payload.get("account_id")) or coerce_text(payload.get("user_id"))
+        account_id = coerce_text(payload.get("account_id"))
         plan_id = coerce_text(payload.get("plan_id"))
         channel_id = coerce_text(payload.get("channel_id"))
         amount_cents = safe_int(payload.get("amount_cents"))
@@ -230,7 +230,7 @@ class AdminPaymentsMixin(AdminServiceBase):
         plan = next((item for item in self.list_subscription_plans().get("items", []) if coerce_text(item.get("id")) == plan_id), None)
         if not plan:
             raise ValueError("subscription plan not found")
-        account = self.storage.get_admin_account(coerce_text(current.get("account_id") or current.get("user_id")))
+        account = self.storage.get_admin_account(coerce_text(current.get("account_id")))
         if not account:
             raise ValueError("account not found")
         resolved_group_id = self._resolve_plan_group_id(plan, current)
@@ -243,7 +243,7 @@ class AdminPaymentsMixin(AdminServiceBase):
         subscription = self.storage.upsert_admin_account_subscription(
             {
                 "id": coerce_text(current.get("subscription_id")) or f"sub_{uuid.uuid4().hex[:16]}",
-                "account_id": coerce_text(current.get("account_id") or current.get("user_id")),
+                "account_id": coerce_text(current.get("account_id")),
                 "plan_id": plan_id,
                 "group_id": resolved_group_id,
                 "status": "active",

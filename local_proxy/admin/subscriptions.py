@@ -55,7 +55,7 @@ class AdminSubscriptionsMixin(AdminServiceBase):
         plans = {str(item.get("id") or ""): item for item in self.storage.list_admin_subscription_plans()}
         normalized = []
         for item in items:
-            storage_account_id = coerce_text(item.get("user_id"))
+            storage_account_id = coerce_text(item.get("account_id"))
             group_id = coerce_text(item.get("group_id"))
             group = groups.get(group_id, {})
             plan = plans.get(coerce_text(item.get("plan_id")), {})
@@ -63,7 +63,7 @@ class AdminSubscriptionsMixin(AdminServiceBase):
                 {
                     **item,
                     "account_id": storage_account_id,
-                    "account_name": coerce_text(item.get("user_name")) or storage_account_id,
+                    "account_name": coerce_text(item.get("account_name")) or storage_account_id,
                     "group_name": coerce_text(item.get("group_name")) or coerce_text(group.get("name")),
                     "rate_multiplier": group.get("rate_multiplier"),
                     "daily_limit": safe_int(plan.get("daily_limit")),
@@ -76,7 +76,7 @@ class AdminSubscriptionsMixin(AdminServiceBase):
     def assign_subscription(self, payload: dict) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
-        account_id = coerce_text(payload.get("account_id")) or coerce_text(payload.get("user_id"))
+        account_id = coerce_text(payload.get("account_id"))
         plan_id = coerce_text(payload.get("plan_id"))
         if not account_id or not plan_id:
             raise ValueError("account_id and plan_id are required")
@@ -93,7 +93,7 @@ class AdminSubscriptionsMixin(AdminServiceBase):
             self._validate_account_allowed_groups(account, [resolved_group_id])
         item = {
             "id": coerce_text(payload.get("id")) or f"sub_{uuid.uuid4().hex[:16]}",
-            "user_id": account_id,
+            "account_id": account_id,
             "plan_id": plan_id,
             "group_id": resolved_group_id,
             "status": coerce_text(payload.get("status")) or "active",

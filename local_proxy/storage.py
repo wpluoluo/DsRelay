@@ -670,9 +670,6 @@ class ProxyStorage:
             conn.close()
         return rows
 
-    def list_admin_users(self) -> list[dict]:
-        return self.list_admin_accounts()
-
     def get_admin_account(self, account_id: str) -> dict:
         target = str(account_id or "").strip()
         if not target:
@@ -682,9 +679,6 @@ class ProxyStorage:
                 return item
         return {}
 
-    def get_admin_user(self, user_id: str) -> dict:
-        return self.get_admin_account(user_id)
-
     def get_admin_account_by_external_key(self, external_key: str) -> dict:
         target = str(external_key or "").strip()
         if not target:
@@ -693,9 +687,6 @@ class ProxyStorage:
             if str(item.get("external_key") or "") == target:
                 return item
         return {}
-
-    def get_admin_user_by_external_key(self, external_key: str) -> dict:
-        return self.get_admin_account_by_external_key(external_key)
 
     def upsert_admin_account(self, payload: dict) -> dict:
         now = time.time()
@@ -714,7 +705,7 @@ class ProxyStorage:
             "note": str(payload.get("note") or ""),
         }
         if not item["id"] or not item["name"] or not item["external_key"]:
-            raise ValueError("missing required admin user fields")
+            raise ValueError("missing required admin account fields")
         conn = self._connect()
         try:
             with conn.cursor() as cur:
@@ -750,9 +741,6 @@ class ProxyStorage:
         item["created_at"] = created_at
         item["updated_at"] = now
         return item
-
-    def upsert_admin_user(self, payload: dict) -> dict:
-        return self.upsert_admin_account(payload)
 
     def list_admin_groups(self) -> list[dict]:
         rows = []
@@ -869,9 +857,6 @@ class ProxyStorage:
         finally:
             conn.close()
 
-    def replace_admin_user_groups(self, user_id: str, group_ids: list[str]) -> None:
-        self.replace_admin_account_groups(user_id, group_ids)
-
     def list_admin_account_groups(self) -> list[dict]:
         rows = []
         conn = self._connect()
@@ -887,7 +872,7 @@ class ProxyStorage:
                 for row in cur.fetchall():
                     rows.append(
                         {
-                            "user_id": str(row[0] or ""),
+                            "account_id": str(row[0] or ""),
                             "group_id": str(row[1] or ""),
                             "created_at": float(row[2] or 0.0),
                         }
@@ -895,9 +880,6 @@ class ProxyStorage:
         finally:
             conn.close()
         return rows
-
-    def list_admin_user_groups(self) -> list[dict]:
-        return self.list_admin_account_groups()
 
     def list_admin_api_keys(self) -> list[dict]:
         rows = []
@@ -915,7 +897,7 @@ class ProxyStorage:
                     rows.append(
                         {
                             "id": str(row[0] or ""),
-                            "user_id": str(row[1] or ""),
+                            "account_id": str(row[1] or ""),
                             "name": str(row[2] or ""),
                             "key_hash": str(row[3] or ""),
                             "key_preview": str(row[4] or ""),
@@ -933,14 +915,14 @@ class ProxyStorage:
         now = time.time()
         item = {
             "id": str(payload.get("id") or "").strip(),
-            "user_id": str(payload.get("user_id") or "").strip(),
+            "account_id": str(payload.get("account_id") or "").strip(),
             "name": str(payload.get("name") or "").strip(),
             "key_hash": str(payload.get("key_hash") or "").strip(),
             "key_preview": str(payload.get("key_preview") or "").strip(),
             "enabled": payload.get("enabled") is not False,
             "last_used_at": payload.get("last_used_at"),
         }
-        if not item["id"] or not item["user_id"] or not item["name"] or not item["key_hash"] or not item["key_preview"]:
+        if not item["id"] or not item["account_id"] or not item["name"] or not item["key_hash"] or not item["key_preview"]:
             raise ValueError("missing required admin api key fields")
         conn = self._connect()
         try:
@@ -956,7 +938,7 @@ class ProxyStorage:
                     """,
                     (
                         item["id"],
-                        item["user_id"],
+                        item["account_id"],
                         item["name"],
                         item["key_hash"],
                         item["key_preview"],
@@ -1028,17 +1010,17 @@ class ProxyStorage:
             allowed_group_ids = []
         return {
             "id": str(row[0] or ""),
-            "user_id": str(row[1] or ""),
+            "account_id": str(row[1] or ""),
             "name": str(row[2] or ""),
             "key_hash": str(row[3] or ""),
             "key_preview": str(row[4] or ""),
             "enabled": bool(row[5]),
-            "user_name": str(row[6] or ""),
-            "user_source_type": str(row[7] or ""),
-            "user_enabled": bool(row[8]) if row[8] is not None else True,
-            "user_note": str(row[9] or ""),
-            "user_status": str(row[10] or ""),
-            "user_allowed_group_ids": allowed_group_ids if isinstance(allowed_group_ids, list) else [],
+            "account_name": str(row[6] or ""),
+            "account_source_type": str(row[7] or ""),
+            "account_enabled": bool(row[8]) if row[8] is not None else True,
+            "account_note": str(row[9] or ""),
+            "account_status": str(row[10] or ""),
+            "account_allowed_group_ids": allowed_group_ids if isinstance(allowed_group_ids, list) else [],
         }
 
     def list_admin_subscription_plans(self) -> list[dict]:
@@ -1145,7 +1127,7 @@ class ProxyStorage:
                     rows.append(
                         {
                             "id": str(row[0] or ""),
-                            "user_id": str(row[1] or ""),
+                            "account_id": str(row[1] or ""),
                             "plan_id": str(row[2] or ""),
                             "group_id": str(row[3] or ""),
                             "status": str(row[4] or ""),
@@ -1156,7 +1138,7 @@ class ProxyStorage:
                             "monthly_used": int(row[9] or 0),
                             "created_at": float(row[10] or 0.0),
                             "updated_at": float(row[11] or 0.0),
-                            "user_name": str(row[12] or ""),
+                            "account_name": str(row[12] or ""),
                             "plan_name": str(row[13] or ""),
                             "group_name": str(row[14] or ""),
                             "price_cents": int(row[15] or 0),
@@ -1166,14 +1148,11 @@ class ProxyStorage:
             conn.close()
         return rows
 
-    def list_admin_user_subscriptions(self) -> list[dict]:
-        return self.list_admin_account_subscriptions()
-
     def upsert_admin_account_subscription(self, payload: dict) -> dict:
         now = time.time()
         item = {
             "id": str(payload.get("id") or "").strip(),
-            "user_id": str(payload.get("user_id") or payload.get("account_id") or "").strip(),
+            "account_id": str(payload.get("account_id") or "").strip(),
             "plan_id": str(payload.get("plan_id") or "").strip(),
             "group_id": str(payload.get("group_id") or "").strip(),
             "status": str(payload.get("status") or "active").strip() or "active",
@@ -1183,8 +1162,8 @@ class ProxyStorage:
             "weekly_used": int(payload.get("weekly_used") or 0),
             "monthly_used": int(payload.get("monthly_used") or 0),
         }
-        if not item["id"] or not item["user_id"] or not item["plan_id"]:
-            raise ValueError("missing required admin user subscription fields")
+        if not item["id"] or not item["account_id"] or not item["plan_id"]:
+            raise ValueError("missing required admin account subscription fields")
         conn = self._connect()
         try:
             with conn.cursor() as cur:
@@ -1199,7 +1178,7 @@ class ProxyStorage:
                     """,
                     (
                         item["id"],
-                        item["user_id"],
+                        item["account_id"],
                         item["plan_id"],
                         item["group_id"] or None,
                         item["status"],
@@ -1218,9 +1197,6 @@ class ProxyStorage:
         item["created_at"] = created_at
         item["updated_at"] = now
         return item
-
-    def upsert_admin_user_subscription(self, payload: dict) -> dict:
-        return self.upsert_admin_account_subscription(payload)
 
     def list_admin_payment_channels(self) -> list[dict]:
         rows = []
@@ -1322,7 +1298,7 @@ class ProxyStorage:
                     rows.append(
                         {
                             "id": str(row[0] or ""),
-                            "user_id": str(row[1] or ""),
+                            "account_id": str(row[1] or ""),
                             "plan_id": str(row[2] or ""),
                             "subscription_id": str(row[3] or ""),
                             "channel_id": str(row[4] or ""),
@@ -1438,7 +1414,7 @@ class ProxyStorage:
         now = time.time()
         item = {
             "id": str(payload.get("id") or "").strip(),
-            "user_id": str(payload.get("user_id") or "").strip(),
+            "account_id": str(payload.get("account_id") or "").strip(),
             "plan_id": str(payload.get("plan_id") or "").strip(),
             "subscription_id": str(payload.get("subscription_id") or "").strip(),
             "channel_id": str(payload.get("channel_id") or "").strip(),
@@ -1451,7 +1427,7 @@ class ProxyStorage:
             "provider_payload": payload.get("provider_payload") if isinstance(payload.get("provider_payload"), dict) else {},
             "paid_at": payload.get("paid_at"),
         }
-        if not item["id"] or not item["user_id"] or not item["plan_id"] or not item["status"]:
+        if not item["id"] or not item["account_id"] or not item["plan_id"] or not item["status"]:
             raise ValueError("missing required payment order fields")
         conn = self._connect()
         try:
@@ -1467,7 +1443,7 @@ class ProxyStorage:
                     """,
                     (
                         item["id"],
-                        item["user_id"],
+                        item["account_id"],
                         item["plan_id"],
                         item["subscription_id"] or None,
                         item["channel_id"] or None,
@@ -1592,7 +1568,6 @@ class ProxyStorage:
             return {}
         return {
             "id": str(row[0] or ""),
-            "user_id": str(row[1] or ""),
             "account_id": str(row[1] or ""),
             "plan_id": str(row[2] or ""),
             "group_id": str(row[3] or ""),
@@ -1605,9 +1580,6 @@ class ProxyStorage:
             "created_at": float(row[10] or 0.0),
             "updated_at": float(row[11] or 0.0),
         }
-
-    def get_admin_user_subscription(self, subscription_id: str) -> dict:
-        return self.get_admin_account_subscription(subscription_id)
 
     def get_active_subscription_context_for_account(self, account_id: str) -> dict:
         target = str(account_id or "").strip()
@@ -1639,7 +1611,6 @@ class ProxyStorage:
             return {}
         return {
             "subscription_id": str(row[0] or ""),
-            "user_id": str(row[1] or ""),
             "account_id": str(row[1] or ""),
             "plan_id": str(row[2] or ""),
             "group_id": str(row[3] or ""),
@@ -1650,9 +1621,6 @@ class ProxyStorage:
             "plan_price_cents": int(row[8] or 0),
             "group_name": str(row[9] or ""),
         }
-
-    def get_active_subscription_context_for_user(self, user_id: str) -> dict:
-        return self.get_active_subscription_context_for_account(user_id)
 
     def extend_admin_account_subscription(self, subscription_id: str, extra_days: int) -> dict:
         current = self.get_admin_account_subscription(subscription_id)
@@ -1666,9 +1634,6 @@ class ProxyStorage:
         current["updated_at"] = now
         return self.upsert_admin_account_subscription(current)
 
-    def extend_admin_user_subscription(self, subscription_id: str, extra_days: int) -> dict:
-        return self.extend_admin_account_subscription(subscription_id, extra_days)
-
     def revoke_admin_account_subscription(self, subscription_id: str) -> dict:
         current = self.get_admin_account_subscription(subscription_id)
         if not current:
@@ -1676,9 +1641,6 @@ class ProxyStorage:
         current["status"] = "revoked"
         current["updated_at"] = time.time()
         return self.upsert_admin_account_subscription(current)
-
-    def revoke_admin_user_subscription(self, subscription_id: str) -> dict:
-        return self.revoke_admin_account_subscription(subscription_id)
 
     def reset_admin_account_subscription_quota(self, subscription_id: str, *, daily: bool, weekly: bool, monthly: bool) -> dict:
         current = self.get_admin_account_subscription(subscription_id)
@@ -1693,8 +1655,6 @@ class ProxyStorage:
         current["updated_at"] = time.time()
         return self.upsert_admin_account_subscription(current)
 
-    def reset_admin_user_subscription_quota(self, subscription_id: str, *, daily: bool, weekly: bool, monthly: bool) -> dict:
-        return self.reset_admin_account_subscription_quota(subscription_id, daily=daily, weekly=weekly, monthly=monthly)
 
     def save_app_config(self, payload: dict, config_key: str = "runtime_config") -> None:
         if not isinstance(payload, dict):

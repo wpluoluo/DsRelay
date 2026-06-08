@@ -63,7 +63,7 @@ class AdminServiceBase:
         for group in self.storage.list_admin_groups():
             groups[str(group.get("id") or "")] = group
         for row in self.storage.list_admin_account_groups():
-            account_id = str(row.get("user_id") or "")
+            account_id = str(row.get("account_id") or "")
             group_id = str(row.get("group_id") or "")
             if account_id and group_id:
                 memberships.setdefault(account_id, []).append(group_id)

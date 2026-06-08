@@ -14,7 +14,7 @@ class AdminApiKeysMixin(AdminServiceBase):
         accounts = {str(item.get("id") or ""): item for item in self.list_accounts(limit=5000).get("items", [])}
         items = []
         for row in self.storage.list_admin_api_keys():
-            storage_account_id = coerce_text(row.get("user_id"))
+            storage_account_id = coerce_text(row.get("account_id"))
             account = accounts.get(storage_account_id, {})
             items.append({
                 **row,
@@ -37,7 +37,7 @@ class AdminApiKeysMixin(AdminServiceBase):
     def create_api_key(self, payload: dict) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
-        account_id = coerce_text(payload.get("account_id")) or coerce_text(payload.get("user_id"))
+        account_id = coerce_text(payload.get("account_id"))
         name = coerce_text(payload.get("name")) or "默认业务 Key"
         if not account_id:
             raise ValueError("account_id is required")
@@ -47,14 +47,14 @@ class AdminApiKeysMixin(AdminServiceBase):
         group_ids = [
             coerce_text(row.get("group_id"))
             for row in membership_rows
-            if coerce_text(row.get("user_id")) == account_id and coerce_text(row.get("group_id"))
+            if coerce_text(row.get("account_id")) == account_id and coerce_text(row.get("group_id"))
         ]
         self._validate_account_allowed_groups(account, group_ids)
         raw_key = generate_proxy_api_key()
         saved = self.storage.upsert_admin_api_key(
             {
                 "id": f"uak_{uuid.uuid4().hex[:16]}",
-                "user_id": account_id,
+                "account_id": account_id,
                 "name": name,
                 "key_hash": hash_proxy_api_key(raw_key),
                 "key_preview": preview_proxy_api_key(raw_key),
