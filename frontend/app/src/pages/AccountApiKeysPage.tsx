@@ -283,7 +283,7 @@ export function AccountApiKeysPage() {
               <KeyRound size={16} />
               <code>{generatedKey || rows[0]?.key_preview || '先生成或选择一个 Key'}</code>
             </div>
-            <div className="user-guide-note">
+            <div className="account-guide-note">
               推荐环境变量：`OPENAI_API_KEY` 使用当前业务账户 Key，`OPENAI_BASE_URL` 指向 `{window.location.origin}/v1`。
             </div>
             <CodeBlock

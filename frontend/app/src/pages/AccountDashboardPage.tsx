@@ -91,7 +91,7 @@ export function AccountDashboardPage() {
 
       <Panel className="dashboard-card">
         <PanelHead title="当前订阅" action={<Link to="/account-subscriptions" className="panel-link">查看全部</Link>} />
-        <div className="user-dashboard-subscriptions">
+        <div className="account-dashboard-subscriptions">
           {currentSubscriptions.length ? currentSubscriptions.slice(0, 4).map((item) => (
             <div className="channel-card" key={item.id}>
               <div className="channel-card-head">

@@ -6,7 +6,7 @@ from .base import AdminServiceBase
 from .payments import AdminPaymentsMixin
 from .protocols import AdminProtocolsMixin
 from .subscriptions import AdminSubscriptionsMixin
-from .users import AdminAccountsMixin
+from .accounts import AdminAccountsMixin
 
 
 class AdminAnalyticsService(

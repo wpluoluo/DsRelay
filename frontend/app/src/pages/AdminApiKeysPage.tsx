@@ -72,8 +72,8 @@ export function AdminApiKeysPage() {
   }, [filteredItems, page, pageSize]);
   const enabledCount = items.filter((item) => item.enabled !== false).length;
   const disabledCount = Math.max(0, items.length - enabledCount);
-  const boundUsers = new Set(items.map((item) => item.account_id).filter(Boolean)).size;
-  const unboundCount = Math.max(0, items.length - boundUsers);
+  const boundAccounts = new Set(items.map((item) => item.account_id).filter(Boolean)).size;
+  const unboundCount = Math.max(0, items.length - boundAccounts);
   const activeSubscriptionCount = items.filter((item) => item.subscription_active).length;
   const inactiveSubscriptionCount = Math.max(0, items.length - activeSubscriptionCount);
 
@@ -101,7 +101,7 @@ export function AdminApiKeysPage() {
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>业务 Key 总数</span><strong>{formatNumber(items.length)}</strong><small>当前列表全量</small></div>
           <div className="sub2-inline-summary-item"><span>启用 Key</span><strong>{formatNumber(enabledCount)}</strong><small>停用 {formatNumber(disabledCount)}</small></div>
-          <div className="sub2-inline-summary-item"><span>绑定账户</span><strong>{formatNumber(boundUsers)}</strong><small>未覆盖 {formatNumber(unboundCount)} 个 Key</small></div>
+          <div className="sub2-inline-summary-item"><span>绑定账户</span><strong>{formatNumber(boundAccounts)}</strong><small>未覆盖 {formatNumber(unboundCount)} 个 Key</small></div>
           <div className="sub2-inline-summary-item"><span>有效订阅</span><strong>{formatNumber(activeSubscriptionCount)}</strong><small>无效 {formatNumber(inactiveSubscriptionCount)}</small></div>
         </div>
       </div>
