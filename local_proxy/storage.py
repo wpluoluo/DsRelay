@@ -26,68 +26,6 @@ class ProxyStorage:
     def _connect(self):
         return _build_conn(self._cfg)
 
-    @staticmethod
-    def _table_exists(cur, table_name: str) -> bool:
-        cur.execute("SHOW TABLES LIKE %s", (str(table_name),))
-        return cur.fetchone() is not None
-
-    @staticmethod
-    def _column_exists(cur, table_name: str, column_name: str) -> bool:
-        cur.execute(f"SHOW COLUMNS FROM `{table_name}` LIKE %s", (str(column_name),))
-        return cur.fetchone() is not None
-
-    @staticmethod
-    def _index_exists(cur, table_name: str, index_name: str) -> bool:
-        cur.execute(f"SHOW INDEX FROM `{table_name}` WHERE Key_name = %s", (str(index_name),))
-        return cur.fetchone() is not None
-
-    @staticmethod
-    def _exec_ignore(cur, sql: str, params=None) -> None:
-        try:
-            cur.execute(sql, params or ())
-        except Exception:
-            pass
-
-    def _migrate_admin_account_schema(self, cur) -> None:
-        table_renames = [
-            ("admin_users", "admin_accounts"),
-            ("admin_user_groups", "admin_account_groups"),
-            ("admin_user_subscriptions", "admin_account_subscriptions"),
-        ]
-        for old_name, new_name in table_renames:
-            if self._table_exists(cur, old_name) and not self._table_exists(cur, new_name):
-                cur.execute(f"RENAME TABLE `{old_name}` TO `{new_name}`")
-
-        column_renames = [
-            ("admin_api_keys", "user_id", "account_id", "VARCHAR(64) NOT NULL"),
-            ("admin_payment_orders", "user_id", "account_id", "VARCHAR(64) NOT NULL"),
-            ("admin_account_groups", "user_id", "account_id", "VARCHAR(64) NOT NULL"),
-            ("admin_account_subscriptions", "user_id", "account_id", "VARCHAR(64) NOT NULL"),
-        ]
-        for table_name, old_col, new_col, definition in column_renames:
-            if not self._table_exists(cur, table_name):
-                continue
-            has_old = self._column_exists(cur, table_name, old_col)
-            has_new = self._column_exists(cur, table_name, new_col)
-            if has_old and not has_new:
-                cur.execute(f"ALTER TABLE `{table_name}` CHANGE COLUMN `{old_col}` `{new_col}` {definition}")
-
-        index_renames = [
-            ("admin_accounts", "uniq_admin_users_external_key", "uniq_admin_accounts_external_key", "ALTER TABLE `admin_accounts` ADD UNIQUE KEY `uniq_admin_accounts_external_key` (`external_key`)"),
-            ("admin_account_groups", "idx_admin_user_groups_group_id", "idx_admin_account_groups_group_id", "ALTER TABLE `admin_account_groups` ADD INDEX `idx_admin_account_groups_group_id` (`group_id`)"),
-            ("admin_api_keys", "idx_admin_api_keys_user_id", "idx_admin_api_keys_account_id", "ALTER TABLE `admin_api_keys` ADD INDEX `idx_admin_api_keys_account_id` (`account_id`)"),
-            ("admin_account_subscriptions", "idx_admin_user_subscriptions_user_id", "idx_admin_account_subscriptions_account_id", "ALTER TABLE `admin_account_subscriptions` ADD INDEX `idx_admin_account_subscriptions_account_id` (`account_id`)"),
-            ("admin_account_subscriptions", "idx_admin_user_subscriptions_plan_id", "idx_admin_account_subscriptions_plan_id", "ALTER TABLE `admin_account_subscriptions` ADD INDEX `idx_admin_account_subscriptions_plan_id` (`plan_id`)"),
-            ("admin_payment_orders", "idx_admin_payment_orders_user_id", "idx_admin_payment_orders_account_id", "ALTER TABLE `admin_payment_orders` ADD INDEX `idx_admin_payment_orders_account_id` (`account_id`)"),
-        ]
-        for table_name, old_idx, new_idx, create_sql in index_renames:
-            if not self._table_exists(cur, table_name):
-                continue
-            if not self._index_exists(cur, table_name, new_idx):
-                self._exec_ignore(cur, create_sql)
-            if self._index_exists(cur, table_name, old_idx):
-                self._exec_ignore(cur, f"ALTER TABLE `{table_name}` DROP INDEX `{old_idx}`")
-
     def init_schema(self) -> None:
         conn = self._connect()
         try:
@@ -178,7 +116,6 @@ class ProxyStorage:
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                     """
                 )
-                self._migrate_admin_account_schema(cur)
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS admin_groups (
