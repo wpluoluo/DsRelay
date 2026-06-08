@@ -14,7 +14,7 @@ export function AccountAvailableChannelsPage() {
     <section className="grid-page">
       {buildPageIntro('/available-channels')}
       <div className="sub2-inline-summary">
-        <div className="sub2-inline-summary-item"><span>可见渠道</span><strong>{formatNumber(visibleChannels.length)}</strong><small>账户范围</small></div>
+        <div className="sub2-inline-summary-item"><span>可见渠道</span><strong>{formatNumber(visibleChannels.length)}</strong><small>用户范围</small></div>
         <div className="sub2-inline-summary-item"><span>可购计划</span><strong>{formatNumber(visiblePlans.length)}</strong><small>当前可见</small></div>
         <div className="sub2-inline-summary-item"><span>后台已配通道</span><strong>{formatNumber(configuredChannels.length)}</strong><small>管理后台口径</small></div>
       </div>

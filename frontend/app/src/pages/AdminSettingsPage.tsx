@@ -61,7 +61,7 @@ export function AdminSettingsPage() {
             <div className="overview-alert-list">
               <div className="overview-alert info">
                 <strong>入口 API Key</strong>
-                <span>这里只处理代理入口鉴权。账户 API Key 属于用户资产，放在“我的账户 / API 密钥”与后台账号体系中管理。</span>
+                <span>这里只处理代理入口鉴权。用户 API Key 属于用户资产，放在“我的账户 / API 密钥”与后台用户体系中管理。</span>
               </div>
             </div>
             <ProxyKeys payload={payload} refresh={() => dashboard.keyQuery.refetch()} />
@@ -80,7 +80,7 @@ export function AdminSettingsPage() {
         <div className="overview-alert-list">
           <div className="overview-alert info">
             <strong>设置边界</strong>
-            <span>系统设置只保留系统级参数。渠道本体放在“渠道管理”，业务账户与订阅不从这里进入。</span>
+            <span>系统设置只保留系统级参数。渠道本体放在“渠道管理”，用户资产与订阅不从这里进入。</span>
           </div>
           <div className="overview-alert info">
             <strong>保存方式</strong>

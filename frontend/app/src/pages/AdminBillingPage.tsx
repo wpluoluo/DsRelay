@@ -217,7 +217,7 @@ export function AdminBillingPage() {
             ].join('\t')),
           ]
         : [
-            ['名称', '归属', '请求', 'Token', '请求字节', '响应字节', '标准成本', '用户计费', '账户计费', '异常'].join('\t'),
+            ['名称', '归属', '请求', 'Token', '请求字节', '响应字节', '标准成本', '实际计费', '用户计费', '异常'].join('\t'),
             ...filteredAggregateRows.map((row) => {
               const meta = resolveAggregateMeta(scope, row);
               return [
@@ -256,8 +256,8 @@ export function AdminBillingPage() {
           <div className="sub2-inline-summary-item"><span>成功 / 异常</span><strong>{formatNumber(Math.max(0, summaryRequestCount - summaryErrorCount))} / {formatNumber(summaryErrorCount)}</strong><small>{TIME_PRESET_OPTIONS.find((option) => option.value === timePreset)?.label || '全部时间'}</small></div>
           <div className="sub2-inline-summary-item"><span>总 Token</span><strong>{formatTokenCount(summaryTotalTokens)}</strong><small>当前筛选 {formatTokenCount(totalTokens)}</small></div>
           <div className="sub2-inline-summary-item"><span>标准成本</span><strong>{formatUsdCost(billingSummary.total_cost || 0)}</strong><small>实际计费 {formatUsdCost(billingSummary.actual_cost || 0)}</small></div>
-          <div className="sub2-inline-summary-item"><span>账户计费</span><strong>{formatUsdCost(billingSummary.account_cost || 0)}</strong><small>覆盖请求 {formatNumber(summaryCoveredRequests)}</small></div>
-          <div className="sub2-inline-summary-item"><span>活跃订阅</span><strong>{formatNumber(summaryActiveSubscriptions)}</strong><small>总账户 {formatNumber(overview.account_count || 0)}</small></div>
+          <div className="sub2-inline-summary-item"><span>用户计费</span><strong>{formatUsdCost(billingSummary.account_cost || 0)}</strong><small>覆盖请求 {formatNumber(summaryCoveredRequests)}</small></div>
+          <div className="sub2-inline-summary-item"><span>活跃订阅</span><strong>{formatNumber(summaryActiveSubscriptions)}</strong><small>总用户 {formatNumber(overview.account_count || 0)}</small></div>
         </div>
       </div>
 
@@ -309,7 +309,7 @@ export function AdminBillingPage() {
               </ToolbarButtonRow>
             }
           >
-            <SearchField value={search} placeholder="搜索账户 / 模型 / 线路 / 请求 ID" onChange={(value) => { setSearch(value); setPage(1); }} />
+            <SearchField value={search} placeholder="搜索用户 / 模型 / 线路 / 请求 ID" onChange={(value) => { setSearch(value); setPage(1); }} />
             <select className="select" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}>
               <option value="">全部状态</option>
               <option value="ok">成功</option>
@@ -502,7 +502,7 @@ function AggregateBillingTable({
           <th>响应字节</th>
           <th>标准成本</th>
           <th>实际计费</th>
-          <th>账户计费</th>
+          <th>用户计费</th>
           <th>异常</th>
           <th>操作</th>
         </tr>
@@ -617,7 +617,7 @@ function AggregateBillingDetail({
         <div className="admin-dialog-summary-card">
           <span>总 Token</span>
           <strong>{formatTokenCount(Number((row as any).total_tokens || 0))}</strong>
-          <small>账户计费 {formatUsdCost(Number((row as any).account_cost || 0))}</small>
+          <small>用户计费 {formatUsdCost(Number((row as any).account_cost || 0))}</small>
         </div>
       </div>
       <div className="admin-dialog-section">
@@ -630,7 +630,7 @@ function AggregateBillingDetail({
           <Field label="响应字节"><TextInput readOnly value={String(Number((row as any).output_bytes || 0))} /></Field>
           <Field label="标准成本"><TextInput readOnly value={String(Number((row as any).total_cost || 0))} /></Field>
           <Field label="实际计费"><TextInput readOnly value={String(Number((row as any).actual_cost || 0))} /></Field>
-          <Field label="账户计费"><TextInput readOnly value={String(Number((row as any).account_cost || 0))} /></Field>
+          <Field label="用户计费"><TextInput readOnly value={String(Number((row as any).account_cost || 0))} /></Field>
           <Field label="补充标识"><TextInput readOnly value={meta.subtitle || '-'} /></Field>
         </div>
       </div>

@@ -14,7 +14,7 @@ const STORAGE_KEY = 'admin-subscriptions-view-state';
 
 export function AdminSubscriptionsPage() {
   const subsQuery = useQuery({ queryKey: ['admin-subscriptions'], queryFn: fetchAdminAccountSubscriptions, refetchInterval: 10000 });
-  const accountsQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, refetchInterval: 10000 });
+  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, refetchInterval: 10000 });
   const plansQuery = useQuery({ queryKey: ['admin-subscription-plans'], queryFn: fetchAdminSubscriptionPlans, refetchInterval: 10000 });
   const [draft, setDraft] = useState<any | null>(null);
   const [inspectSubscription, setInspectSubscription] = useState<any | null>(null);
@@ -61,11 +61,11 @@ export function AdminSubscriptionsPage() {
   });
 
   const items = subsQuery.data?.items || [];
-  const accounts = accountsQuery.data?.items || [];
+  const users = usersQuery.data?.items || [];
   const plans = plansQuery.data?.items || [];
   const planMap = useMemo(() => new Map(plans.map((plan) => [plan.id, plan])), [plans]);
   const selectedPlan = draft?.plan_id ? planMap.get(draft.plan_id) : undefined;
-  const selectedAccount = draft?.account_id ? accounts.find((account) => account.id === draft.account_id) : undefined;
+  const selectedUser = draft?.account_id ? users.find((user) => user.id === draft.account_id) : undefined;
   const groupOptions = useMemo(
     () =>
       Array.from(new Map(plans.filter((plan) => plan.group_id).map((plan) => [plan.group_id, plan.group_name || plan.group_id])).entries()).sort((left, right) =>
@@ -124,7 +124,7 @@ export function AdminSubscriptionsPage() {
     <section className="grid-page">
       <div className="sub2-page-head">
         <div className="sub2-page-title">
-          <strong>账户订阅</strong>
+          <strong>用户订阅</strong>
           <span>按订阅处理分配、延期、重置与撤销，保持和 SUB2 一致的列表工作流。</span>
         </div>
         <div className="sub2-inline-summary">
@@ -165,7 +165,7 @@ export function AdminSubscriptionsPage() {
               </ToolbarButtonRow>
             }
           >
-            <SearchField value={search} placeholder="搜索账户 / 计划 / 订阅 ID" onChange={(value) => { setSearch(value); setPage(1); }} />
+            <SearchField value={search} placeholder="搜索用户 / 计划 / 订阅 ID" onChange={(value) => { setSearch(value); setPage(1); }} />
             <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}>
               <option value="">全部状态</option>
               <option value="active">active</option>
@@ -185,7 +185,7 @@ export function AdminSubscriptionsPage() {
             <table>
               <thead>
                 <tr>
-                  <th>账户</th>
+                  <th>用户</th>
                   <th>计划</th>
                   <th>分组 / 价格</th>
                   {visibleColumns.has('status') ? <th>状态</th> : null}
@@ -234,7 +234,7 @@ export function AdminSubscriptionsPage() {
                 )) : (
                   <ListEmptyRow
                     colSpan={visibleColumns.size + 4}
-                    title="暂无账户订阅"
+                    title="暂无用户订阅"
                     description="当前没有可展示的订阅记录。"
                     action={<Button tone="primary" onClick={() => setDraft({ account_id: '', plan_id: '', status: 'active' })}>分配订阅</Button>}
                   />
@@ -270,7 +270,7 @@ export function AdminSubscriptionsPage() {
         >
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
-              <strong>向账户分配新的订阅</strong>
+              <strong>向用户分配新的订阅</strong>
               <span>订阅会直接参与请求鉴权、额度校验和消费归因。这里的操作需要和计划、分组、支付记录保持一致。</span>
             </div>
             <div className="admin-dialog-summary">
@@ -292,9 +292,9 @@ export function AdminSubscriptionsPage() {
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
-                <span>目标账户</span>
-                <strong>{selectedAccount?.name || '待选择账户'}</strong>
-                <small>{selectedAccount?.group_name || selectedAccount?.group_id || '未分组'}</small>
+                <span>目标用户</span>
+                <strong>{selectedUser?.name || '待选择用户'}</strong>
+                <small>{selectedUser?.group_name || selectedUser?.group_id || '未分组'}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>计划价格</span>
@@ -310,13 +310,13 @@ export function AdminSubscriptionsPage() {
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
                 <strong>订阅信息</strong>
-                <span>账户与计划确认后即可直接落订阅记录</span>
+                <span>用户与计划确认后即可直接落订阅记录</span>
               </div>
               <div className="admin-dialog-grid modal-grid">
-                <Field label="账户">
+                <Field label="用户">
                   <Select value={draft.account_id} onChange={(e) => setDraft({ ...draft, account_id: e.target.value })}>
-                    <option value="">请选择账户</option>
-                    {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                    <option value="">请选择用户</option>
+                    {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
                   </Select>
                 </Field>
                 <Field label="计划">
@@ -335,7 +335,7 @@ export function AdminSubscriptionsPage() {
               </div>
             </div>
             <div className="admin-dialog-note">
-              分配完成后，账户在 API Key 校验和使用记录中会立即看到新的订阅归属。
+              分配完成后，用户在 API Key 校验和使用记录中会立即看到新的订阅归属。
             </div>
           </div>
         </Modal>

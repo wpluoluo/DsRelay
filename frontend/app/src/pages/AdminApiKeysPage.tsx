@@ -12,7 +12,7 @@ const STORAGE_KEY = 'admin-api-keys-view-state';
 
 export function AdminApiKeysPage() {
   const keysQuery = useQuery({ queryKey: ['admin-api-keys'], queryFn: fetchAdminApiKeys, refetchInterval: 10000 });
-  const accountsQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, refetchInterval: 10000 });
+  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, refetchInterval: 10000 });
   const [draft, setDraft] = useState<{ account_id: string; name: string } | null>(null);
   const [generatedKey, setGeneratedKey] = useState('');
   const [copiedKeyId, setCopiedKeyId] = useState('');
@@ -46,7 +46,7 @@ export function AdminApiKeysPage() {
   });
 
   const items = keysQuery.data?.items || [];
-  const accounts = accountsQuery.data?.items || [];
+  const users = usersQuery.data?.items || [];
 
   const filteredItems = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -95,13 +95,13 @@ export function AdminApiKeysPage() {
     <section className="grid-page">
       <div className="sub2-page-head">
         <div className="sub2-page-title">
-          <strong>账户 API Key</strong>
-          <span>按账号归属维护调用 Key、订阅覆盖和启停状态，避免再把 Key 当成用户对象本身。</span>
+          <strong>用户 API Key</strong>
+          <span>按用户归属维护调用 Key、订阅覆盖和启停状态，避免再把 Key 当成用户对象本身。</span>
         </div>
         <div className="sub2-inline-summary">
           <div className="sub2-inline-summary-item"><span>Key 总数</span><strong>{formatNumber(items.length)}</strong><small>当前列表全量</small></div>
           <div className="sub2-inline-summary-item"><span>启用 Key</span><strong>{formatNumber(enabledCount)}</strong><small>停用 {formatNumber(disabledCount)}</small></div>
-          <div className="sub2-inline-summary-item"><span>绑定账户</span><strong>{formatNumber(boundAccounts)}</strong><small>未覆盖 {formatNumber(unboundCount)} 个 Key</small></div>
+          <div className="sub2-inline-summary-item"><span>绑定用户</span><strong>{formatNumber(boundAccounts)}</strong><small>未覆盖 {formatNumber(unboundCount)} 个 Key</small></div>
           <div className="sub2-inline-summary-item"><span>有效订阅</span><strong>{formatNumber(activeSubscriptionCount)}</strong><small>无效 {formatNumber(inactiveSubscriptionCount)}</small></div>
         </div>
       </div>
@@ -122,15 +122,15 @@ export function AdminApiKeysPage() {
                     <button type="button" onClick={() => { setPageSize(50); setPage(1); }}>
                       <span>切换 50 / 页</span>
                     </button>
-                    <button type="button" onClick={() => { void keysQuery.refetch(); void accountsQuery.refetch(); }}>
-                      <span>同步账户与 Key</span>
+                    <button type="button" onClick={() => { void keysQuery.refetch(); void usersQuery.refetch(); }}>
+                      <span>同步用户与 Key</span>
                     </button>
                 </ToolsMenu>
                 <Button tone="primary" onClick={() => setDraft({ account_id: '', name: '' })}><Plus size={15} />生成 Key</Button>
               </ToolbarButtonRow>
             }
           >
-            <SearchField value={search} placeholder="搜索名称 / 账户 / Key 预览" onChange={(value) => { setSearch(value); setPage(1); }} />
+            <SearchField value={search} placeholder="搜索名称 / 用户 / Key 预览" onChange={(value) => { setSearch(value); setPage(1); }} />
             <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}>
               <option value="">全部状态</option>
               <option value="enabled">启用</option>
@@ -149,7 +149,7 @@ export function AdminApiKeysPage() {
               <thead>
                 <tr>
                   <th className="col-key-name">名称</th>
-                  <th>账户</th>
+                  <th>用户</th>
                   <th>订阅</th>
                   <th className="col-key-value">Key 预览</th>
                   <th className="col-key-status">状态</th>
@@ -170,7 +170,7 @@ export function AdminApiKeysPage() {
                     <td>
                       <div className="sub2-cell-stack">
                         <strong>{maskEmpty(item.account_name || item.account_id)}</strong>
-                        <small>{item.account_id || '未绑定账户 ID'}</small>
+                        <small>{item.account_id || '未绑定用户 ID'}</small>
                       </div>
                     </td>
                     <td>
@@ -220,8 +220,8 @@ export function AdminApiKeysPage() {
                 )) : (
                   <ListEmptyRow
                     colSpan={8}
-                    title="暂无账户 API Key"
-                    description="当前还没有创建任何账号调用 Key。"
+                    title="暂无用户 API Key"
+                    description="当前还没有创建任何用户调用 Key。"
                     action={<Button tone="primary" onClick={() => setDraft({ account_id: '', name: '' })}>生成 Key</Button>}
                   />
                 )}
@@ -267,7 +267,7 @@ export function AdminApiKeysPage() {
               </div>
               <div className="admin-dialog-summary-card">
                 <span>绑定能力</span>
-                <strong>业务账户调用</strong>
+                <strong>用户调用</strong>
                 <small>参与订阅校验</small>
               </div>
               <div className="admin-dialog-summary-card">
@@ -289,7 +289,7 @@ export function AdminApiKeysPage() {
 
       {draft ? (
         <Modal
-          title="生成账户 API Key"
+          title="生成用户 API Key"
           size="md"
           onClose={() => setDraft(null)}
           footer={
@@ -303,8 +303,8 @@ export function AdminApiKeysPage() {
         >
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
-              <strong>为指定账户生成新的调用 Key</strong>
-              <span>生成后会直接建立账户归属，后续请求会按这个 Key 做订阅可用性校验和消费归因。</span>
+              <strong>为指定用户生成新的调用 Key</strong>
+              <span>生成后会直接建立用户归属，后续请求会按这个 Key 做订阅可用性校验和消费归因。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
@@ -319,20 +319,20 @@ export function AdminApiKeysPage() {
               </div>
               <div className="admin-dialog-summary-card">
                 <span>当前草稿</span>
-                <strong>{draft.account_id ? '已选账户' : '待选账户'}</strong>
+                <strong>{draft.account_id ? '已选用户' : '待选用户'}</strong>
                 <small>{draft.name?.trim() || '待填写名称'}</small>
               </div>
             </div>
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
                 <strong>基础信息</strong>
-                <span>先归属账户，再命名，再生成</span>
+                <span>先归属用户，再命名，再生成</span>
               </div>
               <div className="admin-dialog-grid modal-grid">
-                <Field label="归属账户">
+                <Field label="归属用户">
                   <Select value={draft.account_id} onChange={(e) => setDraft({ ...draft, account_id: e.target.value })}>
-                    <option value="">请选择账户</option>
-                    {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                    <option value="">请选择用户</option>
+                    {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
                   </Select>
                 </Field>
                 <Field label="Key 名称">
@@ -357,11 +357,11 @@ export function AdminApiKeysPage() {
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
               <strong>{inspectKey.name}</strong>
-              <span>查看账户 Key 的归属、订阅覆盖和时间信息，方便快速核验问题。</span>
+              <span>查看用户 Key 的归属、订阅覆盖和时间信息，方便快速核验问题。</span>
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
-                <span>账户</span>
+                <span>用户</span>
                 <strong>{maskEmpty(inspectKey.account_name || inspectKey.account_id)}</strong>
                 <small>{inspectKey.account_source_type || 'unknown'}</small>
               </div>
@@ -379,11 +379,11 @@ export function AdminApiKeysPage() {
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
                 <strong>归属信息</strong>
-                <span>账户与订阅关系</span>
+                <span>用户与订阅关系</span>
               </div>
               <div className="admin-dialog-grid">
-                <Field label="账户 ID"><TextInput value={inspectKey.account_id || ''} readOnly /></Field>
-                <Field label="账户名称"><TextInput value={inspectKey.account_name || ''} readOnly /></Field>
+                <Field label="用户 ID"><TextInput value={inspectKey.account_id || ''} readOnly /></Field>
+                <Field label="用户名称"><TextInput value={inspectKey.account_name || ''} readOnly /></Field>
                 <Field label="计划"><TextInput value={inspectKey.active_plan_name || inspectKey.active_plan_id || ''} readOnly /></Field>
                 <Field label="分组"><TextInput value={inspectKey.active_group_name || inspectKey.active_group_id || ''} readOnly /></Field>
               </div>
