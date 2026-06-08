@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Copy, Eye, KeyRound, MoreHorizontal, Plus, RefreshCw, ShieldCheck, TerminalSquare } from 'lucide-react';
+import { Copy, Eye, KeyRound, MoreHorizontal, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
 import { createAdminApiKey, setAdminApiKeyEnabled } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
 import { EmptyState, FilterToolbar, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow } from '../components/admin';
@@ -13,11 +13,9 @@ export function AccountApiKeysPage() {
   const [draft, setDraft] = useState<{ account_id: string; name: string } | null>(null);
   const [generatedKey, setGeneratedKey] = useState('');
   const [copiedKeyId, setCopiedKeyId] = useState('');
-  const [copiedGuideValue, setCopiedGuideValue] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [showTools, setShowTools] = useState(false);
-  const [showGuide, setShowGuide] = useState(false);
   const [inspectKey, setInspectKey] = useState<any | null>(null);
   const [toggleTarget, setToggleTarget] = useState<any | null>(null);
   const [page, setPage] = useState(1);
@@ -68,9 +66,6 @@ export function AccountApiKeysPage() {
       if (keyId) {
         setCopiedKeyId(keyId);
         window.setTimeout(() => setCopiedKeyId(''), 1200);
-      } else {
-        setCopiedGuideValue(value);
-        window.setTimeout(() => setCopiedGuideValue(''), 1200);
       }
     } catch {}
   }
@@ -85,7 +80,7 @@ export function AccountApiKeysPage() {
           <div className="sub2-inline-summary-item"><span>当前用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '-'}</small></div>
           <div className="sub2-inline-summary-item"><span>Key 数量</span><strong>{formatNumber(rows.length)}</strong><small>启用 {formatNumber(activeRows.length)}</small></div>
           <div className="sub2-inline-summary-item"><span>订阅覆盖</span><strong>{formatNumber(coveredRows.length)}</strong><small>未覆盖 {formatNumber(uncoveredRows.length)}</small></div>
-          <div className="sub2-inline-summary-item"><span>最近生成</span><strong>{generatedKey ? '已生成' : '无'}</strong><small>{generatedKey ? '原始 Key 待复制' : '暂无新 Key'}</small></div>
+          <div className="sub2-inline-summary-item"><span>最近生成</span><strong>{generatedKey ? '已生成' : '无'}</strong><small>{generatedKey ? '仅本次可见' : '-'}</small></div>
         </div>
       </div>
 
@@ -103,9 +98,6 @@ export function AccountApiKeysPage() {
                   <div className="sub2-menu-panel">
                     <button type="button" onClick={() => { setSearch(''); setStatusFilter(''); setPage(1); setShowTools(false); }}>
                       <span>清空筛选</span>
-                    </button>
-                    <button type="button" onClick={() => { setShowGuide(true); setShowTools(false); }}>
-                      <span>接入说明</span>
                     </button>
                   </div>
                 </details>
@@ -155,7 +147,6 @@ export function AccountApiKeysPage() {
                       <RowActions>
                         <RowAction icon={Eye} label="详情" onClick={() => setInspectKey(item)} />
                         <RowAction icon={item.enabled === false ? ShieldCheck : KeyRound} label={item.enabled === false ? '启用' : '停用'} tone={item.enabled === false ? 'default' : 'warn'} onClick={() => setToggleTarget(item)} />
-                        <RowAction icon={TerminalSquare} label="接入" onClick={() => setShowGuide(true)} />
                       </RowActions>
                     </td>
                   </tr>
@@ -189,7 +180,6 @@ export function AccountApiKeysPage() {
           footer={
             <ModalActions>
               <Button onClick={() => setGeneratedKey('')}>关闭</Button>
-              <Button onClick={() => setShowGuide(true)}>接入说明</Button>
               <Button tone="primary" onClick={() => copyText(generatedKey)}>复制 Key</Button>
             </ModalActions>
           }
@@ -207,13 +197,13 @@ export function AccountApiKeysPage() {
               </div>
               <div className="admin-dialog-summary-card">
                 <span>订阅校验</span>
-                <strong>已接入</strong>
-                <small>请求会校验当前用户订阅</small>
+                <strong>已生效</strong>
+                <small>订阅校验生效</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>建议动作</span>
                 <strong>立刻复制保存</strong>
-                <small>关闭后不再回显原始值</small>
+                <small>仅本次可见</small>
               </div>
             </div>
             <div className="generated-key-box generated-key-floating">
@@ -242,10 +232,9 @@ export function AccountApiKeysPage() {
           }
         >
             <div className="admin-dialog">
-              <div className="admin-dialog-intro">
-                <strong>生成当前用户 Key</strong>
-                <span>生成后立即展示原始值，后续只保留预览。</span>
-              </div>
+            <div className="admin-dialog-intro">
+              <strong>生成当前用户 Key</strong>
+            </div>
             <div className="admin-dialog-grid modal-grid">
               <Field label="归属用户">
                 <Select value={draft.account_id} onChange={(e) => setDraft({ ...draft, account_id: e.target.value })}>
@@ -257,65 +246,6 @@ export function AccountApiKeysPage() {
                 <TextInput value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
               </Field>
             </div>
-          </div>
-        </Modal>
-      ) : null}
-
-      {showGuide ? (
-        <Modal title="API Key 接入说明" size="lg" onClose={() => setShowGuide(false)} footer={<ModalActions><Button onClick={() => setShowGuide(false)}>关闭</Button></ModalActions>}>
-          <div className="admin-dialog">
-            <div className="admin-dialog-intro">
-              <strong>OpenAI 兼容接入</strong>
-              <span>设置业务 Key 和统一 Base URL，按标准 `chat/completions` 发请求。</span>
-            </div>
-            <div className="admin-dialog-summary">
-              <div className="admin-dialog-summary-card">
-                <span>当前用户</span>
-                <strong>{selectedUser?.name || '未选择用户'}</strong>
-                <small>{selectedUser?.group_name || selectedUser?.source_type || '-'}</small>
-              </div>
-              <div className="admin-dialog-summary-card">
-                <span>Base URL</span>
-                <strong>{window.location.origin}</strong>
-                <small>统一代理入口</small>
-              </div>
-              <div className="admin-dialog-summary-card">
-                <span>展示值</span>
-                <strong>{generatedKey ? '原始 Key' : '预览 Key'}</strong>
-                <small>{generatedKey ? '本次生成结果' : '列表只保留预览'}</small>
-              </div>
-            </div>
-            <div className="use-key-summary">
-              <KeyRound size={16} />
-              <code>{generatedKey || rows[0]?.key_preview || '先生成或选择一个 Key'}</code>
-            </div>
-            <div className="account-guide-note">
-              推荐环境变量：`OPENAI_API_KEY` 使用当前用户 Key，`OPENAI_BASE_URL` 指向 `{window.location.origin}/v1`。
-            </div>
-            <CodeBlock
-              title="macOS / Linux"
-              code={`export OPENAI_API_KEY=YOUR_API_KEY\nexport OPENAI_BASE_URL=${window.location.origin}/v1`}
-              copied={copiedGuideValue === `export OPENAI_API_KEY=YOUR_API_KEY\nexport OPENAI_BASE_URL=${window.location.origin}/v1`}
-              onCopy={() => copyText(`export OPENAI_API_KEY=YOUR_API_KEY\nexport OPENAI_BASE_URL=${window.location.origin}/v1`)}
-            />
-            <CodeBlock
-              title="PowerShell"
-              code={`$env:OPENAI_API_KEY=\"YOUR_API_KEY\"\n$env:OPENAI_BASE_URL=\"${window.location.origin}/v1\"`}
-              copied={copiedGuideValue === `$env:OPENAI_API_KEY=\"YOUR_API_KEY\"\n$env:OPENAI_BASE_URL=\"${window.location.origin}/v1\"`}
-              onCopy={() => copyText(`$env:OPENAI_API_KEY=\"YOUR_API_KEY\"\n$env:OPENAI_BASE_URL=\"${window.location.origin}/v1\"`)}
-            />
-            <CodeBlock
-              title="curl 测试"
-              code={`curl ${window.location.origin}/v1/chat/completions \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d "{\\"model\\":\\"deepseek-v4-flash\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"hello\\"}]}"`}
-              copied={copiedGuideValue === `curl ${window.location.origin}/v1/chat/completions -H "Authorization: Bearer YOUR_API_KEY"`}
-              onCopy={() => copyText(`curl ${window.location.origin}/v1/chat/completions -H "Authorization: Bearer YOUR_API_KEY"`)}
-            />
-            <CodeBlock
-              title="Base URL"
-              code={`${window.location.origin}/v1`}
-              copied={copiedGuideValue === `${window.location.origin}/v1`}
-              onCopy={() => copyText(`${window.location.origin}/v1`)}
-            />
           </div>
         </Modal>
       ) : null}
@@ -385,18 +315,6 @@ export function AccountApiKeysPage() {
         </Modal>
       ) : null}
     </section>
-  );
-}
-
-function CodeBlock({ title, code, copied, onCopy }: { title: string; code: string; copied: boolean; onCopy: () => void }) {
-  return (
-    <div className="code-block">
-      <div className="code-block-head">
-        <span>{title}</span>
-        <button type="button" className={copied ? 'copied' : ''} onClick={onCopy}>复制</button>
-      </div>
-      <pre><code>{code}</code></pre>
-    </div>
   );
 }
 
