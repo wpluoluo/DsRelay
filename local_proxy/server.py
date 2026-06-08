@@ -5756,66 +5756,65 @@ def proxy_response(
                     return
                 finally:
                     close_response_quietly(upstream_response)
-                    if delegated_response:
-                        return
-                    duration_ms = int((time.perf_counter() - started_at) * 1000)
-                    response_preview = build_preview_summary(preview_parts)
-                    if stream_client_gone:
-                        resume_save_meta = save_interruption_resume_snapshot(
-                            execution=execution,
-                            protocol=protocol or "openai_chat_completions",
-                            request_id=request_id,
-                            upstream_url=upstream_url,
-                            partial_text=build_resume_partial_text(resume_text_parts, response_preview),
-                            response_preview=response_preview,
-                            bytes_sent=total_bytes,
-                        )
-                    elif not stream_error and not resume_save_meta:
-                        resume_save_meta = clear_interruption_resume_records(execution)
-                    completed_response_body = None
-                    if (
-                        not stream_error
-                        and not stream_client_gone
-                        and response_events
-                        and isinstance(completed_response_body := build_chat_completion_from_sse(response_events), dict)
-                    ):
-                        ensure_openai_response_usage(completed_response_body, request_payload)
-                        attach_execution_response_body(execution, completed_response_body)
-                    tail_summary = " || ".join(stream_tail_lines[-4:])
-                    finish_reason_summary = ", ".join(terminal_finish_reasons[-4:])
-                    if stream_client_gone:
-                        proxy_logger.info(
-                            "request_id=%s 上游=%s 线路=%s 状态=%s 流式=true 客户端已断开=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s 结束原因=%s 末尾片段=%s",
-                            request_id,
-                            upstream_url,
-                            route_url or upstream_url,
-                            upstream_response.status_code,
-                            total_bytes,
-                            duration_ms,
-                            sanitized_markers,
-                            repaired_tool_args,
-                            retry_count,
-                            response_preview,
-                            finish_reason_summary,
-                            tail_summary,
-                        )
-                    elif stream_error:
-                        proxy_logger.error(
-                            "request_id=%s 上游=%s 线路=%s 状态=%s 流式=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 错误=%s 预览=%s 结束原因=%s 末尾片段=%s",
-                            request_id,
-                            upstream_url,
-                            route_url or upstream_url,
-                            upstream_response.status_code,
-                            total_bytes,
-                            duration_ms,
-                            sanitized_markers,
-                            repaired_tool_args,
-                            retry_count,
-                            stream_error,
-                            response_preview or issue.get("preview", "") if 'issue' in locals() else response_preview,
-                            finish_reason_summary,
-                            tail_summary,
-                        )
+                    if not delegated_response:
+                        duration_ms = int((time.perf_counter() - started_at) * 1000)
+                        response_preview = build_preview_summary(preview_parts)
+                        if stream_client_gone:
+                            resume_save_meta = save_interruption_resume_snapshot(
+                                execution=execution,
+                                protocol=protocol or "openai_chat_completions",
+                                request_id=request_id,
+                                upstream_url=upstream_url,
+                                partial_text=build_resume_partial_text(resume_text_parts, response_preview),
+                                response_preview=response_preview,
+                                bytes_sent=total_bytes,
+                            )
+                        elif not stream_error and not resume_save_meta:
+                            resume_save_meta = clear_interruption_resume_records(execution)
+                        completed_response_body = None
+                        if (
+                            not stream_error
+                            and not stream_client_gone
+                            and response_events
+                            and isinstance(completed_response_body := build_chat_completion_from_sse(response_events), dict)
+                        ):
+                            ensure_openai_response_usage(completed_response_body, request_payload)
+                            attach_execution_response_body(execution, completed_response_body)
+                        tail_summary = " || ".join(stream_tail_lines[-4:])
+                        finish_reason_summary = ", ".join(terminal_finish_reasons[-4:])
+                        if stream_client_gone:
+                            proxy_logger.info(
+                                "request_id=%s 上游=%s 线路=%s 状态=%s 流式=true 客户端已断开=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s 结束原因=%s 末尾片段=%s",
+                                request_id,
+                                upstream_url,
+                                route_url or upstream_url,
+                                upstream_response.status_code,
+                                total_bytes,
+                                duration_ms,
+                                sanitized_markers,
+                                repaired_tool_args,
+                                retry_count,
+                                response_preview,
+                                finish_reason_summary,
+                                tail_summary,
+                            )
+                        elif stream_error:
+                            proxy_logger.error(
+                                "request_id=%s 上游=%s 线路=%s 状态=%s 流式=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 错误=%s 预览=%s 结束原因=%s 末尾片段=%s",
+                                request_id,
+                                upstream_url,
+                                route_url or upstream_url,
+                                upstream_response.status_code,
+                                total_bytes,
+                                duration_ms,
+                                sanitized_markers,
+                                repaired_tool_args,
+                                retry_count,
+                                stream_error,
+                                response_preview or issue.get("preview", "") if 'issue' in locals() else response_preview,
+                                finish_reason_summary,
+                                tail_summary,
+                            )
                     else:
                         proxy_logger.info(
                             "request_id=%s 上游=%s 线路=%s 状态=%s 流式=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s 结束原因=%s 末尾片段=%s",
@@ -8822,74 +8821,73 @@ def handle_anthropic_stream_response(
             raise
         finally:
             close_response_quietly(upstream_response)
-            if delegated_response:
-                return
-            duration_ms = int((time.perf_counter() - started_at) * 1000)
-            response_preview = build_preview_summary(preview_parts)
-            resume_meta = {}
-            if stream_client_gone:
-                resume_meta = save_interruption_resume_snapshot(
-                    execution=resume_execution,
-                    protocol="anthropic_messages",
-                    request_id=request_id,
-                    upstream_url=upstream_url,
-                    partial_text=build_resume_partial_text(resume_text_parts, response_preview),
-                    response_preview=response_preview,
+            if not delegated_response:
+                duration_ms = int((time.perf_counter() - started_at) * 1000)
+                response_preview = build_preview_summary(preview_parts)
+                resume_meta = {}
+                if stream_client_gone:
+                    resume_meta = save_interruption_resume_snapshot(
+                        execution=resume_execution,
+                        protocol="anthropic_messages",
+                        request_id=request_id,
+                        upstream_url=upstream_url,
+                        partial_text=build_resume_partial_text(resume_text_parts, response_preview),
+                        response_preview=response_preview,
+                        bytes_sent=total_bytes,
+                    )
+                elif not stream_error:
+                    resume_meta = clear_interruption_resume_records(resume_execution)
+                if stream_client_gone:
+                    proxy_logger.info(
+                        "request_id=%s 上游=%s 线路=%s 状态=%s 协议=anthropic_messages 流式=true 客户端已断开=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
+                        request_id,
+                        upstream_url,
+                        str((resume_execution or {}).get("route_url") or upstream_url),
+                        upstream_response.status_code,
+                        total_bytes,
+                        duration_ms,
+                        sanitized_markers,
+                        repaired_tool_args,
+                        retry_count,
+                        response_preview,
+                    )
+                elif stream_error:
+                    proxy_logger.error(
+                        "request_id=%s 上游=%s 线路=%s 状态=%s 协议=anthropic_messages 流式=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 错误=%s 预览=%s",
+                        request_id,
+                        upstream_url,
+                        str((resume_execution or {}).get("route_url") or upstream_url),
+                        upstream_response.status_code,
+                        total_bytes,
+                        duration_ms,
+                        sanitized_markers,
+                        repaired_tool_args,
+                        retry_count,
+                        stream_error,
+                        response_preview,
+                    )
+                else:
+                    proxy_logger.info(
+                        "request_id=%s 上游=%s 线路=%s 状态=%s 协议=anthropic_messages 流式=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
+                        request_id,
+                        upstream_url,
+                        str((resume_execution or {}).get("route_url") or upstream_url),
+                        upstream_response.status_code,
+                        total_bytes,
+                        duration_ms,
+                        sanitized_markers,
+                        repaired_tool_args,
+                        retry_count,
+                        response_preview or "",
+                    )
+                record_request_finished(
+                    request_id,
+                    status_code=upstream_response.status_code,
                     bytes_sent=total_bytes,
-                )
-            elif not stream_error:
-                resume_meta = clear_interruption_resume_records(resume_execution)
-            if stream_client_gone:
-                proxy_logger.info(
-                    "request_id=%s 上游=%s 线路=%s 状态=%s 协议=anthropic_messages 流式=true 客户端已断开=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
-                    request_id,
-                    upstream_url,
-                    str((resume_execution or {}).get("route_url") or upstream_url),
-                    upstream_response.status_code,
-                    total_bytes,
-                    duration_ms,
-                    sanitized_markers,
-                    repaired_tool_args,
-                    retry_count,
-                    response_preview,
-                )
-            elif stream_error:
-                proxy_logger.error(
-                    "request_id=%s 上游=%s 线路=%s 状态=%s 协议=anthropic_messages 流式=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 错误=%s 预览=%s",
-                    request_id,
-                    upstream_url,
-                    str((resume_execution or {}).get("route_url") or upstream_url),
-                    upstream_response.status_code,
-                    total_bytes,
-                    duration_ms,
-                    sanitized_markers,
-                    repaired_tool_args,
-                    retry_count,
-                    stream_error,
-                    response_preview,
-                )
-            else:
-                proxy_logger.info(
-                    "request_id=%s 上游=%s 线路=%s 状态=%s 协议=anthropic_messages 流式=true 字节=%s 耗时毫秒=%s 清洗标记=%s 工具参数修复=%s 重试次数=%s 预览=%s",
-                    request_id,
-                    upstream_url,
-                    str((resume_execution or {}).get("route_url") or upstream_url),
-                    upstream_response.status_code,
-                    total_bytes,
-                    duration_ms,
-                    sanitized_markers,
-                    repaired_tool_args,
-                    retry_count,
-                    response_preview or "",
-                )
-            record_request_finished(
-                request_id,
-                status_code=upstream_response.status_code,
-                bytes_sent=total_bytes,
-                duration_ms=duration_ms,
-                stream=True,
-                error=stream_error,
-                sanitized_markers=sanitized_markers,
+                    duration_ms=duration_ms,
+                    stream=True,
+                    error=stream_error,
+                    sanitized_markers=sanitized_markers,
                 response_preview=response_preview if upstream_response.status_code >= 400 else None,
                 repaired_tool_args=repaired_tool_args,
                 client_gone=stream_client_gone,
