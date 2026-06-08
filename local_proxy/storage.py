@@ -742,6 +742,22 @@ class ProxyStorage:
         item["updated_at"] = now
         return item
 
+    def delete_admin_account(self, account_id: str) -> None:
+        target = str(account_id or "").strip()
+        if not target:
+            raise ValueError("account_id is required")
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM admin_account_groups WHERE account_id = %s", (target,))
+                cur.execute("DELETE FROM admin_api_keys WHERE account_id = %s", (target,))
+                cur.execute("DELETE FROM admin_account_subscriptions WHERE account_id = %s", (target,))
+                cur.execute("DELETE FROM admin_payment_orders WHERE account_id = %s", (target,))
+                cur.execute("DELETE FROM admin_accounts WHERE id = %s", (target,))
+            conn.commit()
+        finally:
+            conn.close()
+
     def list_admin_groups(self) -> list[dict]:
         rows = []
         conn = self._connect()

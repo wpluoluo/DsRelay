@@ -261,6 +261,7 @@ export type AdminAccount = {
 export type AdminUser = {
   id: string;
   name: string;
+  external_key?: string;
   preview?: string;
   source_type?: string;
   role?: string;
@@ -268,6 +269,7 @@ export type AdminUser = {
   balance_cents?: number;
   concurrency_limit?: number;
   allowed_group_ids?: string[];
+  group_ids?: string[];
   group_id?: string;
   group_name?: string;
   enabled?: boolean;

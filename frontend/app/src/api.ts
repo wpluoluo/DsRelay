@@ -83,6 +83,39 @@ export function fetchAdminUsers(): Promise<AdminListPayload<AdminUser>> {
   return requestJson<AdminListPayload<AdminUser>>('/admin/users');
 }
 
+export function createAdminUser(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminUser }> {
+  return requestJson<{ ok?: boolean; item?: AdminUser }>('/admin/users', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateAdminUser(userId: string, payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminUser }> {
+  return requestJson<{ ok?: boolean; item?: AdminUser }>(`/admin/users/${userId}`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function setAdminUserEnabled(userId: string, enabled: boolean): Promise<{ ok?: boolean; item?: AdminUser }> {
+  return requestJson<{ ok?: boolean; item?: AdminUser }>(`/admin/users/${userId}/enabled`, {
+    method: 'POST',
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export function resetAdminUserExternalKey(userId: string): Promise<{ ok?: boolean; item?: AdminUser }> {
+  return requestJson<{ ok?: boolean; item?: AdminUser }>(`/admin/users/${userId}/reset-key`, {
+    method: 'POST',
+  });
+}
+
+export function deleteAdminUser(userId: string): Promise<{ ok?: boolean; id?: string }> {
+  return requestJson<{ ok?: boolean; id?: string }>(`/admin/users/${userId}`, {
+    method: 'DELETE',
+  });
+}
+
 export function saveAdminAccount(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminAccount }> {
   return requestJson<{ ok?: boolean; item?: AdminAccount }>('/admin/accounts', {
     method: 'POST',

@@ -18,6 +18,34 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
     def admin_users():
         return jsonify(analytics_service.list_users())
 
+    @app.post("/admin/users")
+    @admin_required
+    def admin_users_create():
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.create_user(payload))
+
+    @app.post("/admin/users/<user_id>")
+    @admin_required
+    def admin_users_update(user_id: str):
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.update_user(user_id, payload))
+
+    @app.post("/admin/users/<user_id>/enabled")
+    @admin_required
+    def admin_users_enabled(user_id: str):
+        payload = request.get_json(silent=True) or {}
+        return jsonify(analytics_service.set_user_enabled(user_id, payload.get("enabled") is True))
+
+    @app.post("/admin/users/<user_id>/reset-key")
+    @admin_required
+    def admin_users_reset_key(user_id: str):
+        return jsonify(analytics_service.reset_user_external_key(user_id))
+
+    @app.delete("/admin/users/<user_id>")
+    @admin_required
+    def admin_users_delete(user_id: str):
+        return jsonify(analytics_service.delete_user(user_id))
+
     @app.post("/admin/accounts")
     @admin_required
     def admin_accounts_upsert():

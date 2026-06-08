@@ -8,6 +8,7 @@ from .payments import AdminPaymentsMixin
 from .protocols import AdminProtocolsMixin
 from .subscriptions import AdminSubscriptionsMixin
 from .accounts import AdminAccountsMixin
+from .users import AdminUsersMixin
 
 
 class AdminConsoleService(
@@ -17,6 +18,7 @@ class AdminConsoleService(
     AdminSubscriptionsMixin,
     AdminApiKeysMixin,
     AdminAccountsMixin,
+    AdminUsersMixin,
     AdminAnalyticsMixin,
     AdminServiceBase,
 ):
