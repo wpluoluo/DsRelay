@@ -26,6 +26,68 @@ class ProxyStorage:
     def _connect(self):
         return _build_conn(self._cfg)
 
+    @staticmethod
+    def _table_exists(cur, table_name: str) -> bool:
+        cur.execute("SHOW TABLES LIKE %s", (str(table_name),))
+        return cur.fetchone() is not None
+
+    @staticmethod
+    def _column_exists(cur, table_name: str, column_name: str) -> bool:
+        cur.execute(f"SHOW COLUMNS FROM `{table_name}` LIKE %s", (str(column_name),))
+        return cur.fetchone() is not None
+
+    @staticmethod
+    def _index_exists(cur, table_name: str, index_name: str) -> bool:
+        cur.execute(f"SHOW INDEX FROM `{table_name}` WHERE Key_name = %s", (str(index_name),))
+        return cur.fetchone() is not None
+
+    @staticmethod
+    def _exec_ignore(cur, sql: str, params=None) -> None:
+        try:
+            cur.execute(sql, params or ())
+        except Exception:
+            pass
+
+    def _migrate_admin_account_schema(self, cur) -> None:
+        table_renames = [
+            ("admin_users", "admin_accounts"),
+            ("admin_user_groups", "admin_account_groups"),
+            ("admin_user_subscriptions", "admin_account_subscriptions"),
+        ]
+        for old_name, new_name in table_renames:
+            if self._table_exists(cur, old_name) and not self._table_exists(cur, new_name):
+                cur.execute(f"RENAME TABLE `{old_name}` TO `{new_name}`")
+
+        column_renames = [
+            ("admin_api_keys", "user_id", "account_id", "VARCHAR(64) NOT NULL"),
+            ("admin_payment_orders", "user_id", "account_id", "VARCHAR(64) NOT NULL"),
+            ("admin_account_groups", "user_id", "account_id", "VARCHAR(64) NOT NULL"),
+            ("admin_account_subscriptions", "user_id", "account_id", "VARCHAR(64) NOT NULL"),
+        ]
+        for table_name, old_col, new_col, definition in column_renames:
+            if not self._table_exists(cur, table_name):
+                continue
+            has_old = self._column_exists(cur, table_name, old_col)
+            has_new = self._column_exists(cur, table_name, new_col)
+            if has_old and not has_new:
+                cur.execute(f"ALTER TABLE `{table_name}` CHANGE COLUMN `{old_col}` `{new_col}` {definition}")
+
+        index_renames = [
+            ("admin_accounts", "uniq_admin_users_external_key", "uniq_admin_accounts_external_key", "ALTER TABLE `admin_accounts` ADD UNIQUE KEY `uniq_admin_accounts_external_key` (`external_key`)"),
+            ("admin_account_groups", "idx_admin_user_groups_group_id", "idx_admin_account_groups_group_id", "ALTER TABLE `admin_account_groups` ADD INDEX `idx_admin_account_groups_group_id` (`group_id`)"),
+            ("admin_api_keys", "idx_admin_api_keys_user_id", "idx_admin_api_keys_account_id", "ALTER TABLE `admin_api_keys` ADD INDEX `idx_admin_api_keys_account_id` (`account_id`)"),
+            ("admin_account_subscriptions", "idx_admin_user_subscriptions_user_id", "idx_admin_account_subscriptions_account_id", "ALTER TABLE `admin_account_subscriptions` ADD INDEX `idx_admin_account_subscriptions_account_id` (`account_id`)"),
+            ("admin_account_subscriptions", "idx_admin_user_subscriptions_plan_id", "idx_admin_account_subscriptions_plan_id", "ALTER TABLE `admin_account_subscriptions` ADD INDEX `idx_admin_account_subscriptions_plan_id` (`plan_id`)"),
+            ("admin_payment_orders", "idx_admin_payment_orders_user_id", "idx_admin_payment_orders_account_id", "ALTER TABLE `admin_payment_orders` ADD INDEX `idx_admin_payment_orders_account_id` (`account_id`)"),
+        ]
+        for table_name, old_idx, new_idx, create_sql in index_renames:
+            if not self._table_exists(cur, table_name):
+                continue
+            if not self._index_exists(cur, table_name, new_idx):
+                self._exec_ignore(cur, create_sql)
+            if self._index_exists(cur, table_name, old_idx):
+                self._exec_ignore(cur, f"ALTER TABLE `{table_name}` DROP INDEX `{old_idx}`")
+
     def init_schema(self) -> None:
         conn = self._connect()
         try:
@@ -97,7 +159,7 @@ class ProxyStorage:
                 )
                 cur.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS admin_users (
+                    CREATE TABLE IF NOT EXISTS admin_accounts (
                         id VARCHAR(64) PRIMARY KEY,
                         name VARCHAR(128) NOT NULL,
                         external_key VARCHAR(128) NOT NULL,
@@ -112,10 +174,11 @@ class ProxyStorage:
                         note TEXT NULL,
                         created_at DOUBLE NOT NULL,
                         updated_at DOUBLE NOT NULL,
-                        UNIQUE KEY uniq_admin_users_external_key (external_key)
+                        UNIQUE KEY uniq_admin_accounts_external_key (external_key)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                     """
                 )
+                self._migrate_admin_account_schema(cur)
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS admin_groups (
@@ -134,27 +197,27 @@ class ProxyStorage:
                     """
                 )
                 try:
-                    cur.execute("ALTER TABLE admin_users ADD COLUMN role_name VARCHAR(32) NOT NULL DEFAULT 'user' AFTER source_type")
+                    cur.execute("ALTER TABLE admin_accounts ADD COLUMN role_name VARCHAR(32) NOT NULL DEFAULT 'user' AFTER source_type")
                 except Exception:
                     pass
                 try:
-                    cur.execute("ALTER TABLE admin_users ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'active' AFTER role_name")
+                    cur.execute("ALTER TABLE admin_accounts ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'active' AFTER role_name")
                 except Exception:
                     pass
                 try:
-                    cur.execute("ALTER TABLE admin_users ADD COLUMN balance_cents BIGINT NOT NULL DEFAULT 0 AFTER status")
+                    cur.execute("ALTER TABLE admin_accounts ADD COLUMN balance_cents BIGINT NOT NULL DEFAULT 0 AFTER status")
                 except Exception:
                     pass
                 try:
-                    cur.execute("ALTER TABLE admin_users ADD COLUMN concurrency_limit INT NOT NULL DEFAULT 0 AFTER balance_cents")
+                    cur.execute("ALTER TABLE admin_accounts ADD COLUMN concurrency_limit INT NOT NULL DEFAULT 0 AFTER balance_cents")
                 except Exception:
                     pass
                 try:
-                    cur.execute("ALTER TABLE admin_users ADD COLUMN allowed_group_ids_json MEDIUMTEXT NULL AFTER concurrency_limit")
+                    cur.execute("ALTER TABLE admin_accounts ADD COLUMN allowed_group_ids_json MEDIUMTEXT NULL AFTER concurrency_limit")
                 except Exception:
                     pass
                 try:
-                    cur.execute("ALTER TABLE admin_users ADD COLUMN extra_json MEDIUMTEXT NULL AFTER allowed_group_ids_json")
+                    cur.execute("ALTER TABLE admin_accounts ADD COLUMN extra_json MEDIUMTEXT NULL AFTER allowed_group_ids_json")
                 except Exception:
                     pass
                 try:
@@ -175,12 +238,12 @@ class ProxyStorage:
                     pass
                 cur.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS admin_user_groups (
-                        user_id VARCHAR(64) NOT NULL,
+                    CREATE TABLE IF NOT EXISTS admin_account_groups (
+                        account_id VARCHAR(64) NOT NULL,
                         group_id VARCHAR(64) NOT NULL,
                         created_at DOUBLE NOT NULL,
-                        PRIMARY KEY (user_id, group_id),
-                        INDEX idx_admin_user_groups_group_id (group_id)
+                        PRIMARY KEY (account_id, group_id),
+                        INDEX idx_admin_account_groups_group_id (group_id)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                     """
                 )
@@ -188,7 +251,7 @@ class ProxyStorage:
                     """
                     CREATE TABLE IF NOT EXISTS admin_api_keys (
                         id VARCHAR(64) PRIMARY KEY,
-                        user_id VARCHAR(64) NOT NULL,
+                        account_id VARCHAR(64) NOT NULL,
                         name VARCHAR(128) NOT NULL,
                         key_hash VARCHAR(128) NOT NULL,
                         key_preview VARCHAR(64) NOT NULL,
@@ -196,7 +259,7 @@ class ProxyStorage:
                         last_used_at DOUBLE NULL,
                         created_at DOUBLE NOT NULL,
                         updated_at DOUBLE NOT NULL,
-                        INDEX idx_admin_api_keys_user_id (user_id),
+                        INDEX idx_admin_api_keys_account_id (account_id),
                         UNIQUE KEY uniq_admin_api_keys_hash (key_hash)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                     """
@@ -225,9 +288,9 @@ class ProxyStorage:
                     pass
                 cur.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS admin_user_subscriptions (
+                    CREATE TABLE IF NOT EXISTS admin_account_subscriptions (
                         id VARCHAR(64) PRIMARY KEY,
-                        user_id VARCHAR(64) NOT NULL,
+                        account_id VARCHAR(64) NOT NULL,
                         plan_id VARCHAR(64) NOT NULL,
                         group_id VARCHAR(64) NULL,
                         status VARCHAR(32) NOT NULL,
@@ -238,8 +301,8 @@ class ProxyStorage:
                         monthly_used INT NOT NULL DEFAULT 0,
                         created_at DOUBLE NOT NULL,
                         updated_at DOUBLE NOT NULL,
-                        INDEX idx_admin_user_subscriptions_user_id (user_id),
-                        INDEX idx_admin_user_subscriptions_plan_id (plan_id)
+                        INDEX idx_admin_account_subscriptions_account_id (account_id),
+                        INDEX idx_admin_account_subscriptions_plan_id (plan_id)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                     """
                 )
@@ -260,7 +323,7 @@ class ProxyStorage:
                     """
                     CREATE TABLE IF NOT EXISTS admin_payment_orders (
                         id VARCHAR(64) PRIMARY KEY,
-                        user_id VARCHAR(64) NOT NULL,
+                        account_id VARCHAR(64) NOT NULL,
                         plan_id VARCHAR(64) NOT NULL,
                         subscription_id VARCHAR(64) NULL,
                         channel_id VARCHAR(64) NULL,
@@ -274,7 +337,7 @@ class ProxyStorage:
                         paid_at DOUBLE NULL,
                         created_at DOUBLE NOT NULL,
                         updated_at DOUBLE NOT NULL,
-                        INDEX idx_admin_payment_orders_user_id (user_id),
+                        INDEX idx_admin_payment_orders_account_id (account_id),
                         INDEX idx_admin_payment_orders_plan_id (plan_id),
                         INDEX idx_admin_payment_orders_status (status)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -635,7 +698,7 @@ class ProxyStorage:
                     SELECT id, name, external_key, source_type, role_name, status, balance_cents,
                            concurrency_limit, allowed_group_ids_json, extra_json,
                            enabled, note, created_at, updated_at
-                    FROM admin_users
+                    FROM admin_accounts
                     ORDER BY updated_at DESC, created_at DESC
                     """
                 )
@@ -709,12 +772,12 @@ class ProxyStorage:
         conn = self._connect()
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT created_at FROM admin_users WHERE id = %s", (item["id"],))
+                cur.execute("SELECT created_at FROM admin_accounts WHERE id = %s", (item["id"],))
                 row = cur.fetchone()
                 created_at = float(row[0] or now) if row else now
                 cur.execute(
                     """
-                    REPLACE INTO admin_users
+                    REPLACE INTO admin_accounts
                     (id, name, external_key, source_type, role_name, status, balance_cents, concurrency_limit, allowed_group_ids_json, extra_json, enabled, note, created_at, updated_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
@@ -844,11 +907,11 @@ class ProxyStorage:
         conn = self._connect()
         try:
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM admin_user_groups WHERE user_id = %s", (normalized_account_id,))
+                cur.execute("DELETE FROM admin_account_groups WHERE account_id = %s", (normalized_account_id,))
                 if normalized_group_ids:
                     cur.executemany(
                         """
-                        INSERT INTO admin_user_groups (user_id, group_id, created_at)
+                        INSERT INTO admin_account_groups (account_id, group_id, created_at)
                         VALUES (%s, %s, %s)
                         """,
                         [(normalized_account_id, group_id, now) for group_id in normalized_group_ids],
@@ -864,8 +927,8 @@ class ProxyStorage:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT user_id, group_id, created_at
-                    FROM admin_user_groups
+                    SELECT account_id, group_id, created_at
+                    FROM admin_account_groups
                     ORDER BY created_at DESC
                     """
                 )
@@ -888,7 +951,7 @@ class ProxyStorage:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, user_id, name, key_hash, key_preview, enabled, last_used_at, created_at, updated_at
+                    SELECT id, account_id, name, key_hash, key_preview, enabled, last_used_at, created_at, updated_at
                     FROM admin_api_keys
                     ORDER BY updated_at DESC, created_at DESC
                     """
@@ -933,7 +996,7 @@ class ProxyStorage:
                 cur.execute(
                     """
                     REPLACE INTO admin_api_keys
-                    (id, user_id, name, key_hash, key_preview, enabled, last_used_at, created_at, updated_at)
+                    (id, account_id, name, key_hash, key_preview, enabled, last_used_at, created_at, updated_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
@@ -990,10 +1053,10 @@ class ProxyStorage:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT k.id, k.user_id, k.name, k.key_hash, k.key_preview, k.enabled,
+                    SELECT k.id, k.account_id, k.name, k.key_hash, k.key_preview, k.enabled,
                            u.name, u.source_type, u.enabled, u.note, u.status, u.allowed_group_ids_json
                     FROM admin_api_keys k
-                    LEFT JOIN admin_users u ON u.id = k.user_id
+                    LEFT JOIN admin_accounts u ON u.id = k.account_id
                     WHERE k.key_hash = %s
                     LIMIT 1
                     """,
@@ -1113,11 +1176,11 @@ class ProxyStorage:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT s.id, s.user_id, s.plan_id, s.group_id, s.status, s.started_at, s.expires_at,
+                    SELECT s.id, s.account_id, s.plan_id, s.group_id, s.status, s.started_at, s.expires_at,
                            s.daily_used, s.weekly_used, s.monthly_used, s.created_at, s.updated_at,
                            u.name, p.name, g.name, p.price_cents
-                    FROM admin_user_subscriptions s
-                    LEFT JOIN admin_users u ON u.id = s.user_id
+                    FROM admin_account_subscriptions s
+                    LEFT JOIN admin_accounts u ON u.id = s.account_id
                     LEFT JOIN admin_subscription_plans p ON p.id = s.plan_id
                     LEFT JOIN admin_groups g ON g.id = s.group_id
                     ORDER BY s.updated_at DESC, s.created_at DESC
@@ -1167,13 +1230,13 @@ class ProxyStorage:
         conn = self._connect()
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT created_at FROM admin_user_subscriptions WHERE id = %s", (item["id"],))
+                cur.execute("SELECT created_at FROM admin_account_subscriptions WHERE id = %s", (item["id"],))
                 row = cur.fetchone()
                 created_at = float(row[0] or now) if row else now
                 cur.execute(
                     """
-                    REPLACE INTO admin_user_subscriptions
-                    (id, user_id, plan_id, group_id, status, started_at, expires_at, daily_used, weekly_used, monthly_used, created_at, updated_at)
+                    REPLACE INTO admin_account_subscriptions
+                    (id, account_id, plan_id, group_id, status, started_at, expires_at, daily_used, weekly_used, monthly_used, created_at, updated_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
@@ -1277,7 +1340,7 @@ class ProxyStorage:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT o.id, o.user_id, o.plan_id, o.subscription_id, o.channel_id, o.amount_cents, o.currency, o.status,
+                    SELECT o.id, o.account_id, o.plan_id, o.subscription_id, o.channel_id, o.amount_cents, o.currency, o.status,
                            o.provider_order_id, o.resume_token, o.payload_json, o.provider_payload_json, o.paid_at, o.created_at, o.updated_at,
                            p.group_id, g.name, p.price_cents
                     FROM admin_payment_orders o
@@ -1438,7 +1501,7 @@ class ProxyStorage:
                 cur.execute(
                     """
                     REPLACE INTO admin_payment_orders
-                    (id, user_id, plan_id, subscription_id, channel_id, amount_cents, currency, status, provider_order_id, resume_token, payload_json, provider_payload_json, paid_at, created_at, updated_at)
+                    (id, account_id, plan_id, subscription_id, channel_id, amount_cents, currency, status, provider_order_id, resume_token, payload_json, provider_payload_json, paid_at, created_at, updated_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
@@ -1553,9 +1616,9 @@ class ProxyStorage:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, user_id, plan_id, group_id, status, started_at, expires_at,
+                    SELECT id, account_id, plan_id, group_id, status, started_at, expires_at,
                            daily_used, weekly_used, monthly_used, created_at, updated_at
-                    FROM admin_user_subscriptions
+                    FROM admin_account_subscriptions
                     WHERE id = %s
                     LIMIT 1
                     """,
@@ -1591,12 +1654,12 @@ class ProxyStorage:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT s.id, s.user_id, s.plan_id, s.group_id, s.status, s.started_at, s.expires_at,
+                    SELECT s.id, s.account_id, s.plan_id, s.group_id, s.status, s.started_at, s.expires_at,
                            p.name, p.price_cents, g.name
-                    FROM admin_user_subscriptions s
+                    FROM admin_account_subscriptions s
                     LEFT JOIN admin_subscription_plans p ON p.id = s.plan_id
                     LEFT JOIN admin_groups g ON g.id = s.group_id
-                    WHERE s.user_id = %s
+                    WHERE s.account_id = %s
                       AND s.status = 'active'
                       AND (s.expires_at IS NULL OR s.expires_at > %s)
                     ORDER BY s.updated_at DESC, s.created_at DESC
