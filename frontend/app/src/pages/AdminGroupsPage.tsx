@@ -31,6 +31,7 @@ type GroupDraft = {
 };
 
 type GroupColumnKey = 'platform' | 'billing' | 'users' | 'subscriptions' | 'requests' | 'errors' | 'tokens' | 'input' | 'output' | 'status';
+type GroupFilterKey = 'platform' | 'status' | 'exclusive';
 type ExclusiveFilter = '' | 'exclusive' | 'public';
 type GroupExtraEntry = { account_id: string; account_name?: string; value: number };
 
@@ -56,6 +57,7 @@ const EMPTY_GROUP: GroupDraft = {
 };
 
 const DEFAULT_VISIBLE_COLUMNS: GroupColumnKey[] = ['platform', 'billing', 'users', 'subscriptions', 'requests', 'status'];
+const DEFAULT_VISIBLE_FILTERS: GroupFilterKey[] = ['platform', 'status', 'exclusive'];
 const STORAGE_KEY = 'admin-groups-view-state';
 
 export function AdminGroupsPage() {
@@ -75,6 +77,7 @@ export function AdminGroupsPage() {
     exclusiveFilter: '' as ExclusiveFilter,
     pageSize: 20,
     visibleColumns: DEFAULT_VISIBLE_COLUMNS,
+    visibleFilters: DEFAULT_VISIBLE_FILTERS,
   });
   const [search, setSearch] = useState(savedState.search);
   const [statusFilter, setStatusFilter] = useState(savedState.statusFilter);
@@ -83,6 +86,7 @@ export function AdminGroupsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
   const [visibleColumns, setVisibleColumns] = useState<Set<GroupColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
+  const [visibleFilters, setVisibleFilters] = useState<Set<GroupFilterKey>>(new Set(savedState.visibleFilters || DEFAULT_VISIBLE_FILTERS));
 
   const saveMutation = useMutation({
     mutationFn: saveAdminGroup,
@@ -151,8 +155,9 @@ export function AdminGroupsPage() {
       exclusiveFilter,
       pageSize,
       visibleColumns: Array.from(visibleColumns),
+      visibleFilters: Array.from(visibleFilters),
     });
-  }, [exclusiveFilter, pageSize, platformFilter, search, statusFilter, visibleColumns]);
+  }, [exclusiveFilter, pageSize, platformFilter, search, statusFilter, visibleColumns, visibleFilters]);
 
   function openCreate() {
     setDraft({ ...EMPTY_GROUP });
@@ -230,6 +235,15 @@ export function AdminGroupsPage() {
     });
   }
 
+  function toggleFilter(key: GroupFilterKey) {
+    setVisibleFilters((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   function openSortModal() {
     setSortDraft(filteredItems.slice());
     setSortModalOpen(true);
@@ -287,6 +301,20 @@ export function AdminGroupsPage() {
               <ToolbarButtonRow>
                 <ActionButton onClick={() => groupsQuery.refetch()}><RefreshCw size={15} />刷新</ActionButton>
                 <ActionButton onClick={openSortModal}><ArrowUp size={15} />排序</ActionButton>
+                <ToolsMenu label="筛选设置" icon={false}>
+                  <button type="button" onClick={() => toggleFilter('platform')}>
+                    <span>平台</span>
+                    <strong>{visibleFilters.has('platform') ? '✓' : ''}</strong>
+                  </button>
+                  <button type="button" onClick={() => toggleFilter('status')}>
+                    <span>状态</span>
+                    <strong>{visibleFilters.has('status') ? '✓' : ''}</strong>
+                  </button>
+                  <button type="button" onClick={() => toggleFilter('exclusive')}>
+                    <span>分组类型</span>
+                    <strong>{visibleFilters.has('exclusive') ? '✓' : ''}</strong>
+                  </button>
+                </ToolsMenu>
                 <ColumnMenu
                   label="列设置"
                   items={[
@@ -318,20 +346,26 @@ export function AdminGroupsPage() {
             }
           >
             <SearchField value={search} placeholder="搜索分组 / 描述 / ID" onChange={(value) => { setSearch(value); setPage(1); }} />
-            <Select value={platformFilter} onChange={(event) => { setPlatformFilter(event.target.value); setPage(1); }}>
-              <option value="">全部平台</option>
-              {platformOptions.map((item) => <option key={item} value={item}>{item}</option>)}
-            </Select>
-            <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}>
-              <option value="">全部状态</option>
-              <option value="enabled">启用</option>
-              <option value="disabled">停用</option>
-            </Select>
-            <Select value={exclusiveFilter} onChange={(event) => { setExclusiveFilter(event.target.value as ExclusiveFilter); setPage(1); }}>
-              <option value="">全部分组</option>
-              <option value="exclusive">专属分组</option>
-              <option value="public">公开分组</option>
-            </Select>
+            {visibleFilters.has('platform') ? (
+              <Select value={platformFilter} onChange={(event) => { setPlatformFilter(event.target.value); setPage(1); }}>
+                <option value="">全部平台</option>
+                {platformOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+              </Select>
+            ) : null}
+            {visibleFilters.has('status') ? (
+              <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}>
+                <option value="">全部状态</option>
+                <option value="enabled">启用</option>
+                <option value="disabled">停用</option>
+              </Select>
+            ) : null}
+            {visibleFilters.has('exclusive') ? (
+              <Select value={exclusiveFilter} onChange={(event) => { setExclusiveFilter(event.target.value as ExclusiveFilter); setPage(1); }}>
+                <option value="">全部分组</option>
+                <option value="exclusive">专属分组</option>
+                <option value="public">公开分组</option>
+              </Select>
+            ) : null}
           </FilterToolbar>
         }
         table={

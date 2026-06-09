@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Activity, Ban, Edit, Eye, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { deleteAdminChannel, fetchAdminChannels, fetchAdminGroups, saveAdminChannel, saveConfig } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Panel, PanelHead, Select, TextArea, TextInput } from '../components';
-import { ActionButton, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
+import { ActionButton, ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { buildPageIntro } from '../navigation';
 import { useDashboard } from '../state/dashboardContext';
 import { queryClient } from '../state/queryClient';
@@ -29,6 +29,8 @@ type ChannelPlatformConfig = {
   group_ids: string[];
 };
 
+type ChannelColumnKey = 'platform' | 'billing' | 'groups' | 'pricing' | 'plans' | 'status';
+type ChannelFilterKey = 'platform' | 'status';
 type StatusFilter = '' | 'enabled' | 'disabled';
 
 const EMPTY_DRAFT: ChannelDraft = {
@@ -47,6 +49,8 @@ const EMPTY_DRAFT: ChannelDraft = {
   sort_order: 0,
 };
 
+const DEFAULT_VISIBLE_COLUMNS: ChannelColumnKey[] = ['platform', 'billing', 'groups', 'pricing', 'plans', 'status'];
+const DEFAULT_VISIBLE_FILTERS: ChannelFilterKey[] = ['platform', 'status'];
 const STORAGE_KEY = 'admin-channels-view-state';
 
 export function AdminChannelsPricingPage() {
@@ -55,6 +59,8 @@ export function AdminChannelsPricingPage() {
     statusFilter: '' as StatusFilter,
     platformFilter: '',
     pageSize: 20,
+    visibleColumns: DEFAULT_VISIBLE_COLUMNS,
+    visibleFilters: DEFAULT_VISIBLE_FILTERS,
   });
   const channelsQuery = useQuery({ queryKey: ['admin-channels'], queryFn: fetchAdminChannels, refetchInterval: 10000 });
   const groupsQuery = useQuery({ queryKey: ['admin-groups'], queryFn: fetchAdminGroups, refetchInterval: 10000 });
@@ -63,6 +69,8 @@ export function AdminChannelsPricingPage() {
   const [platformFilter, setPlatformFilter] = useState(savedState.platformFilter || '');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
+  const [visibleColumns, setVisibleColumns] = useState<Set<ChannelColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
+  const [visibleFilters, setVisibleFilters] = useState<Set<ChannelFilterKey>>(new Set(savedState.visibleFilters || DEFAULT_VISIBLE_FILTERS));
   const [draft, setDraft] = useState<ChannelDraft | null>(null);
   const [inspectChannel, setInspectChannel] = useState<AdminChannel | null>(null);
   const [toggleTarget, setToggleTarget] = useState<AdminChannel | null>(null);
@@ -122,8 +130,15 @@ export function AdminChannelsPricingPage() {
   const pagedItems = filteredItems.slice((page - 1) * pageSize, page * pageSize);
 
   useEffect(() => {
-    writeStorageJSON(STORAGE_KEY, { search, statusFilter, platformFilter, pageSize });
-  }, [pageSize, platformFilter, search, statusFilter]);
+    writeStorageJSON(STORAGE_KEY, {
+      search,
+      statusFilter,
+      platformFilter,
+      pageSize,
+      visibleColumns: Array.from(visibleColumns),
+      visibleFilters: Array.from(visibleFilters),
+    });
+  }, [pageSize, platformFilter, search, statusFilter, visibleColumns, visibleFilters]);
 
   function openCreate() {
     setDraft({ ...EMPTY_DRAFT });
@@ -191,6 +206,24 @@ export function AdminChannelsPricingPage() {
     });
   }
 
+  function toggleColumn(key: ChannelColumnKey) {
+    setVisibleColumns((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleFilter(key: ChannelFilterKey) {
+    setVisibleFilters((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   return (
     <section className="grid-page">
       {buildPageIntro('/admin/channels/pricing')}
@@ -200,6 +233,27 @@ export function AdminChannelsPricingPage() {
             right={
               <ToolbarButtonRow>
                 <ActionButton onClick={() => channelsQuery.refetch()}><RefreshCw size={15} />刷新</ActionButton>
+                <ToolsMenu label="筛选设置" icon={false}>
+                  <button type="button" onClick={() => toggleFilter('platform')}>
+                    <span>平台</span>
+                    <strong>{visibleFilters.has('platform') ? '✓' : ''}</strong>
+                  </button>
+                  <button type="button" onClick={() => toggleFilter('status')}>
+                    <span>状态</span>
+                    <strong>{visibleFilters.has('status') ? '✓' : ''}</strong>
+                  </button>
+                </ToolsMenu>
+                <ColumnMenu
+                  label="列设置"
+                  items={[
+                    { key: 'platform', label: '平台', checked: visibleColumns.has('platform'), onToggle: () => toggleColumn('platform') },
+                    { key: 'billing', label: '计费模型', checked: visibleColumns.has('billing'), onToggle: () => toggleColumn('billing') },
+                    { key: 'groups', label: '分组', checked: visibleColumns.has('groups'), onToggle: () => toggleColumn('groups') },
+                    { key: 'pricing', label: '价格', checked: visibleColumns.has('pricing'), onToggle: () => toggleColumn('pricing') },
+                    { key: 'plans', label: '套餐', checked: visibleColumns.has('plans'), onToggle: () => toggleColumn('plans') },
+                    { key: 'status', label: '状态', checked: visibleColumns.has('status'), onToggle: () => toggleColumn('status') },
+                  ]}
+                />
                 <ToolsMenu>
                   <button type="button" onClick={() => { setSearch(''); setStatusFilter(''); setPlatformFilter(''); setPage(1); }}>
                     <span>清空筛选</span>
@@ -216,15 +270,19 @@ export function AdminChannelsPricingPage() {
             }
           >
             <SearchField value={search} placeholder="搜索渠道 / 平台 / 分组" onChange={(value) => { setSearch(value); setPage(1); }} />
-            <Select value={platformFilter} onChange={(event) => { setPlatformFilter(event.target.value); setPage(1); }}>
-              <option value="">全部平台</option>
-              {platformOptions.map((item) => <option key={item} value={item}>{item}</option>)}
-            </Select>
-            <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StatusFilter); setPage(1); }}>
-              <option value="">全部状态</option>
-              <option value="enabled">启用</option>
-              <option value="disabled">停用</option>
-            </Select>
+            {visibleFilters.has('platform') ? (
+              <Select value={platformFilter} onChange={(event) => { setPlatformFilter(event.target.value); setPage(1); }}>
+                <option value="">全部平台</option>
+                {platformOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+              </Select>
+            ) : null}
+            {visibleFilters.has('status') ? (
+              <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StatusFilter); setPage(1); }}>
+                <option value="">全部状态</option>
+                <option value="enabled">启用</option>
+                <option value="disabled">停用</option>
+              </Select>
+            ) : null}
           </FilterToolbar>
         }
         table={
@@ -233,12 +291,12 @@ export function AdminChannelsPricingPage() {
               <thead>
                 <tr>
                   <th>渠道</th>
-                  <th>平台</th>
-                  <th>计费模型</th>
-                  <th>分组</th>
-                  <th>价格</th>
-                  <th>套餐</th>
-                  <th>状态</th>
+                  {visibleColumns.has('platform') ? <th>平台</th> : null}
+                  {visibleColumns.has('billing') ? <th>计费模型</th> : null}
+                  {visibleColumns.has('groups') ? <th>分组</th> : null}
+                  {visibleColumns.has('pricing') ? <th>价格</th> : null}
+                  {visibleColumns.has('plans') ? <th>套餐</th> : null}
+                  {visibleColumns.has('status') ? <th>状态</th> : null}
                   <th>操作</th>
                 </tr>
               </thead>
@@ -251,17 +309,19 @@ export function AdminChannelsPricingPage() {
                         <small>{item.description || item.id}</small>
                       </div>
                     </td>
-                    <td>{item.platform || '-'}</td>
-                    <td>{item.billing_model_source || 'channel_mapped'}</td>
-                    <td>
-                      <div className="sub2-cell-stack sub2-cell-stack-tight">
-                        <strong>{formatNumber(item.group_count || item.group_ids?.length || 0)}</strong>
-                        <small>{item.group_names?.slice(0, 3).join(' / ') || '-'}</small>
-                      </div>
-                    </td>
-                    <td><strong className="sub2-number-cell">{formatNumber(item.pricing_count || item.model_pricing?.length || 0)}</strong></td>
-                    <td><strong className="sub2-number-cell">{formatNumber(item.plan_count || 0)}</strong></td>
-                    <td><Badge tone={item.enabled === false ? 'warn' : 'ok'}>{item.enabled === false ? '停用' : '启用'}</Badge></td>
+                    {visibleColumns.has('platform') ? <td>{item.platform || '-'}</td> : null}
+                    {visibleColumns.has('billing') ? <td>{item.billing_model_source || 'channel_mapped'}</td> : null}
+                    {visibleColumns.has('groups') ? (
+                      <td>
+                        <div className="sub2-cell-stack sub2-cell-stack-tight">
+                          <strong>{formatNumber(item.group_count || item.group_ids?.length || 0)}</strong>
+                          <small>{item.group_names?.slice(0, 3).join(' / ') || '-'}</small>
+                        </div>
+                      </td>
+                    ) : null}
+                    {visibleColumns.has('pricing') ? <td><strong className="sub2-number-cell">{formatNumber(item.pricing_count || item.model_pricing?.length || 0)}</strong></td> : null}
+                    {visibleColumns.has('plans') ? <td><strong className="sub2-number-cell">{formatNumber(item.plan_count || 0)}</strong></td> : null}
+                    {visibleColumns.has('status') ? <td><Badge tone={item.enabled === false ? 'warn' : 'ok'}>{item.enabled === false ? '停用' : '启用'}</Badge></td> : null}
                     <td>
                       <RowActions>
                         <RowAction icon={Eye} label="详情" onClick={() => setInspectChannel(item)} />
@@ -274,7 +334,7 @@ export function AdminChannelsPricingPage() {
                     </td>
                   </tr>
                 )) : (
-                  <ListEmptyRow colSpan={8} title="暂无渠道数据" action={<Button tone="primary" data-tour="channels-create-btn" onClick={openCreate}>添加渠道</Button>} />
+                  <ListEmptyRow colSpan={visibleColumns.size + 2} title="暂无渠道数据" action={<Button tone="primary" data-tour="channels-create-btn" onClick={openCreate}>添加渠道</Button>} />
                 )}
               </tbody>
             </table>
