@@ -11,36 +11,36 @@ import type { AccountRedeemHistoryItem, AdminContentItem } from '../types';
 import { copyTextToClipboard, formatNumber, formatUsdCost, maskEmpty } from '../utils';
 
 export function AccountRedeemPage() {
-  const { selectedUser, selectedUserId, reload } = useAccountCenter();
+  const { account, reload } = useAccountCenter();
   const [code, setCode] = useState('');
   const [result, setResult] = useState<any | null>(null);
   const redeemQuery = useQuery({
-    queryKey: ['account-redeem', selectedUserId],
-    queryFn: () => fetchAccountRedeem(selectedUserId),
-    enabled: Boolean(selectedUserId),
+    queryKey: ['account-redeem'],
+    queryFn: () => fetchAccountRedeem(),
     refetchInterval: 30000,
+    retry: false,
   });
   const redeemMutation = useMutation({
-    mutationFn: (value: string) => redeemAccountCode(selectedUserId, value),
+    mutationFn: (value: string) => redeemAccountCode(value),
     onSuccess: async (payload) => {
       setResult(payload);
       setCode('');
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['account-redeem', selectedUserId] }),
-        queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
+        queryClient.invalidateQueries({ queryKey: ['account-redeem'] }),
+        queryClient.invalidateQueries({ queryKey: ['account-me'] }),
         reload(),
       ]);
     },
   });
   const history = redeemQuery.data?.history || [];
   const latestHistory = history.slice(0, 20);
-  const balanceCents = redeemQuery.data?.balance_cents ?? selectedUser?.balance_cents ?? 0;
-  const concurrency = redeemQuery.data?.concurrency_limit ?? selectedUser?.concurrency_limit ?? 0;
+  const balanceCents = redeemQuery.data?.balance_cents ?? account?.balance_cents ?? 0;
+  const concurrency = redeemQuery.data?.concurrency_limit ?? account?.concurrency_limit ?? 0;
 
   function submitRedeem(event: React.FormEvent) {
     event.preventDefault();
     const value = code.trim();
-    if (!value || !selectedUserId) return;
+    if (!value) return;
     redeemMutation.mutate(value);
   }
 
@@ -48,7 +48,7 @@ export function AccountRedeemPage() {
     <section className="grid-page">
       {buildPageIntro('/redeem')}
       <div className="sub2-inline-summary">
-        <div className="sub2-inline-summary-item"><span>当前用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUserId || '-'}</small></div>
+        <div className="sub2-inline-summary-item"><span>账户</span><strong>{account?.name || '-'}</strong><small>{account?.id || '-'}</small></div>
         <div className="sub2-inline-summary-item"><span>余额</span><strong>{formatUsdCost(Number(balanceCents) / 100, 2)}</strong><small>账户余额</small></div>
         <div className="sub2-inline-summary-item"><span>并发</span><strong>{formatNumber(concurrency)}</strong><small>请求数</small></div>
         <div className="sub2-inline-summary-item"><span>兑换记录</span><strong>{formatNumber(history.length)}</strong><small>最近记录</small></div>
@@ -58,12 +58,12 @@ export function AccountRedeemPage() {
           <PanelHead title={<><Gift size={18} />兑换码</>} />
           <form className="account-value-form" onSubmit={submitRedeem}>
             <Field label="兑换码" full>
-              <TextInput value={code} onChange={(event) => setCode(event.target.value)} disabled={!selectedUserId || redeemMutation.isPending} />
+              <TextInput value={code} onChange={(event) => setCode(event.target.value)} disabled={redeemMutation.isPending} />
             </Field>
             {redeemMutation.error ? <div className="status-msg err">{redeemMutation.error instanceof Error ? redeemMutation.error.message : '兑换失败'}</div> : null}
             <div className="modal-actions">
               <Button type="button" onClick={() => void redeemQuery.refetch()}><RefreshCw size={15} />刷新</Button>
-              <Button type="submit" tone="primary" disabled={!selectedUserId || !code.trim() || redeemMutation.isPending}>
+              <Button type="submit" tone="primary" disabled={!code.trim() || redeemMutation.isPending}>
                 <CheckCircle2 size={15} />兑换
               </Button>
             </div>
@@ -99,24 +99,24 @@ export function AccountRedeemPage() {
 }
 
 export function AccountAffiliatePage() {
-  const { selectedUser, selectedUserId, reload } = useAccountCenter();
+  const { account, reload } = useAccountCenter();
   const [copied, setCopied] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const affiliateQuery = useQuery({
-    queryKey: ['account-affiliate', selectedUserId],
-    queryFn: () => fetchAccountAffiliate(selectedUserId),
-    enabled: Boolean(selectedUserId),
+    queryKey: ['account-affiliate'],
+    queryFn: () => fetchAccountAffiliate(),
     refetchInterval: 30000,
+    retry: false,
   });
   const transferMutation = useMutation({
-    mutationFn: () => transferAccountAffiliateQuota(selectedUserId),
+    mutationFn: () => transferAccountAffiliateQuota(),
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['account-affiliate', selectedUserId] }),
-        queryClient.invalidateQueries({ queryKey: ['account-redeem', selectedUserId] }),
-        queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
+        queryClient.invalidateQueries({ queryKey: ['account-affiliate'] }),
+        queryClient.invalidateQueries({ queryKey: ['account-redeem'] }),
+        queryClient.invalidateQueries({ queryKey: ['account-me'] }),
         reload(),
       ]);
     },
@@ -152,7 +152,7 @@ export function AccountAffiliatePage() {
     <section className="grid-page">
       {buildPageIntro('/affiliate')}
       <div className="sub2-inline-summary">
-        <div className="sub2-inline-summary-item"><span>当前用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUserId || '-'}</small></div>
+        <div className="sub2-inline-summary-item"><span>账户</span><strong>{account?.name || '-'}</strong><small>{account?.id || '-'}</small></div>
         <div className="sub2-inline-summary-item"><span>返利比例</span><strong>{formatNumber(detail?.effective_rebate_rate_percent || 0)}%</strong><small>当前策略</small></div>
         <div className="sub2-inline-summary-item"><span>邀请用户</span><strong>{formatNumber(detail?.aff_count || invitees.length)}</strong><small>邀请记录</small></div>
         <div className="sub2-inline-summary-item"><span>可转余额</span><strong>{formatUsdCost(Number(detail?.aff_quota_cents || 0) / 100, 2)}</strong><small>累计 {formatUsdCost(Number(detail?.aff_history_quota_cents || 0) / 100, 2)}</small></div>
@@ -163,7 +163,7 @@ export function AccountAffiliatePage() {
           action={(
             <div className="button-row">
               <Button onClick={() => void affiliateQuery.refetch()}><RefreshCw size={15} />刷新</Button>
-              <Button tone="primary" disabled={!selectedUserId || Number(detail?.aff_quota_cents || 0) <= 0 || transferMutation.isPending} onClick={() => transferMutation.mutate()}>
+              <Button tone="primary" disabled={Number(detail?.aff_quota_cents || 0) <= 0 || transferMutation.isPending} onClick={() => transferMutation.mutate()}>
                 转入余额
               </Button>
             </div>

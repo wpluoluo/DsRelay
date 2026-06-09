@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Eye, RefreshCw } from 'lucide-react';
-import { fetchAdminChannels, fetchAdminGroups, fetchAdminUsage } from '../api';
+import { fetchAccountUsage } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
 import { EmptyState, FilterToolbar, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow } from '../components/admin';
 import { buildPageIntro } from '../navigation';
@@ -14,9 +14,7 @@ type StatusFilter = '' | 'enabled' | 'disabled';
 type RouteStatusFilter = '' | 'ok' | 'degraded';
 
 export function AccountAvailableChannelsPage() {
-  const { selectedUser, selectedUserId, visiblePlans } = useAccountCenter();
-  const channelsQuery = useQuery({ queryKey: ['admin-channels'], queryFn: fetchAdminChannels, refetchInterval: 30000 });
-  const groupsQuery = useQuery({ queryKey: ['admin-groups'], queryFn: fetchAdminGroups, refetchInterval: 30000 });
+  const { account, groups, visiblePlans, visibleAvailableChannels, reload } = useAccountCenter();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('');
   const [groupFilter, setGroupFilter] = useState('');
@@ -24,13 +22,10 @@ export function AccountAvailableChannelsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
 
-  const userAllowedGroups = selectedUser?.allowed_group_ids || [];
-  const planGroupIds = visiblePlans.map((item) => item.group_id).filter((value): value is string => Boolean(value));
-  const allowedGroupIds = userAllowedGroups.length ? userAllowedGroups : planGroupIds;
-  const groups = groupsQuery.data?.items || [];
+  const allowedGroupIds = groups.map((group) => group.id);
   const channelRows = useMemo(() => {
     const keyword = search.trim().toLowerCase();
-    return (channelsQuery.data?.items || []).filter((item) => {
+    return visibleAvailableChannels.filter((item) => {
       const channelGroupIds = item.group_ids || [];
       const visibleByGroup = !allowedGroupIds.length || !channelGroupIds.length || channelGroupIds.some((groupId) => allowedGroupIds.includes(groupId));
       if (!visibleByGroup) return false;
@@ -48,7 +43,7 @@ export function AccountAvailableChannelsPage() {
       ].map((value) => String(value || '').toLowerCase()).join(' ');
       return haystack.includes(keyword);
     });
-  }, [allowedGroupIds, channelsQuery.data?.items, groupFilter, search, statusFilter]);
+  }, [allowedGroupIds, groupFilter, search, statusFilter, visibleAvailableChannels]);
 
   const totalPages = Math.max(1, Math.ceil(channelRows.length / pageSize));
   const pagedRows = channelRows.slice((page - 1) * pageSize, page * pageSize);
@@ -61,9 +56,9 @@ export function AccountAvailableChannelsPage() {
       <TablePageLayout
         actions={(
           <div className="sub2-inline-summary">
-            <div className="sub2-inline-summary-item"><span>当前用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '-'}</small></div>
+            <div className="sub2-inline-summary-item"><span>账户</span><strong>{account?.name || '-'}</strong><small>{account?.group_name || account?.source_type || '-'}</small></div>
             <div className="sub2-inline-summary-item"><span>可用渠道</span><strong>{formatNumber(activeCount)}</strong><small>当前筛选 {formatNumber(channelRows.length)}</small></div>
-            <div className="sub2-inline-summary-item"><span>可购计划</span><strong>{formatNumber(visiblePlans.length)}</strong><small>{selectedUserId || '-'}</small></div>
+            <div className="sub2-inline-summary-item"><span>可购计划</span><strong>{formatNumber(visiblePlans.length)}</strong><small>启用计划</small></div>
             <div className="sub2-inline-summary-item"><span>价格规则</span><strong>{formatNumber(pricingCount)}</strong><small>模型计费</small></div>
           </div>
         )}
@@ -71,7 +66,7 @@ export function AccountAvailableChannelsPage() {
           <FilterToolbar
             right={(
               <ToolbarButtonRow>
-                <Button onClick={() => void channelsQuery.refetch()}><RefreshCw size={15} />刷新</Button>
+                <Button onClick={() => void reload()}><RefreshCw size={15} />刷新</Button>
               </ToolbarButtonRow>
             )}
           >
@@ -275,12 +270,12 @@ export function AccountMonitorPage() {
 }
 
 export function AccountProfilePage() {
-  const { selectedUser, selectedUserId, apiKeys, subscriptions, orders, visiblePlans, visibleChannels } = useAccountCenter();
-  const usageQuery = useQuery({ queryKey: ['admin-usage'], queryFn: () => fetchAdminUsage(), refetchInterval: 30000 });
-  const userKeys = apiKeys.filter((item) => !selectedUserId || item.user_id === selectedUserId || item.account_id === selectedUserId);
-  const userSubscriptions = subscriptions.filter((item) => !selectedUserId || item.user_id === selectedUserId || item.account_id === selectedUserId);
-  const userOrders = orders.filter((item) => !selectedUserId || item.user_id === selectedUserId || item.account_id === selectedUserId);
-  const usageRows = (usageQuery.data?.items || []).filter((item) => !selectedUserId || item.consumer_id === selectedUserId);
+  const { account, apiKeys, subscriptions, orders, visiblePlans, visibleAvailableChannels } = useAccountCenter();
+  const usageQuery = useQuery({ queryKey: ['account-usage'], queryFn: () => fetchAccountUsage(), refetchInterval: 30000, retry: false });
+  const userKeys = apiKeys;
+  const userSubscriptions = subscriptions;
+  const userOrders = orders;
+  const usageRows = usageQuery.data?.items || [];
   const totalTokens = usageRows.reduce((sum, item) => sum + Number(item.total_tokens || 0), 0);
   const totalBytes = usageRows.reduce((sum, item) => sum + Number(item.input_bytes || 0) + Number(item.output_bytes || 0), 0);
   const totalCost = usageRows.reduce((sum, item) => sum + Number(item.actual_cost || item.total_cost || 0), 0);
@@ -290,7 +285,7 @@ export function AccountProfilePage() {
     <section className="grid-page">
       {buildPageIntro('/profile')}
       <div className="sub2-inline-summary">
-        <div className="sub2-inline-summary-item"><span>余额</span><strong>{formatUsdCost(Number(selectedUser?.balance_cents || 0) / 100, 2)}</strong><small>并发 {formatNumber(selectedUser?.concurrency_limit || 0)}</small></div>
+        <div className="sub2-inline-summary-item"><span>余额</span><strong>{formatUsdCost(Number(account?.balance_cents || 0) / 100, 2)}</strong><small>并发 {formatNumber(account?.concurrency_limit || 0)}</small></div>
         <div className="sub2-inline-summary-item"><span>API Key</span><strong>{formatNumber(userKeys.length)}</strong><small>启用 {formatNumber(userKeys.filter((item) => item.enabled !== false).length)}</small></div>
         <div className="sub2-inline-summary-item"><span>订阅</span><strong>{formatNumber(activeSubscriptions.length)}</strong><small>总数 {formatNumber(userSubscriptions.length)}</small></div>
         <div className="sub2-inline-summary-item"><span>使用记录</span><strong>{formatNumber(usageRows.length)}</strong><small>{formatTokenCount(totalTokens)}</small></div>
@@ -299,14 +294,14 @@ export function AccountProfilePage() {
         <div className="panel">
           <div className="panel-head"><h3>账户资料</h3></div>
           <div className="info-grid">
-            <div className="metric-line"><span>用户名称</span><strong>{selectedUser?.name || '-'}</strong></div>
-            <div className="metric-line"><span>邮箱</span><strong>{selectedUser?.email || '-'}</strong></div>
-            <div className="metric-line"><span>用户名</span><strong>{selectedUser?.username || '-'}</strong></div>
-            <div className="metric-line"><span>角色</span><strong>{selectedUser?.role || '-'}</strong></div>
-            <div className="metric-line"><span>状态</span><strong>{selectedUser?.status || '-'}</strong></div>
-            <div className="metric-line"><span>分组</span><strong>{selectedUser?.group_name || selectedUser?.group_id || '-'}</strong></div>
-            <div className="metric-line"><span>RPM</span><strong>{formatNumber(selectedUser?.rpm_limit || 0)}</strong></div>
-            <div className="metric-line"><span>密码</span><strong>{selectedUser?.password_set ? '已设置' : '未设置'}</strong></div>
+            <div className="metric-line"><span>用户名称</span><strong>{account?.name || '-'}</strong></div>
+            <div className="metric-line"><span>邮箱</span><strong>{account?.email || '-'}</strong></div>
+            <div className="metric-line"><span>用户名</span><strong>{account?.username || '-'}</strong></div>
+            <div className="metric-line"><span>角色</span><strong>{account?.role || '-'}</strong></div>
+            <div className="metric-line"><span>状态</span><strong>{account?.status || '-'}</strong></div>
+            <div className="metric-line"><span>分组</span><strong>{account?.group_name || account?.group_id || '-'}</strong></div>
+            <div className="metric-line"><span>RPM</span><strong>{formatNumber(account?.rpm_limit || 0)}</strong></div>
+            <div className="metric-line"><span>密码</span><strong>{account?.password_set ? '已设置' : '未设置'}</strong></div>
           </div>
         </div>
         <div className="panel">
@@ -318,8 +313,8 @@ export function AccountProfilePage() {
             <div className="metric-line"><span>消费</span><strong>{formatUsdCost(totalCost)}</strong></div>
             <div className="metric-line"><span>订单</span><strong>{formatNumber(userOrders.length)}</strong></div>
             <div className="metric-line"><span>可购计划</span><strong>{formatNumber(visiblePlans.length)}</strong></div>
-            <div className="metric-line"><span>可用渠道</span><strong>{formatNumber(visibleChannels.length)}</strong></div>
-            <div className="metric-line"><span>最近使用</span><strong>{maskEmpty(selectedUser?.last_seen_at)}</strong></div>
+            <div className="metric-line"><span>可用渠道</span><strong>{formatNumber(visibleAvailableChannels.length)}</strong></div>
+            <div className="metric-line"><span>最近使用</span><strong>{maskEmpty(account?.last_seen_at)}</strong></div>
           </div>
         </div>
       </div>

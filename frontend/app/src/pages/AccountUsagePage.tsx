@@ -1,19 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download, RefreshCw } from 'lucide-react';
-import { fetchAdminUsage } from '../api';
+import { fetchAccountUsage } from '../api';
 import { Button, Select, TextInput } from '../components';
 import { EmptyState, FilterToolbar, Pager, SearchField, TablePageLayout, ToolbarButtonRow } from '../components/admin';
 import { RequestRow } from '../features/requests/RequestsView';
 import { useAccountCenter } from '../state/accountCenterContext';
 import type { RequestEntry } from '../types';
-import { formatMs, formatNumber, formatTokenCount, formatUsdCost, getBusinessUserId, readStorageJSON, writeStorageJSON } from '../utils';
+import { formatMs, formatNumber, formatTokenCount, formatUsdCost, readStorageJSON, writeStorageJSON } from '../utils';
 
 const STORAGE_KEY = 'account-usage-view-state';
 
 export function AccountUsagePage() {
-  const { selectedUser, selectedUserId, apiKeys } = useAccountCenter();
-  const usageQuery = useQuery({ queryKey: ['admin-usage'], queryFn: () => fetchAdminUsage(), refetchInterval: 10000 });
+  const { account, apiKeys } = useAccountCenter();
+  const usageQuery = useQuery({ queryKey: ['account-usage'], queryFn: () => fetchAccountUsage(), refetchInterval: 10000, retry: false });
   const savedState = readStorageJSON(STORAGE_KEY, {
     start: '',
     end: '',
@@ -37,10 +37,9 @@ export function AccountUsagePage() {
     const modelNeedle = filters.model.trim().toLowerCase();
     const start = filters.start ? new Date(filters.start).getTime() : 0;
     const end = filters.end ? new Date(filters.end).getTime() : 0;
-    const currentKeyIds = new Set(apiKeys.filter((item) => !selectedUserId || getBusinessUserId(item) === selectedUserId).map((item) => item.id));
+    const currentKeyIds = new Set(apiKeys.map((item) => item.id));
     return items
       .filter((row) => {
-        if (selectedUserId && row.consumer_id !== selectedUserId) return false;
         if (filters.apiKeyId && String(row.api_key_id || '') !== filters.apiKeyId) return false;
         if (currentKeyIds.size && row.api_key_id && !currentKeyIds.has(String(row.api_key_id))) return false;
         const started = row.started_at ? new Date(String(row.started_at).replace(',', '.')).getTime() : 0;
@@ -56,7 +55,7 @@ export function AccountUsagePage() {
       })
       .map((row) => ({
         ...row,
-        remote: row.consumer_name || row.consumer_preview || row.consumer_type || '当前用户',
+        remote: row.consumer_name || row.consumer_preview || row.consumer_type || account?.name || '账户',
         logical_model: row.model || row.resolved_model || '-',
         pool_name: row.pool_name || row.group_name || row.plan_name || '-',
         upstream_url: row.route_url || '',
@@ -67,7 +66,7 @@ export function AccountUsagePage() {
         upstream_prompt_cache_status: row.upstream_cache_status || 'off',
         bytes_sent: Number(row.output_bytes || 0),
       }));
-  }, [apiKeys, filters, selectedUserId, usageQuery.data?.items]);
+  }, [account?.name, apiKeys, filters, usageQuery.data?.items]);
 
   const pagedRows = useMemo(() => rows.slice((page - 1) * pageSize, page * pageSize), [rows, page, pageSize]);
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
@@ -136,7 +135,7 @@ export function AccountUsagePage() {
           <strong>使用记录</strong>
         </div>
         <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>当前用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '-'}</small></div>
+          <div className="sub2-inline-summary-item"><span>账户</span><strong>{account?.name || '-'}</strong><small>{account?.group_name || account?.source_type || '-'}</small></div>
           <div className="sub2-inline-summary-item"><span>记录数</span><strong>{formatNumber(stats.requests)}</strong><small>记录</small></div>
           <div className="sub2-inline-summary-item"><span>总 Token</span><strong>{formatTokenCount(stats.tokens)}</strong><small>请求 {formatTokenCount(stats.promptTokens)} / 回复 {formatTokenCount(stats.completionTokens)}</small></div>
           <div className="sub2-inline-summary-item"><span>总消费</span><strong>{formatUsdCost(stats.actualCost)}</strong><small>标准 {formatUsdCost(stats.totalCost)} / 平均耗时 {formatMs(averageDuration)}</small></div>
@@ -157,7 +156,7 @@ export function AccountUsagePage() {
             <SearchField value={filters.model} placeholder="搜索模型 / 入口 / 线路" onChange={(value) => { setFilters((current) => ({ ...current, model: value })); setPage(1); }} />
             <Select value={filters.apiKeyId} onChange={(event) => { setFilters((current) => ({ ...current, apiKeyId: event.target.value })); setPage(1); }}>
               <option value="">全部 API Key</option>
-              {apiKeys.filter((item) => !selectedUserId || getBusinessUserId(item) === selectedUserId).map((item) => (
+              {apiKeys.map((item) => (
                 <option key={item.id} value={item.id}>{item.name}</option>
               ))}
             </Select>

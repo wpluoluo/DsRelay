@@ -1,5 +1,6 @@
 import unittest
 
+from local_proxy.account.service import AccountPortalService
 from local_proxy.admin.service import AdminConsoleService
 
 
@@ -19,9 +20,54 @@ class FakeAccountPortalStorage:
                 "extra": {},
                 "enabled": True,
                 "note": "",
+            },
+            "acct_b": {
+                "id": "acct_b",
+                "name": "Account B",
+                "external_key": "user-b",
+                "source_type": "managed",
+                "role": "user",
+                "status": "active",
+                "balance_cents": 2000,
+                "concurrency_limit": 1,
+                "allowed_group_ids": ["group_b"],
+                "extra": {},
+                "enabled": True,
+                "note": "",
             }
         }
         self.app_config = {
+            "admin_channels": {
+                "items": [
+                    {
+                        "id": "channel_a",
+                        "name": "Channel A",
+                        "description": "",
+                        "platform": "openai",
+                        "group_ids": ["group_a"],
+                        "model_pricing": [{"model": "model-a", "input_price": 1, "output_price": 2}],
+                        "enabled": True,
+                    },
+                    {
+                        "id": "channel_b",
+                        "name": "Channel B",
+                        "description": "",
+                        "platform": "openai",
+                        "group_ids": ["group_b"],
+                        "model_pricing": [{"model": "model-b", "input_price": 1, "output_price": 2}],
+                        "enabled": True,
+                    },
+                    {
+                        "id": "channel_public",
+                        "name": "Public Channel",
+                        "description": "",
+                        "platform": "openai",
+                        "group_ids": [],
+                        "model_pricing": [{"model": "model-public", "input_price": 1, "output_price": 2}],
+                        "enabled": True,
+                    },
+                ],
+            },
             "admin_content:redeem-codes": {
                 "items": [
                     {
@@ -54,6 +100,36 @@ class FakeAccountPortalStorage:
             "admin_content:affiliate-transfers": {"items": []},
         }
         self.balance_events = []
+        self.api_keys = {
+            "key_a": {"id": "key_a", "account_id": "acct_a", "name": "Key A", "key_preview": "sk-a", "enabled": True},
+            "key_b": {"id": "key_b", "account_id": "acct_b", "name": "Key B", "key_preview": "sk-b", "enabled": True},
+        }
+        self.payment_orders = {
+            "order_a": {"id": "order_a", "account_id": "acct_a", "plan_id": "plan_a", "amount_cents": 1000, "status": "pending"},
+            "order_b": {"id": "order_b", "account_id": "acct_b", "plan_id": "plan_b", "amount_cents": 2000, "status": "pending"},
+        }
+        self.recent_requests = [
+            {
+                "request_id": "req_a",
+                "proxy_consumer_id": "user-a",
+                "proxy_consumer_name": "Account A",
+                "proxy_consumer_type": "managed",
+                "proxy_api_key_id": "key_a",
+                "logical_model": "model-a",
+                "prompt_tokens": 10,
+                "completion_tokens": 3,
+            },
+            {
+                "request_id": "req_b",
+                "proxy_consumer_id": "user-b",
+                "proxy_consumer_name": "Account B",
+                "proxy_consumer_type": "managed",
+                "proxy_api_key_id": "key_b",
+                "logical_model": "model-b",
+                "prompt_tokens": 20,
+                "completion_tokens": 4,
+            },
+        ]
 
     def get_admin_account(self, account_id):
         return dict(self.accounts.get(account_id, {}))
@@ -77,17 +153,49 @@ class FakeAccountPortalStorage:
                 "extra": {},
                 "enabled": True,
                 "sort_order": 0,
+            },
+            {
+                "id": "group_b",
+                "name": "Group B",
+                "description": "",
+                "platform": "openai",
+                "is_exclusive": False,
+                "rate_multiplier": 1,
+                "extra": {},
+                "enabled": True,
+                "sort_order": 0,
             }
         ]
 
     def list_admin_account_groups(self):
-        return [{"account_id": "acct_a", "group_id": "group_a"}]
+        return [{"account_id": "acct_a", "group_id": "group_a"}, {"account_id": "acct_b", "group_id": "group_b"}]
 
     def list_admin_subscription_plans(self):
         return []
 
     def list_admin_account_subscriptions(self):
         return []
+
+    def list_admin_api_keys(self):
+        return list(self.api_keys.values())
+
+    def get_admin_api_key(self, key_id):
+        return dict(self.api_keys.get(key_id, {}))
+
+    def list_admin_payment_orders(self):
+        return list(self.payment_orders.values())
+
+    def get_admin_payment_order(self, order_id):
+        return dict(self.payment_orders.get(order_id, {}))
+
+    def list_payment_fulfillment_logs(self, order_id):
+        return []
+
+    def list_admin_payment_channels(self):
+        return []
+
+    def load_recent_requests(self, limit=5000):
+        return self.recent_requests[:limit]
 
     def get_active_subscription_context_for_account(self, account_id, group_id=""):
         return {}
@@ -150,6 +258,28 @@ class AdminAccountPortalTests(unittest.TestCase):
         self.assertEqual(result["transferred_cents"], 250)
         self.assertEqual(storage.accounts["acct_a"]["balance_cents"], 1250)
         self.assertEqual(refreshed["aff_quota_cents"], 0)
+
+    def test_account_portal_filters_current_account_resources(self):
+        storage = FakeAccountPortalStorage()
+        admin_service = AdminConsoleService(storage=storage)
+        service = AccountPortalService(admin_service)
+
+        keys = service.list_api_keys("acct_a")
+        orders = service.list_orders("acct_a")
+        usage = service.list_usage("acct_a")
+
+        self.assertEqual([item["id"] for item in keys["items"]], ["key_a"])
+        self.assertEqual([item["id"] for item in orders["items"]], ["order_a"])
+        self.assertEqual([item["request_id"] for item in usage["items"]], ["req_a"])
+
+    def test_account_portal_filters_channels_by_visible_groups(self):
+        storage = FakeAccountPortalStorage()
+        admin_service = AdminConsoleService(storage=storage)
+        service = AccountPortalService(admin_service)
+
+        channels = service.list_channels("acct_a")
+
+        self.assertEqual([item["id"] for item in channels["items"]], ["channel_a", "channel_public"])
 
 
 if __name__ == "__main__":

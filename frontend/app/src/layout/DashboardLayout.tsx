@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Link, Outlet, useRouterState } from '@tanstack/react-router';
+import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-router';
 import { ChevronDown, RefreshCw } from 'lucide-react';
 import { fetchDashboardState, saveConfig } from '../api';
 import { Badge, Button } from '../components';
@@ -15,6 +15,7 @@ import { adminNavSections, type NavItem } from '../navigation';
 export function DashboardLayout() {
   const locationHref = useRouterState({ select: (state) => state.location.href });
   const locationPathname = useRouterState({ select: (state) => state.location.pathname });
+  const navigate = useNavigate();
   const [configTab, setConfigTab] = useState<ConfigTab>('routing');
   const [draft, setDraft] = useState<RuntimeConfig>({ pools: [] });
   const [dirty, setDirty] = useState(false);
@@ -48,12 +49,21 @@ export function DashboardLayout() {
   });
 
   const state = stateQuery.data || {};
+  const isAuthPending = stateQuery.isLoading && !stateQuery.data;
+  const role = state.auth?.role === 'user' ? 'user' : 'admin';
+  const navSections = useMemo(
+    () => {
+      if (isAuthPending) return [];
+      return role === 'user' ? adminNavSections.filter((section) => section.key === 'account') : adminNavSections;
+    },
+    [isAuthPending, role],
+  );
   const pools = (draft.pools || []).map(normalizePool);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
   const activeGroupKeys = useMemo(() => {
     const keys = new Set<string>();
-    for (const section of adminNavSections) {
+    for (const section of navSections) {
       for (const item of section.items) {
         if (item.children?.some((child) => navPathMatches(locationPathname, child.path))) {
           keys.add(item.key);
@@ -61,7 +71,14 @@ export function DashboardLayout() {
       }
     }
     return keys;
-  }, [locationPathname]);
+  }, [locationPathname, navSections]);
+
+  useEffect(() => {
+    if (isAuthPending || role !== 'user') return;
+    if (locationPathname === '/' || locationPathname.startsWith('/admin')) {
+      navigate({ to: '/keys', replace: true });
+    }
+  }, [isAuthPending, locationPathname, navigate, role]);
 
   function patchDraft(patch: Partial<RuntimeConfig>) {
     setDraft((current) => ({ ...current, ...patch }));
@@ -81,6 +98,8 @@ export function DashboardLayout() {
     patchDraft,
     saveConfig: () => saveMutation.mutate(draft),
   };
+  const isAdminPath = locationPathname === '/admin' || locationPathname.startsWith('/admin/');
+  const holdAdminOutlet = isAdminPath && (isAuthPending || role === 'user');
 
   return (
     <DashboardProvider value={contextValue}>
@@ -91,7 +110,7 @@ export function DashboardLayout() {
             <div className="brand-copy"><strong>DsRelay</strong><span>管理控制台</span></div>
           </div>
           <nav className="sidebar-nav">
-            {adminNavSections.map((section) => (
+            {navSections.map((section) => (
               <div className="sidebar-section" key={section.key}>
                 <div className="sidebar-section-title">
                   <span>{section.title}</span>
@@ -127,7 +146,7 @@ export function DashboardLayout() {
           </header>
 
           <AccountCenterProvider>
-            <Outlet />
+            {holdAdminOutlet ? null : <Outlet />}
           </AccountCenterProvider>
         </main>
 

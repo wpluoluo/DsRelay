@@ -53,9 +53,22 @@ from local_proxy.compat.protocols import (
     payload_looks_anthropic,
 )
 from local_proxy.dashboard import load_dashboard_template
-from local_proxy.auth import admin_required, init_auth, login_page, login_required, logout, is_authenticated
+from local_proxy.auth import (
+    account_required,
+    admin_required,
+    get_authenticated_account_id,
+    get_authenticated_role,
+    init_auth,
+    login_page,
+    login_required,
+    logout,
+    is_authenticated,
+    set_account_auth_handlers,
+)
 from local_proxy.admin import register_admin_routes
 from local_proxy.admin.service import AdminConsoleService
+from local_proxy.account import register_account_routes
+from local_proxy.account.service import AccountPortalService
 from local_proxy.http.headers import (
     apply_sse_response_headers,
     build_response_headers,
@@ -4287,7 +4300,7 @@ def dashboard_state() -> dict:
             if not route_url:
                 continue
             active_route_affinity_counts[route_url] = int(active_route_affinity_counts.get(route_url, 0) or 0) + 1
-    return assemble_dashboard_state(
+    state = assemble_dashboard_state(
         {
             "upstream_url": UPSTREAM_URL,
             "upstream_urls": list(UPSTREAM_URL_POOL),
@@ -4304,6 +4317,11 @@ def dashboard_state() -> dict:
             "config_source": CONFIG_SOURCE,
         }
     )
+    state["auth"] = {
+        "role": get_authenticated_role(),
+        "account_id": get_authenticated_account_id(),
+    }
+    return state
 
 
 def response_indicates_client_gone(response: requests.Response) -> bool:
@@ -9598,11 +9616,11 @@ register_http_routes(
         "add_cors_headers": add_cors_headers,
         "health": health,
         "debug_state": login_required(debug_state),
-        "debug_config": login_required(debug_config),
-        "debug_pool_test": login_required(debug_pool_test),
-        "debug_requests_clear": login_required(debug_requests_clear),
-        "debug_request_cache_clear": login_required(debug_request_cache_clear),
-        "debug_proxy_api_keys": login_required(debug_proxy_api_keys),
+        "debug_config": admin_required(debug_config),
+        "debug_pool_test": admin_required(debug_pool_test),
+        "debug_requests_clear": admin_required(debug_requests_clear),
+        "debug_request_cache_clear": admin_required(debug_request_cache_clear),
+        "debug_proxy_api_keys": admin_required(debug_proxy_api_keys),
         "v1_root": v1_root,
         "gemini_version_root": gemini_version_root,
         "anthropic_messages": anthropic_messages,
@@ -9612,10 +9630,21 @@ register_http_routes(
 )
 
 admin_analytics_service = AdminConsoleService(storage=storage, request_recorder=request_recorder)
+account_portal_service = AccountPortalService(admin_analytics_service)
+set_account_auth_handlers(
+    authenticator=account_portal_service.authenticate_account,
+    lookup=account_portal_service.find_account_by_identifier,
+)
 register_admin_routes(
     app,
     admin_required=admin_required,
     analytics_service=admin_analytics_service,
+)
+register_account_routes(
+    app,
+    account_required=account_required,
+    account_service=account_portal_service,
+    get_account_id=get_authenticated_account_id,
 )
 
 app.add_url_rule("/", endpoint="dashboard_redirect", view_func=dashboard_redirect)

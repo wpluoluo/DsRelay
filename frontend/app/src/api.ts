@@ -313,23 +313,103 @@ export function deleteAdminContent(
   });
 }
 
-export function fetchAccountRedeem(userId: string): Promise<AccountRedeemPayload> {
-  return requestJson<AccountRedeemPayload>(`/account/users/${encodeURIComponent(userId)}/redeem`);
+export function fetchAccountMe(): Promise<{ ok?: boolean; item?: AdminUser }> {
+  return requestJson<{ ok?: boolean; item?: AdminUser }>('/account/me');
 }
 
-export function redeemAccountCode(userId: string, code: string): Promise<AccountRedeemResult> {
-  return requestJson<AccountRedeemResult>(`/account/users/${encodeURIComponent(userId)}/redeem`, {
+export function fetchAccountGroups(): Promise<AdminListPayload<AdminGroup>> {
+  return requestJson<AdminListPayload<AdminGroup>>('/account/groups');
+}
+
+export function fetchAccountChannels(): Promise<AdminListPayload<AdminChannel>> {
+  return requestJson<AdminListPayload<AdminChannel>>('/account/channels');
+}
+
+export function fetchAccountApiKeys(): Promise<AdminListPayload<AdminApiKey>> {
+  return requestJson<AdminListPayload<AdminApiKey>>('/account/keys');
+}
+
+export function createAccountApiKey(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminApiKey; generated_key?: string }> {
+  return requestJson<{ ok?: boolean; item?: AdminApiKey; generated_key?: string }>('/account/keys', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateAccountApiKey(keyId: string, payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminApiKey }> {
+  return requestJson<{ ok?: boolean; item?: AdminApiKey }>(`/account/keys/${keyId}`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function setAccountApiKeyEnabled(keyId: string, enabled: boolean): Promise<{ ok?: boolean }> {
+  return requestJson<{ ok?: boolean }>(`/account/keys/${keyId}/enabled`, {
+    method: 'POST',
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export function deleteAccountApiKey(keyId: string): Promise<{ ok?: boolean; id?: string }> {
+  return requestJson<{ ok?: boolean; id?: string }>(`/account/keys/${keyId}`, {
+    method: 'DELETE',
+  });
+}
+
+export function fetchAccountUsage(params?: { started_after?: string; started_before?: string }): Promise<AdminListPayload<AdminUsageItem>> {
+  const query = new URLSearchParams();
+  if (params?.started_after) query.set('started_after', params.started_after);
+  if (params?.started_before) query.set('started_before', params.started_before);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return requestJson<AdminListPayload<AdminUsageItem>>(`/account/usage${suffix}`);
+}
+
+export function fetchAccountSubscriptionPlans(): Promise<AdminListPayload<AdminSubscriptionPlan>> {
+  return requestJson<AdminListPayload<AdminSubscriptionPlan>>('/account/subscription-plans');
+}
+
+export function fetchAccountPaymentChannels(): Promise<AdminListPayload<AdminPaymentChannel>> {
+  return requestJson<AdminListPayload<AdminPaymentChannel>>('/account/payment-channels');
+}
+
+export function fetchAccountSubscriptions(): Promise<AdminListPayload<AdminUserSubscription>> {
+  return requestJson<AdminListPayload<AdminUserSubscription>>('/account/subscriptions');
+}
+
+export function fetchAccountOrders(): Promise<AdminListPayload<AdminPaymentOrder>> {
+  return requestJson<AdminListPayload<AdminPaymentOrder>>('/account/orders');
+}
+
+export function createAccountOrder(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminPaymentOrder; provider_payload?: Record<string, unknown> }> {
+  return requestJson<{ ok?: boolean; item?: AdminPaymentOrder; provider_payload?: Record<string, unknown> }>('/account/orders', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function cancelAccountOrder(orderId: string): Promise<{ ok?: boolean; item?: AdminPaymentOrder }> {
+  return requestJson<{ ok?: boolean; item?: AdminPaymentOrder }>(`/account/orders/${orderId}/cancel`, {
+    method: 'POST',
+  });
+}
+
+export function fetchAccountRedeem(): Promise<AccountRedeemPayload> {
+  return requestJson<AccountRedeemPayload>('/account/redeem');
+}
+
+export function redeemAccountCode(code: string): Promise<AccountRedeemResult> {
+  return requestJson<AccountRedeemResult>('/account/redeem', {
     method: 'POST',
     body: JSON.stringify({ code }),
   });
 }
 
-export function fetchAccountAffiliate(userId: string): Promise<AccountAffiliatePayload> {
-  return requestJson<AccountAffiliatePayload>(`/account/users/${encodeURIComponent(userId)}/affiliate`);
+export function fetchAccountAffiliate(): Promise<AccountAffiliatePayload> {
+  return requestJson<AccountAffiliatePayload>('/account/affiliate');
 }
 
-export function transferAccountAffiliateQuota(userId: string): Promise<AccountAffiliateTransferResult> {
-  return requestJson<AccountAffiliateTransferResult>(`/account/users/${encodeURIComponent(userId)}/affiliate/transfer`, {
+export function transferAccountAffiliateQuota(): Promise<AccountAffiliateTransferResult> {
+  return requestJson<AccountAffiliateTransferResult>('/account/affiliate/transfer', {
     method: 'POST',
   });
 }

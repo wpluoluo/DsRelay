@@ -286,6 +286,28 @@ class ProxyEntrypointAuthTests(unittest.TestCase):
         self.assertTrue(response.get_json()["ok"])
         self.assertTrue(fake_storage.request_cache_cleared)
 
+    def test_account_session_can_read_state_but_cannot_use_admin_debug_endpoints(self):
+        server = self.load_server_with_keys("")
+        fake_storage = FakeRuntimeConfigStorage()
+        fake_storage.request_cache_cleared = False
+        server.storage = fake_storage
+        client = server.app.test_client()
+        with client.session_transaction() as session:
+            session["_proxy_authed"] = True
+            session["_proxy_role"] = "user"
+            session["_proxy_account_id"] = "acct_demo"
+
+        state_response = client.get("/debug/state")
+        config_response = client.get("/debug/config")
+        clear_response = client.post("/debug/request-cache/clear")
+
+        self.assertEqual(state_response.status_code, 200)
+        self.assertEqual(state_response.get_json()["auth"]["role"], "user")
+        self.assertEqual(state_response.get_json()["auth"]["account_id"], "acct_demo")
+        self.assertEqual(config_response.status_code, 403)
+        self.assertEqual(clear_response.status_code, 403)
+        self.assertFalse(fake_storage.request_cache_cleared)
+
     def test_managed_proxy_key_can_be_created_used_disabled_and_deleted(self):
         server = self.load_server_with_keys("")
         temp_dir = tempfile.TemporaryDirectory()

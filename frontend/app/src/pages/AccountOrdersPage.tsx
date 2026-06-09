@@ -1,15 +1,15 @@
 import { useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Eye, RefreshCw, ReceiptText, Wallet, XCircle } from 'lucide-react';
-import { updateAdminPaymentOrderStatus } from '../api';
+import { cancelAccountOrder } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
 import { EmptyState, FilterToolbar, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow } from '../components/admin';
 import { queryClient } from '../state/queryClient';
 import { useAccountCenter } from '../state/accountCenterContext';
-import { formatNumber, formatUsdCost, getBusinessUserId, getBusinessUserName, maskEmpty } from '../utils';
+import { formatNumber, formatUsdCost, getBusinessUserName, maskEmpty } from '../utils';
 
 export function AccountOrdersPage() {
-  const { selectedUser, selectedUserId, orders, reload } = useAccountCenter();
+  const { account, orders, reload } = useAccountCenter();
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
@@ -18,11 +18,11 @@ export function AccountOrdersPage() {
   const [inspectOrder, setInspectOrder] = useState<any | null>(null);
 
   const cancelMutation = useMutation({
-    mutationFn: (orderId: string) => updateAdminPaymentOrderStatus(orderId, { status: 'cancelled' }),
+    mutationFn: (orderId: string) => cancelAccountOrder(orderId),
     onSuccess: async () => {
       setCancelTarget(null);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['admin-payment-orders'] }),
+        queryClient.invalidateQueries({ queryKey: ['account-payment-orders'] }),
         reload(),
       ]);
     },
@@ -31,7 +31,6 @@ export function AccountOrdersPage() {
   const filtered = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     return orders.filter((item) => {
-      if (selectedUserId && getBusinessUserId(item) !== selectedUserId) return false;
       if (status && item.status !== status) return false;
       if (!keyword) return true;
       const haystack = [
@@ -48,7 +47,7 @@ export function AccountOrdersPage() {
         .join(' ');
       return haystack.includes(keyword);
     });
-  }, [orders, search, selectedUserId, status]);
+  }, [orders, search, status]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const rows = filtered.slice((page - 1) * pageSize, page * pageSize);
@@ -64,7 +63,7 @@ export function AccountOrdersPage() {
           <strong>我的订单</strong>
         </div>
         <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>当前用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '-'}</small></div>
+          <div className="sub2-inline-summary-item"><span>账户</span><strong>{account?.name || '-'}</strong><small>{account?.group_name || account?.source_type || '-'}</small></div>
           <div className="sub2-inline-summary-item"><span>订单总数</span><strong>{formatNumber(filtered.length)}</strong><small>订单</small></div>
           <div className="sub2-inline-summary-item"><span>待支付</span><strong>{formatNumber(pendingCount)}</strong><small>已支付 {formatNumber(paidCount)}</small></div>
           <div className="sub2-inline-summary-item"><span>失败订单</span><strong>{formatNumber(failedCount)}</strong><small>累计金额 {formatUsdCost(totalAmount / 100, 2)}</small></div>
@@ -176,7 +175,7 @@ export function AccountOrdersPage() {
               <div className="admin-dialog-summary-card">
                 <span>当前状态</span>
                 <strong>{cancelTarget.status || '-'}</strong>
-                <small>取消后仅保留历史记录</small>
+                <small>{cancelTarget.channel_name || cancelTarget.channel_id || cancelTarget.provider || '-'}</small>
               </div>
             </div>
           </div>

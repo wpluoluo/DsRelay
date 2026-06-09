@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Download, Eye, MoreHorizontal, RefreshCw, Settings2 } from 'lucide-react';
+import { Download, Eye, RefreshCw, Settings2 } from 'lucide-react';
 import { fetchAdminBilling, fetchAdminOverview, fetchAdminUsage } from '../api';
 import { Button, Field, Modal, ModalActions, TextArea, TextInput } from '../components';
-import { ActionButton, ColumnMenu, EmptyState, FilterToolbar, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow } from '../components/admin';
+import { ActionButton, ColumnMenu, EmptyState, FilterToolbar, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import type { AdminBillingAccountItem, AdminBillingGroupItem, AdminBillingOrderItem, AdminBillingPlanItem, AdminBillingSubscriptionItem, AdminUsageItem } from '../types';
 import { formatByteCount, formatCost, formatNumber, formatTokenCount, formatUsdCost, getBusinessUserId, getBusinessUserName, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
 
@@ -58,7 +58,6 @@ export function AdminBillingPage() {
   const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
   const [visibleColumns, setVisibleColumns] = useState<Set<BillingColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
   const [scope, setScope] = useState<BillingScopeKey>(isBillingScopeKey(savedState.scope) ? savedState.scope : 'usage');
-  const [showTools, setShowTools] = useState(false);
   const [inspectUsage, setInspectUsage] = useState<AdminUsageItem | null>(null);
   const [inspectAggregate, setInspectAggregate] = useState<{ scope: BillingScopeKey; row: AdminBillingAccountItem | AdminBillingGroupItem | AdminBillingPlanItem | AdminBillingSubscriptionItem | AdminBillingOrderItem } | null>(null);
   const startedAfter = useMemo(() => resolveStartedAfter(timePreset, dateFrom), [dateFrom, timePreset]);
@@ -277,34 +276,28 @@ export function AdminBillingPage() {
                     { key: 'status', label: '状态', checked: visibleColumns.has('status'), onToggle: () => toggleColumn('status') },
                   ]}
                 />
-                <details className="sub2-menu" open={showTools} onToggle={(event) => setShowTools((event.target as HTMLDetailsElement).open)}>
-                  <summary>
-                    <MoreHorizontal size={14} />
-                    <span>更多工具</span>
-                  </summary>
-                  <div className="sub2-menu-panel">
-                    <button type="button" onClick={() => { setSearch(''); setStatusFilter(''); setPage(1); setShowTools(false); }}>
-                      <span>清空筛选</span>
-                    </button>
-                    <button type="button" onClick={() => { setTimePreset('24h'); setSortBy('tokens_desc'); setPage(1); setShowTools(false); }}>
-                      <span>切到 24 小时高耗排行</span>
-                    </button>
-                    <button type="button" onClick={() => { setTimePreset('all'); setDateFrom(defaultDateFrom); setDateTo(defaultDateTo); setPage(1); setShowTools(false); }}>
-                      <span>重置时间范围</span>
-                    </button>
-                    <button type="button" onClick={() => { setPageSize(50); setPage(1); setShowTools(false); }}>
-                      <span>切换 50 / 页</span>
-                    </button>
-                    <button type="button" onClick={() => { exportCurrentView(); setShowTools(false); }}>
-                      <span>导出当前视图</span>
-                      <Download size={14} />
-                    </button>
-                    <button type="button" onClick={() => { setVisibleColumns(new Set(DEFAULT_VISIBLE_COLUMNS)); setShowTools(false); }}>
-                      <span>重置列视图</span>
-                      <Settings2 size={14} />
-                    </button>
-                  </div>
-                </details>
+                <ToolsMenu>
+                  <button type="button" onClick={() => { setSearch(''); setStatusFilter(''); setPage(1); }}>
+                    <span>清空筛选</span>
+                  </button>
+                  <button type="button" onClick={() => { setTimePreset('24h'); setSortBy('tokens_desc'); setPage(1); }}>
+                    <span>切到 24 小时高耗排行</span>
+                  </button>
+                  <button type="button" onClick={() => { setTimePreset('all'); setDateFrom(defaultDateFrom); setDateTo(defaultDateTo); setPage(1); }}>
+                    <span>重置时间范围</span>
+                  </button>
+                  <button type="button" onClick={() => { setPageSize(50); setPage(1); }}>
+                    <span>切换 50 / 页</span>
+                  </button>
+                  <button type="button" onClick={exportCurrentView}>
+                    <span>导出当前视图</span>
+                    <Download size={14} />
+                  </button>
+                  <button type="button" onClick={() => setVisibleColumns(new Set(DEFAULT_VISIBLE_COLUMNS))}>
+                    <span>重置列视图</span>
+                    <Settings2 size={14} />
+                  </button>
+                </ToolsMenu>
               </ToolbarButtonRow>
             }
           >

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Copy, Edit, Eye, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
-import { createAdminApiKey, deleteAdminApiKey, fetchAdminGroups, fetchAdminUsage, setAdminApiKeyEnabled, updateAdminApiKey } from '../api';
+import { createAccountApiKey, deleteAccountApiKey, fetchAccountUsage, setAccountApiKeyEnabled, updateAccountApiKey } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
 import {
   ColumnMenu,
@@ -17,12 +17,11 @@ import {
 } from '../components/admin';
 import { queryClient } from '../state/queryClient';
 import { useAccountCenter } from '../state/accountCenterContext';
-import type { AdminApiKey, AdminGroup, AdminUser } from '../types';
-import { buildBusinessUserPayload, copyTextToClipboard, formatNumber, formatTokenCount, formatUsdCost, getBusinessUserId, getBusinessUserName, readStorageJSON, writeStorageJSON } from '../utils';
+import type { AdminApiKey, AdminGroup } from '../types';
+import { copyTextToClipboard, formatNumber, formatTokenCount, formatUsdCost, readStorageJSON, writeStorageJSON } from '../utils';
 
 type KeyDraft = {
   id?: string;
-  user_id: string;
   group_id: string;
   name: string;
   enabled: boolean;
@@ -30,15 +29,14 @@ type KeyDraft = {
 
 type StatusFilter = '' | 'enabled' | 'disabled';
 type SubscriptionFilter = '' | 'active' | 'inactive';
-type ColumnKey = 'owner' | 'group' | 'subscription' | 'preview' | 'usage' | 'lastUsed' | 'status';
+type ColumnKey = 'group' | 'subscription' | 'preview' | 'usage' | 'lastUsed' | 'status';
 
-const DEFAULT_VISIBLE_COLUMNS: ColumnKey[] = ['owner', 'group', 'subscription', 'preview', 'usage', 'lastUsed', 'status'];
+const DEFAULT_VISIBLE_COLUMNS: ColumnKey[] = ['group', 'subscription', 'preview', 'usage', 'lastUsed', 'status'];
 const STORAGE_KEY = 'account-api-keys-view-state';
 
 export function AccountApiKeysPage() {
-  const { selectedUserId, selectedUser, users, apiKeys, reload } = useAccountCenter();
-  const usageQuery = useQuery({ queryKey: ['admin-usage'], queryFn: () => fetchAdminUsage(), refetchInterval: 10000 });
-  const groupsQuery = useQuery({ queryKey: ['admin-groups'], queryFn: fetchAdminGroups, refetchInterval: 10000 });
+  const { account, groups, apiKeys, reload } = useAccountCenter();
+  const usageQuery = useQuery({ queryKey: ['account-usage'], queryFn: () => fetchAccountUsage(), refetchInterval: 10000, retry: false });
   const savedState = readStorageJSON(STORAGE_KEY, {
     search: '',
     statusFilter: '' as StatusFilter,
@@ -61,10 +59,9 @@ export function AccountApiKeysPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
-  const groups = groupsQuery.data?.items || [];
 
   const createMutation = useMutation({
-    mutationFn: createAdminApiKey,
+    mutationFn: createAccountApiKey,
     onSuccess: async (result) => {
       setGeneratedKey(result.generated_key || '');
       setDraft(null);
@@ -73,7 +70,7 @@ export function AccountApiKeysPage() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ keyId, payload }: { keyId: string; payload: Record<string, unknown> }) => updateAdminApiKey(keyId, payload),
+    mutationFn: ({ keyId, payload }: { keyId: string; payload: Record<string, unknown> }) => updateAccountApiKey(keyId, payload),
     onSuccess: async () => {
       setDraft(null);
       await refreshKeyData();
@@ -81,7 +78,7 @@ export function AccountApiKeysPage() {
   });
 
   const toggleMutation = useMutation({
-    mutationFn: ({ keyId, enabled }: { keyId: string; enabled: boolean }) => setAdminApiKeyEnabled(keyId, enabled),
+    mutationFn: ({ keyId, enabled }: { keyId: string; enabled: boolean }) => setAccountApiKeyEnabled(keyId, enabled),
     onSuccess: async () => {
       setToggleTarget(null);
       await refreshKeyData();
@@ -89,7 +86,7 @@ export function AccountApiKeysPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (keyId: string) => deleteAdminApiKey(keyId),
+    mutationFn: (keyId: string) => deleteAccountApiKey(keyId),
     onSuccess: async () => {
       setDeleteTarget(null);
       await refreshKeyData();
@@ -99,7 +96,6 @@ export function AccountApiKeysPage() {
   const rows = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     return apiKeys.filter((item) => {
-      if (selectedUserId && getBusinessUserId(item) !== selectedUserId) return false;
       if (statusFilter) {
         const enabledValue = statusFilter === 'enabled';
         if ((item.enabled !== false) !== enabledValue) return false;
@@ -110,8 +106,6 @@ export function AccountApiKeysPage() {
       if (!keyword) return true;
       const hay = [
         item.name,
-        getBusinessUserName(item),
-        getBusinessUserId(item),
         item.key_preview,
         keyGroupName(item, groups),
         item.active_plan_name,
@@ -121,20 +115,19 @@ export function AccountApiKeysPage() {
         .join(' ');
       return hay.includes(keyword);
     });
-  }, [apiKeys, groupFilter, groups, search, selectedUserId, statusFilter, subscriptionFilter]);
+  }, [apiKeys, groupFilter, groups, search, statusFilter, subscriptionFilter]);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   const pagedRows = rows.slice((page - 1) * pageSize, page * pageSize);
   const activeRows = rows.filter((item) => item.enabled !== false);
   const coveredRows = rows.filter((item) => item.subscription_active);
   const uncoveredRows = rows.filter((item) => !item.subscription_active);
-  const selectedUserKeys = selectedUserId ? apiKeys.filter((item) => getBusinessUserId(item) === selectedUserId).length : apiKeys.length;
+  const selectedUserKeys = apiKeys.length;
   const usageByKey = useMemo(() => {
     const usage = new Map<string, { requests: number; tokens: number; cost: number; last_used_at: string }>();
     for (const item of usageQuery.data?.items || []) {
       const keyId = String(item.api_key_id || '').trim();
       if (!keyId) continue;
-      if (selectedUserId && item.consumer_id !== selectedUserId) continue;
       const current = usage.get(keyId) || { requests: 0, tokens: 0, cost: 0, last_used_at: '' };
       current.requests += 1;
       current.tokens += Number(item.total_tokens || 0) || Number(item.prompt_tokens || 0) + Number(item.completion_tokens || 0);
@@ -145,7 +138,7 @@ export function AccountApiKeysPage() {
       usage.set(keyId, current);
     }
     return usage;
-  }, [selectedUserId, usageQuery.data?.items]);
+  }, [usageQuery.data?.items]);
 
   useEffect(() => {
     writeStorageJSON(STORAGE_KEY, {
@@ -159,15 +152,12 @@ export function AccountApiKeysPage() {
   }, [groupFilter, pageSize, search, statusFilter, subscriptionFilter, visibleColumns]);
 
   function openCreate() {
-    const userId = selectedUserId || users[0]?.id || '';
-    setDraft({ user_id: userId, group_id: defaultKeyGroupId(userId, users, groups), name: '', enabled: true });
+    setDraft({ group_id: defaultKeyGroupId(account, groups), name: '', enabled: true });
   }
 
   function openEdit(item: AdminApiKey) {
-    const userId = getBusinessUserId(item) || selectedUserId || '';
     setDraft({
       id: item.id,
-      user_id: userId,
       group_id: keyGroupId(item),
       name: item.name || '',
       enabled: item.enabled !== false,
@@ -176,7 +166,7 @@ export function AccountApiKeysPage() {
 
   function submitDraft() {
     if (!draft) return;
-    const payload = buildBusinessUserPayload(draft.user_id, { name: draft.name, enabled: draft.enabled, group_id: draft.group_id });
+    const payload = { name: draft.name, enabled: draft.enabled, group_id: draft.group_id };
     if (draft.id) {
       updateMutation.mutate({ keyId: draft.id, payload });
       return;
@@ -195,7 +185,8 @@ export function AccountApiKeysPage() {
 
   async function refreshKeyData() {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['admin-api-keys'] }),
+      queryClient.invalidateQueries({ queryKey: ['account-api-keys'] }),
+      queryClient.invalidateQueries({ queryKey: ['account-usage'] }),
       reload(),
     ]);
   }
@@ -218,7 +209,7 @@ export function AccountApiKeysPage() {
           <strong>API 密钥</strong>
         </div>
         <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>当前用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '-'}</small></div>
+          <div className="sub2-inline-summary-item"><span>账户</span><strong>{account?.name || '-'}</strong><small>{account?.group_name || account?.source_type || '-'}</small></div>
           <div className="sub2-inline-summary-item"><span>Key 数量</span><strong>{formatNumber(selectedUserKeys)}</strong><small>当前筛选 {formatNumber(rows.length)}</small></div>
           <div className="sub2-inline-summary-item"><span>启用 Key</span><strong>{formatNumber(activeRows.length)}</strong><small>停用 {formatNumber(rows.length - activeRows.length)}</small></div>
           <div className="sub2-inline-summary-item"><span>订阅覆盖</span><strong>{formatNumber(coveredRows.length)}</strong><small>未覆盖 {formatNumber(uncoveredRows.length)}</small></div>
@@ -234,7 +225,6 @@ export function AccountApiKeysPage() {
                 <ColumnMenu
                   label="列设置"
                   items={[
-                    { key: 'owner', label: '归属用户', checked: visibleColumns.has('owner'), onToggle: () => toggleColumn('owner') },
                     { key: 'group', label: 'Key 分组', checked: visibleColumns.has('group'), onToggle: () => toggleColumn('group') },
                     { key: 'subscription', label: '订阅', checked: visibleColumns.has('subscription'), onToggle: () => toggleColumn('subscription') },
                     { key: 'preview', label: 'Key 预览', checked: visibleColumns.has('preview'), onToggle: () => toggleColumn('preview') },
@@ -261,7 +251,7 @@ export function AccountApiKeysPage() {
               </ToolbarButtonRow>
             }
           >
-            <SearchField value={search} placeholder="搜索名称 / 用户 / Key / 计划" onChange={(value) => { setSearch(value); setPage(1); }} />
+            <SearchField value={search} placeholder="搜索名称 / Key / 计划" onChange={(value) => { setSearch(value); setPage(1); }} />
             <Select value={groupFilter} onChange={(event) => { setGroupFilter(event.target.value); setPage(1); }}>
               <option value="">全部分组</option>
               {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
@@ -284,7 +274,6 @@ export function AccountApiKeysPage() {
               <thead>
                 <tr>
                   <th>名称</th>
-                  {visibleColumns.has('owner') ? <th>用户</th> : null}
                   {visibleColumns.has('group') ? <th>Key 分组</th> : null}
                   {visibleColumns.has('subscription') ? <th>订阅</th> : null}
                   {visibleColumns.has('preview') ? <th>Key 预览</th> : null}
@@ -306,9 +295,6 @@ export function AccountApiKeysPage() {
                   return (
                   <tr key={item.id}>
                     <td><div className="sub2-cell-stack"><strong>{item.name}</strong><small>{item.id}</small></div></td>
-                    {visibleColumns.has('owner') ? (
-                      <td><div className="sub2-cell-stack"><strong>{getBusinessUserName(item)}</strong><small>{getBusinessUserId(item)}</small></div></td>
-                    ) : null}
                     {visibleColumns.has('group') ? (
                       <td><div className="sub2-cell-stack"><strong>{keyGroupName(item, groups)}</strong><small>{keyGroupId(item) || '-'}</small></div></td>
                     ) : null}
@@ -407,7 +393,7 @@ export function AccountApiKeysPage() {
               <Button onClick={() => setDraft(null)}>取消</Button>
               <Button
                 tone="primary"
-                disabled={createMutation.isPending || updateMutation.isPending || !draft.user_id || !draft.name.trim()}
+                disabled={createMutation.isPending || updateMutation.isPending || !draft.name.trim()}
                 onClick={submitDraft}
               >
                 保存
@@ -417,20 +403,10 @@ export function AccountApiKeysPage() {
         >
           <div className="admin-dialog">
             <div className="admin-dialog-grid modal-grid">
-              <Field label="归属用户">
-                <Select value={draft.user_id} onChange={(e) => {
-                  const nextUserId = e.target.value;
-                  const options = keyGroupOptions(nextUserId, users, groups);
-                  setDraft({ ...draft, user_id: nextUserId, group_id: options.some((group) => group.id === draft.group_id) ? draft.group_id : defaultKeyGroupId(nextUserId, users, groups) });
-                }}>
-                  <option value="">请选择用户</option>
-                  {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
-                </Select>
-              </Field>
               <Field label="Key 分组">
                 <Select value={draft.group_id} onChange={(e) => setDraft({ ...draft, group_id: e.target.value })}>
                   <option value="">不绑定分组</option>
-                  {keyGroupOptions(draft.user_id, users, groups).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+                  {keyGroupOptions(account, groups).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
                 </Select>
               </Field>
               <Field label="Key 名称">
@@ -459,11 +435,6 @@ export function AccountApiKeysPage() {
               <strong>{inspectKey.name}</strong>
             </div>
             <div className="admin-dialog-summary">
-              <div className="admin-dialog-summary-card">
-                <span>用户</span>
-                <strong>{getBusinessUserName(inspectKey)}</strong>
-                <small>{getBusinessUserId(inspectKey)}</small>
-              </div>
               <div className="admin-dialog-summary-card">
                 <span>Key 分组</span>
                 <strong>{keyGroupName(inspectKey, groups)}</strong>
@@ -555,18 +526,16 @@ function keyGroupName(item: AdminApiKey | null | undefined, groups: AdminGroup[]
   return String(item?.group_name || groups.find((group) => group.id === groupId)?.name || groupId);
 }
 
-function keyGroupOptions(userId: string, users: AdminUser[], groups: AdminGroup[]): AdminGroup[] {
-  const user = users.find((item) => item.id === userId);
-  const allowedIds = user?.allowed_group_ids || user?.user_allowed_group_ids || [];
+function keyGroupOptions(account: { allowed_group_ids?: string[]; user_allowed_group_ids?: string[] } | null | undefined, groups: AdminGroup[]): AdminGroup[] {
+  const allowedIds = account?.allowed_group_ids || account?.user_allowed_group_ids || [];
   if (!allowedIds.length) return groups;
   return groups.filter((group) => allowedIds.includes(group.id));
 }
 
-function defaultKeyGroupId(userId: string, users: AdminUser[], groups: AdminGroup[]): string {
-  const options = keyGroupOptions(userId, users, groups);
+function defaultKeyGroupId(account: { group_id?: string; group_ids?: string[]; allowed_group_ids?: string[]; user_allowed_group_ids?: string[] } | null | undefined, groups: AdminGroup[]): string {
+  const options = keyGroupOptions(account, groups);
   if (options.length === 1) return options[0].id;
-  const user = users.find((item) => item.id === userId);
-  const userGroups = user?.group_ids || (user?.group_id ? [user.group_id] : []);
+  const userGroups = account?.group_ids || (account?.group_id ? [account.group_id] : []);
   const firstUsable = userGroups.find((groupId) => options.some((group) => group.id === groupId));
   return firstUsable || '';
 }

@@ -157,6 +157,10 @@ export type RouteObservability = Record<string, any> & {
 
 export type DashboardState = {
   ok?: boolean;
+  auth?: {
+    role?: string;
+    account_id?: string;
+  };
   config?: RuntimeConfig;
   runtime?: RuntimeSnapshot;
   upstream_url?: string;

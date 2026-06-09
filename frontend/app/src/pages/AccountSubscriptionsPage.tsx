@@ -3,15 +3,15 @@ import { CreditCard, Eye, Ticket } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Button, Empty, Field, Modal, ModalActions, Panel, PanelHead, Select, TextInput } from '../components';
 import { useAccountCenter } from '../state/accountCenterContext';
-import { formatNumber, formatUsdCost, getBusinessUserId } from '../utils';
+import { formatNumber, formatUsdCost } from '../utils';
 
 export function AccountSubscriptionsPage() {
-  const { selectedUser, selectedUserId, subscriptions } = useAccountCenter();
+  const { account, subscriptions } = useAccountCenter();
   const [statusFilter, setStatusFilter] = useState('');
   const [inspectSubscription, setInspectSubscription] = useState<any | null>(null);
   const rows = useMemo(
-    () => subscriptions.filter((item) => (!selectedUserId || getBusinessUserId(item) === selectedUserId) && (!statusFilter || item.status === statusFilter)),
-    [selectedUserId, statusFilter, subscriptions],
+    () => subscriptions.filter((item) => !statusFilter || item.status === statusFilter),
+    [statusFilter, subscriptions],
   );
   const activeRows = rows.filter((item) => item.status === 'active');
   const expiringSoon = rows.filter((item) => {
@@ -28,10 +28,10 @@ export function AccountSubscriptionsPage() {
           <strong>我的订阅</strong>
         </div>
         <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>当前用户</span><strong>{selectedUser?.name || '未选择用户'}</strong><small>{selectedUser?.group_name || selectedUser?.source_type || '请选择用户'}</small></div>
+          <div className="sub2-inline-summary-item"><span>账户</span><strong>{account?.name || '-'}</strong><small>{account?.group_name || account?.source_type || '-'}</small></div>
           <div className="sub2-inline-summary-item"><span>订阅总数</span><strong>{formatNumber(rows.length)}</strong><small>有效 {formatNumber(activeRows.length)}</small></div>
           <div className="sub2-inline-summary-item"><span>即将到期</span><strong>{formatNumber(expiringSoon.length)}</strong><small>7 天内</small></div>
-          <div className="sub2-inline-summary-item"><span>套餐金额</span><strong>{formatUsdCost(rows.reduce((sum, item) => sum + Number(item.price_cents || 0), 0) / 100, 2)}</strong><small>按订阅价格累计</small></div>
+          <div className="sub2-inline-summary-item"><span>套餐金额</span><strong>{formatUsdCost(rows.reduce((sum, item) => sum + Number(item.price_cents || 0), 0) / 100, 2)}</strong><small>累计</small></div>
         </div>
       </div>
 

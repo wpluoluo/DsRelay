@@ -1,34 +1,38 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  fetchAdminApiKeys,
-  fetchAdminPaymentChannels,
-  fetchAdminPaymentOrders,
-  fetchAdminSubscriptionPlans,
-  fetchAdminUsers,
-  fetchAdminUserSubscriptions,
+  fetchAccountApiKeys,
+  fetchAccountChannels,
+  fetchAccountGroups,
+  fetchAccountMe,
+  fetchAccountOrders,
+  fetchAccountPaymentChannels,
+  fetchAccountSubscriptionPlans,
+  fetchAccountSubscriptions,
 } from '../api';
 import type {
   AdminApiKey,
-  AdminUserSubscription,
+  AdminChannel,
+  AdminGroup,
   AdminPaymentChannel,
   AdminPaymentOrder,
   AdminSubscriptionPlan,
   AdminUser,
+  AdminUserSubscription,
 } from '../types';
 
 export type AccountCenterContextValue = {
-  users: AdminUser[];
-  selectedUserId: string;
-  selectedUser?: AdminUser;
+  account?: AdminUser;
+  groups: AdminGroup[];
   apiKeys: AdminApiKey[];
   subscriptions: AdminUserSubscription[];
   orders: AdminPaymentOrder[];
   plans: AdminSubscriptionPlan[];
   channels: AdminPaymentChannel[];
+  availableChannels: AdminChannel[];
   visiblePlans: AdminSubscriptionPlan[];
   visibleChannels: AdminPaymentChannel[];
-  setSelectedUserId: (userId: string) => void;
+  visibleAvailableChannels: AdminChannel[];
   reload: () => Promise<void>;
   loading: boolean;
 };
@@ -36,66 +40,45 @@ export type AccountCenterContextValue = {
 const AccountCenterContext = createContext<AccountCenterContextValue | null>(null);
 
 export function AccountCenterProvider({ children }: { children: React.ReactNode }) {
-  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, refetchInterval: 10000 });
-  const keysQuery = useQuery({ queryKey: ['admin-api-keys'], queryFn: fetchAdminApiKeys, refetchInterval: 10000 });
-  const plansQuery = useQuery({ queryKey: ['admin-subscription-plans'], queryFn: fetchAdminSubscriptionPlans, refetchInterval: 10000 });
-  const channelsQuery = useQuery({ queryKey: ['admin-payment-channels'], queryFn: fetchAdminPaymentChannels, refetchInterval: 10000 });
-  const ordersQuery = useQuery({ queryKey: ['admin-payment-orders'], queryFn: fetchAdminPaymentOrders, refetchInterval: 10000 });
-  const subscriptionsQuery = useQuery({ queryKey: ['admin-user-subscriptions'], queryFn: fetchAdminUserSubscriptions, refetchInterval: 10000 });
+  const accountQuery = useQuery({ queryKey: ['account-me'], queryFn: fetchAccountMe, refetchInterval: 10000, retry: false });
+  const groupsQuery = useQuery({ queryKey: ['account-groups'], queryFn: fetchAccountGroups, refetchInterval: 30000, retry: false });
+  const availableChannelsQuery = useQuery({ queryKey: ['account-channels'], queryFn: fetchAccountChannels, refetchInterval: 30000, retry: false });
+  const keysQuery = useQuery({ queryKey: ['account-api-keys'], queryFn: fetchAccountApiKeys, refetchInterval: 10000, retry: false });
+  const plansQuery = useQuery({ queryKey: ['account-subscription-plans'], queryFn: fetchAccountSubscriptionPlans, refetchInterval: 30000, retry: false });
+  const channelsQuery = useQuery({ queryKey: ['account-payment-channels'], queryFn: fetchAccountPaymentChannels, refetchInterval: 30000, retry: false });
+  const ordersQuery = useQuery({ queryKey: ['account-payment-orders'], queryFn: fetchAccountOrders, refetchInterval: 10000, retry: false });
+  const subscriptionsQuery = useQuery({ queryKey: ['account-subscriptions'], queryFn: fetchAccountSubscriptions, refetchInterval: 10000, retry: false });
 
-  const users = usersQuery.data?.items || [];
+  const account = accountQuery.data?.item;
+  const groups = groupsQuery.data?.items || [];
+  const availableChannels = availableChannelsQuery.data?.items || [];
   const apiKeys = keysQuery.data?.items || [];
   const plans = plansQuery.data?.items || [];
   const channels = (channelsQuery.data?.items || []).filter((item) => item.enabled !== false);
   const orders = ordersQuery.data?.items || [];
   const subscriptions = subscriptionsQuery.data?.items || [];
-  const [selectedUserId, setSelectedUserId] = useState('');
 
-  useEffect(() => {
-    if (!selectedUserId && users.length) {
-      setSelectedUserId(users[0].id);
-    }
-  }, [selectedUserId, users]);
-
-  const selectedUser = useMemo(() => users.find((item) => item.id === selectedUserId), [selectedUserId, users]);
-
-  const visiblePlans = useMemo(() => {
-    const allowedGroups = selectedUser?.allowed_group_ids || [];
-    return plans.filter((plan) => {
-      if (plan.enabled === false) return false;
-      if (!allowedGroups.length) return true;
-      if (!plan.group_id) return true;
-      return allowedGroups.includes(plan.group_id);
-    });
-  }, [plans, selectedUser]);
-
-  const visibleChannels = useMemo(() => {
-    const groupIds = new Set(visiblePlans.map((item) => item.group_id).filter(Boolean));
-    return channels.filter((channel) => {
-      const allowedGroups = channel.allowed_group_ids || [];
-      if (!allowedGroups.length) return true;
-      for (const groupId of groupIds) {
-        if (allowedGroups.includes(String(groupId))) return true;
-      }
-      return groupIds.size === 0;
-    });
-  }, [channels, visiblePlans]);
+  const visiblePlans = useMemo(() => plans.filter((plan) => plan.enabled !== false), [plans]);
+  const visibleChannels = useMemo(() => channels.filter((channel) => channel.enabled !== false), [channels]);
+  const visibleAvailableChannels = useMemo(() => availableChannels.filter((channel) => channel.enabled !== false), [availableChannels]);
 
   const value = useMemo<AccountCenterContextValue>(() => ({
-    users,
-    selectedUserId,
-    selectedUser,
+    account,
+    groups,
     apiKeys,
     subscriptions,
     orders,
     plans,
     channels,
+    availableChannels,
     visiblePlans,
     visibleChannels,
-    setSelectedUserId,
+    visibleAvailableChannels,
     reload: async () => {
       await Promise.all([
-        usersQuery.refetch(),
+        accountQuery.refetch(),
+        groupsQuery.refetch(),
+        availableChannelsQuery.refetch(),
         keysQuery.refetch(),
         plansQuery.refetch(),
         channelsQuery.refetch(),
@@ -104,16 +87,18 @@ export function AccountCenterProvider({ children }: { children: React.ReactNode 
       ]);
     },
     loading:
-      usersQuery.isLoading ||
+      accountQuery.isLoading ||
+      groupsQuery.isLoading ||
+      availableChannelsQuery.isLoading ||
       keysQuery.isLoading ||
       plansQuery.isLoading ||
       channelsQuery.isLoading ||
       ordersQuery.isLoading ||
       subscriptionsQuery.isLoading,
   }), [
-    users,
-    selectedUserId,
-    selectedUser,
+    account,
+    groups,
+    availableChannels,
     apiKeys,
     subscriptions,
     orders,
@@ -121,7 +106,10 @@ export function AccountCenterProvider({ children }: { children: React.ReactNode 
     channels,
     visiblePlans,
     visibleChannels,
-    usersQuery,
+    visibleAvailableChannels,
+    accountQuery,
+    groupsQuery,
+    availableChannelsQuery,
     keysQuery,
     plansQuery,
     channelsQuery,

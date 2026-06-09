@@ -11,6 +11,7 @@ import hashlib
 import os
 import secrets
 import time
+from collections.abc import Callable
 from functools import wraps
 
 from flask import abort, redirect, request, session, url_for
@@ -29,6 +30,18 @@ _PASSWORD_SET = False
 _MAX_ATTEMPTS = 5
 _WINDOW_SECONDS = 300  # 5 minutes
 _login_attempts: dict[str, list[float]] = {}  # key -> [timestamps]
+_ACCOUNT_AUTHENTICATOR: Callable[[str, str], dict | None] | None = None
+_ACCOUNT_LOOKUP: Callable[[str], dict | None] | None = None
+
+
+def set_account_auth_handlers(
+    *,
+    authenticator: Callable[[str, str], dict | None] | None = None,
+    lookup: Callable[[str], dict | None] | None = None,
+) -> None:
+    global _ACCOUNT_AUTHENTICATOR, _ACCOUNT_LOOKUP
+    _ACCOUNT_AUTHENTICATOR = authenticator
+    _ACCOUNT_LOOKUP = lookup
 
 
 def _prune_attempts(key: str, now: float) -> list[float]:
@@ -105,6 +118,18 @@ def get_authenticated_role() -> str:
     return role or "admin"
 
 
+def get_authenticated_account_id() -> str:
+    return str(session.get("_proxy_account_id") or "").strip()
+
+
+def _set_authenticated_account(account: dict | None) -> None:
+    if not isinstance(account, dict):
+        return
+    account_id = str(account.get("id") or account.get("account_id") or "").strip()
+    if account_id:
+        session["_proxy_account_id"] = account_id
+
+
 def _generate_csrf_token() -> str:
     token = session.get("_csrf_token", "")
     if not token:
@@ -143,6 +168,20 @@ def admin_required(view):
         if not is_authenticated():
             return redirect(url_for("login_page", next=request.full_path))
         if get_authenticated_role() != "admin":
+            return abort(403)
+        return view(*args, **kwargs)
+
+    return wrapper
+
+
+def account_required(view):
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        if request.method == "OPTIONS":
+            return view(*args, **kwargs)
+        if not is_authenticated():
+            return redirect(url_for("login_page", next=request.full_path))
+        if not get_authenticated_account_id():
             return abort(403)
         return view(*args, **kwargs)
 
@@ -240,12 +279,29 @@ def login_page():
             session.clear()
             session["_proxy_authed"] = True
             session["_proxy_role"] = "admin"
+            if _ACCOUNT_LOOKUP is not None:
+                _set_authenticated_account(_ACCOUNT_LOOKUP(username))
             session.permanent = False
             _generate_csrf_token()
             next_url = request.args.get("next", "")
             if next_url and (next_url.startswith("/") and "//" not in next_url):
                 return redirect(next_url)
             return redirect(url_for("dashboard_redirect"))
+
+        if _ACCOUNT_AUTHENTICATOR is not None:
+            account = _ACCOUNT_AUTHENTICATOR(username, password_val)
+            if account:
+                _login_attempts.pop(rate_key, None)
+                session.clear()
+                session["_proxy_authed"] = True
+                session["_proxy_role"] = "user"
+                _set_authenticated_account(account)
+                session.permanent = False
+                _generate_csrf_token()
+                next_url = request.args.get("next", "")
+                if next_url and (next_url.startswith("/") and "//" not in next_url):
+                    return redirect(next_url)
+                return redirect(url_for("dashboard_redirect"))
 
         _record_attempt(rate_key)
         remaining = _MAX_ATTEMPTS - len(
