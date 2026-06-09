@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Copy, Edit, Eye, History, KeyRound, ListChecks, Minus, Plus, RefreshCw, ShieldCheck, Ticket, Trash2, Users, Wallet } from 'lucide-react';
+import { Ban, Copy, Edit, Eye, History, KeyRound, ListChecks, Minus, Plus, RefreshCw, ShieldCheck, Ticket, Trash2, Users, Wallet } from 'lucide-react';
 import {
   adjustAdminAccountBalance,
   assignAdminAccountSubscription,
@@ -150,6 +150,8 @@ export function AdminUsersPage() {
   const [subscriptionDraft, setSubscriptionDraft] = useState<SubscriptionDraft | null>(null);
   const [generatedKey, setGeneratedKey] = useState('');
   const [copiedKeyId, setCopiedKeyId] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState('');
   const [toggleTarget, setToggleTarget] = useState<AdminAccount | null>(null);
   const [resetTarget, setResetTarget] = useState<AdminAccount | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminAccount | null>(null);
@@ -307,6 +309,9 @@ export function AdminUsersPage() {
     const start = (page - 1) * pageSize;
     return filteredRows.slice(start, start + pageSize);
   }, [filteredRows, page, pageSize]);
+  const selectedUsers = useMemo(() => rows.filter((item) => selectedIds.has(item.id)), [rows, selectedIds]);
+  const selectedMutableUsers = useMemo(() => selectedUsers.filter((item) => (item.role || 'user') !== 'admin'), [selectedUsers]);
+  const allPageSelected = pagedRows.length > 0 && pagedRows.every((item) => selectedIds.has(item.id));
 
   const relatedKeys = useMemo(
     () => keyItems.filter((item) => viewKeysUser && getAccountId(item) === viewKeysUser.id),
@@ -340,6 +345,14 @@ export function AdminUsersPage() {
       visibleFilters: Array.from(visibleFilters),
     });
   }, [coverageFilter, groupFilter, pageSize, roleFilter, search, statusFilter, visibleColumns, visibleFilters]);
+
+  useEffect(() => {
+    const validIds = new Set(rows.map((item) => item.id));
+    setSelectedIds((current) => {
+      const next = new Set(Array.from(current).filter((id) => validIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [rows]);
 
   async function refreshAll() {
     await Promise.all([
@@ -483,6 +496,45 @@ export function AdminUsersPage() {
     }
   }
 
+  function toggleSelected(accountId: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(accountId)) next.delete(accountId);
+      else next.add(accountId);
+      return next;
+    });
+  }
+
+  function togglePageSelected() {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (allPageSelected) {
+        for (const item of pagedRows) next.delete(item.id);
+      } else {
+        for (const item of pagedRows) next.add(item.id);
+      }
+      return next;
+    });
+  }
+
+  async function runBulkAction(action: 'enable' | 'disable' | 'delete') {
+    const targets = action === 'delete' ? selectedMutableUsers : selectedMutableUsers;
+    if (!targets.length) return;
+    setBulkBusy(action);
+    try {
+      if (action === 'delete') {
+        await Promise.all(targets.map((item) => deleteAdminAccount(item.id)));
+      } else {
+        const enabled = action === 'enable';
+        await Promise.all(targets.map((item) => setAdminAccountEnabled(item.id, enabled)));
+      }
+      setSelectedIds(new Set());
+      await refreshAll();
+    } finally {
+      setBulkBusy('');
+    }
+  }
+
   return (
     <section className="grid-page">
       <div className="sub2-page-head">
@@ -593,9 +645,30 @@ export function AdminUsersPage() {
         }
         table={
           <div className="table-wrap table-scroll table-users">
+            {selectedIds.size ? (
+              <div className="sub2-bulk-bar">
+                <strong>已选择 {formatNumber(selectedIds.size)} 个用户</strong>
+                <div className="button-row">
+                  <Button onClick={() => void runBulkAction('enable')} disabled={!selectedMutableUsers.length || bulkBusy === 'enable'}>
+                    <ShieldCheck size={14} />
+                    启用
+                  </Button>
+                  <Button tone="danger" onClick={() => void runBulkAction('disable')} disabled={!selectedMutableUsers.length || bulkBusy === 'disable'}>
+                    <Ban size={14} />
+                    停用
+                  </Button>
+                  <Button tone="danger" onClick={() => void runBulkAction('delete')} disabled={!selectedMutableUsers.length || bulkBusy === 'delete'}>
+                    <Trash2 size={14} />
+                    删除
+                  </Button>
+                  <Button onClick={() => setSelectedIds(new Set())}>取消选择</Button>
+                </div>
+              </div>
+            ) : null}
             <table>
               <thead>
                 <tr>
+                  <th><input type="checkbox" checked={allPageSelected} onChange={togglePageSelected} aria-label="选择当前页用户" /></th>
                   <th>用户</th>
                   {visibleColumns.has('identity') ? <th>身份信息</th> : null}
                   {visibleColumns.has('groups') ? <th>分组</th> : null}
@@ -610,6 +683,7 @@ export function AdminUsersPage() {
               <tbody>
                 {pagedRows.length ? pagedRows.map((item) => (
                   <tr key={item.id}>
+                    <td><input type="checkbox" checked={selectedIds.has(item.id)} onChange={() => toggleSelected(item.id)} aria-label={`选择 ${item.email || item.username || item.name}`} /></td>
                     <td>
                       <div className="sub2-cell-stack sub2-cell-stack-tight">
                         <strong>{item.email || item.name}</strong>
@@ -674,9 +748,17 @@ export function AdminUsersPage() {
                     ) : null}
                     <td className="row-actions-cell">
                       <RowActions>
-                        <RowAction icon={Eye} label="详情" onClick={() => setInspectUser(item)} />
                         <RowAction icon={Edit} label="编辑" onClick={() => openEdit(item)} />
+                        {(item.role || 'user') !== 'admin' ? (
+                          <RowAction
+                            icon={item.enabled === false ? ShieldCheck : Ban}
+                            label={item.enabled === false ? '启用' : '停用'}
+                            tone={item.enabled === false ? 'default' : 'warn'}
+                            onClick={() => setToggleTarget(item)}
+                          />
+                        ) : null}
                         <ToolsMenu label="更多">
+                          <button type="button" onClick={() => setInspectUser(item)}><span>详情</span><Eye size={14} /></button>
                           <button type="button" onClick={() => setViewKeysUser(item)}><span>API Key</span><KeyRound size={14} /></button>
                           <button type="button" onClick={() => openGroupAccess(item)}><span>允许分组</span><Users size={14} /></button>
                           <button type="button" onClick={() => openBalance(item, 'deposit')}><span>充值</span><Wallet size={14} /></button>
@@ -684,16 +766,17 @@ export function AdminUsersPage() {
                           <button type="button" onClick={() => setBalanceHistoryUser(item)}><span>余额历史</span><History size={14} /></button>
                           <button type="button" onClick={() => setViewSubscriptionsUser(item)}><span>订阅</span><Ticket size={14} /></button>
                           <button type="button" onClick={() => setViewUsageUser(item)}><span>使用记录</span><ListChecks size={14} /></button>
-                          <button type="button" onClick={() => setToggleTarget(item)}><span>{item.enabled === false ? '启用' : '停用'}</span><ShieldCheck size={14} /></button>
                           <button type="button" onClick={() => setResetTarget(item)}><span>重置调用标识</span><KeyRound size={14} /></button>
-                          <button type="button" className="danger" onClick={() => setDeleteTarget(item)}><span>删除</span><Trash2 size={14} /></button>
+                          {(item.role || 'user') !== 'admin' ? (
+                            <button type="button" className="danger" onClick={() => setDeleteTarget(item)}><span>删除</span><Trash2 size={14} /></button>
+                          ) : null}
                         </ToolsMenu>
                       </RowActions>
                     </td>
                   </tr>
                 )) : (
                   <ListEmptyRow
-                    colSpan={visibleColumns.size + 2}
+                    colSpan={visibleColumns.size + 3}
                     title="暂无用户"
                     action={<Button tone="primary" data-tour="users-create-btn" onClick={openCreate}>添加用户</Button>}
                   />

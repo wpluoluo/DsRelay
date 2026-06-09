@@ -18,10 +18,11 @@ def _normalize_user_extra(payload: dict, current: dict | None = None) -> dict:
     if "rpm_limit" in payload:
         extra["rpm_limit"] = max(0, safe_int(payload.get("rpm_limit")))
     password = coerce_text(payload.get("password"))
+    clear_password = str(payload.get("clear_password") or "").strip().lower() in {"1", "true", "yes", "on"}
     if password:
         extra["password_hash"] = hashlib.sha256(password.encode("utf-8")).hexdigest()
         extra["password_set"] = True
-    elif "password" in payload and not password:
+    elif clear_password:
         extra.pop("password_hash", None)
         extra["password_set"] = False
     return extra
@@ -112,7 +113,7 @@ class AdminUsersMixin(AdminServiceBase):
                 "enabled": enabled,
                 "status": "active" if enabled else "disabled",
                 "source_type": "managed",
-                "role": "user",
+                "role": coerce_text(current.get("role")) or "user",
             }
         )
         saved = self.storage.upsert_admin_account(merged)
@@ -125,7 +126,7 @@ class AdminUsersMixin(AdminServiceBase):
                 **current,
                 "external_key": f"acct_{uuid.uuid4().hex[:16]}",
                 "source_type": "managed",
-                "role": "user",
+                "role": coerce_text(current.get("role")) or "user",
             }
         )
         saved = self.storage.upsert_admin_account(merged)

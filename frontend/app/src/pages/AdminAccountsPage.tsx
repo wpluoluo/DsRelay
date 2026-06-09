@@ -27,6 +27,7 @@ import { PoolTestView } from '../features/routes/RouteTable';
 type StatusFilter = '' | 'enabled' | 'disabled';
 type HealthFilter = '' | 'error' | 'used' | 'unused';
 type AccountColumnKey = 'route' | 'protocol' | 'models' | 'requests' | 'traffic' | 'status';
+type AccountFilterKey = 'status' | 'pool' | 'protocol' | 'health';
 type BulkEditTarget = 'selected' | 'filtered';
 
 type BulkEditDraft = {
@@ -46,6 +47,7 @@ type BulkEditDraft = {
 };
 
 const DEFAULT_VISIBLE_COLUMNS: AccountColumnKey[] = ['route', 'protocol', 'models', 'requests', 'traffic', 'status'];
+const DEFAULT_VISIBLE_FILTERS: AccountFilterKey[] = ['status', 'pool', 'protocol', 'health'];
 const STORAGE_KEY = 'admin-provider-accounts-view-state';
 const EMPTY_BULK_EDIT: BulkEditDraft = {
   enabled: '',
@@ -75,6 +77,7 @@ export function AdminAccountsPage() {
     autoRefreshInterval: 10,
     pageSize: 20,
     visibleColumns: DEFAULT_VISIBLE_COLUMNS,
+    visibleFilters: DEFAULT_VISIBLE_FILTERS,
   });
 
   const [search, setSearch] = useState(savedState.search);
@@ -86,6 +89,7 @@ export function AdminAccountsPage() {
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(Number(savedState.autoRefreshInterval || 10));
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
+  const [visibleFilters, setVisibleFilters] = useState<Set<AccountFilterKey>>(new Set(savedState.visibleFilters || DEFAULT_VISIBLE_FILTERS));
   const initialVisibleColumns = ((savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS) as string[]).map((item) => (item === 'pool' ? 'route' : item)) as AccountColumnKey[];
   const [visibleColumns, setVisibleColumns] = useState<Set<AccountColumnKey>>(new Set(initialVisibleColumns.length ? initialVisibleColumns : DEFAULT_VISIBLE_COLUMNS));
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -173,8 +177,9 @@ export function AdminAccountsPage() {
       autoRefreshInterval,
       pageSize,
       visibleColumns: Array.from(visibleColumns),
+      visibleFilters: Array.from(visibleFilters),
     });
-  }, [autoRefreshEnabled, autoRefreshInterval, healthFilter, pageSize, poolFilter, protocolFilter, search, statusFilter, visibleColumns]);
+  }, [autoRefreshEnabled, autoRefreshInterval, healthFilter, pageSize, poolFilter, protocolFilter, search, statusFilter, visibleColumns, visibleFilters]);
 
   useEffect(() => {
     const validIds = new Set(items.map((item) => item.id));
@@ -331,6 +336,15 @@ export function AdminAccountsPage() {
     setDeleteTarget(null);
   }
 
+  function toggleFilter(key: AccountFilterKey) {
+    setVisibleFilters((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   return (
     <section className="grid-page">
       <div className="sub2-page-head">
@@ -345,6 +359,24 @@ export function AdminAccountsPage() {
             right={
               <ToolbarButtonRow>
                 <ActionButton onClick={() => accountsQuery.refetch()}><RefreshCw size={15} />刷新</ActionButton>
+                <ToolsMenu label="筛选设置" icon={false}>
+                  <button type="button" onClick={() => toggleFilter('status')}>
+                    <span>状态</span>
+                    <strong>{visibleFilters.has('status') ? '✓' : ''}</strong>
+                  </button>
+                  <button type="button" onClick={() => toggleFilter('pool')}>
+                    <span>上游账号</span>
+                    <strong>{visibleFilters.has('pool') ? '✓' : ''}</strong>
+                  </button>
+                  <button type="button" onClick={() => toggleFilter('protocol')}>
+                    <span>协议</span>
+                    <strong>{visibleFilters.has('protocol') ? '✓' : ''}</strong>
+                  </button>
+                  <button type="button" onClick={() => toggleFilter('health')}>
+                    <span>观测</span>
+                    <strong>{visibleFilters.has('health') ? '✓' : ''}</strong>
+                  </button>
+                </ToolsMenu>
                 <ColumnMenu
                   label="列设置"
                   items={[
@@ -402,25 +434,33 @@ export function AdminAccountsPage() {
             }
           >
             <SearchField value={search} placeholder="搜索上游账号 / 线路 / 模型" onChange={(value) => { setSearch(value); setPage(1); }} />
-            <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StatusFilter); setPage(1); }}>
-              <option value="">全部状态</option>
-              <option value="enabled">启用</option>
-              <option value="disabled">停用</option>
-            </Select>
-            <Select value={poolFilter} onChange={(event) => { setPoolFilter(event.target.value); setPage(1); }}>
-              <option value="">全部上游账号</option>
-              {poolOptions.map((pool) => <option key={pool} value={pool}>{pool}</option>)}
-            </Select>
-            <Select value={protocolFilter} onChange={(event) => { setProtocolFilter(event.target.value); setPage(1); }}>
-              <option value="">全部协议</option>
-              {protocolOptions.map((protocol) => <option key={protocol} value={protocol}>{protocol}</option>)}
-            </Select>
-            <Select value={healthFilter} onChange={(event) => { setHealthFilter(event.target.value as HealthFilter); setPage(1); }}>
-              <option value="">全部观测</option>
-              <option value="used">有请求</option>
-              <option value="unused">未使用</option>
-              <option value="error">有异常</option>
-            </Select>
+            {visibleFilters.has('status') ? (
+              <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StatusFilter); setPage(1); }}>
+                <option value="">全部状态</option>
+                <option value="enabled">启用</option>
+                <option value="disabled">停用</option>
+              </Select>
+            ) : null}
+            {visibleFilters.has('pool') ? (
+              <Select value={poolFilter} onChange={(event) => { setPoolFilter(event.target.value); setPage(1); }}>
+                <option value="">全部上游账号</option>
+                {poolOptions.map((pool) => <option key={pool} value={pool}>{pool}</option>)}
+              </Select>
+            ) : null}
+            {visibleFilters.has('protocol') ? (
+              <Select value={protocolFilter} onChange={(event) => { setProtocolFilter(event.target.value); setPage(1); }}>
+                <option value="">全部协议</option>
+                {protocolOptions.map((protocol) => <option key={protocol} value={protocol}>{protocol}</option>)}
+              </Select>
+            ) : null}
+            {visibleFilters.has('health') ? (
+              <Select value={healthFilter} onChange={(event) => { setHealthFilter(event.target.value as HealthFilter); setPage(1); }}>
+                <option value="">全部观测</option>
+                <option value="used">有请求</option>
+                <option value="unused">未使用</option>
+                <option value="error">有异常</option>
+              </Select>
+            ) : null}
           </FilterToolbar>
         }
         table={
