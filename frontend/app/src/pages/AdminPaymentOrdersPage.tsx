@@ -3,11 +3,16 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { BadgeCheck, CircleX, CreditCard, Eye, Plus, RefreshCw, ReceiptText, ShieldCheck, Wallet } from 'lucide-react';
 import { createAdminPaymentOrder, fetchAdminAccounts, fetchAdminPaymentChannels, fetchAdminPaymentOrders, fetchAdminSubscriptionPlans, updateAdminPaymentOrderStatus } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
-import { ActionButton, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
+import { ActionButton, ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { queryClient } from '../state/queryClient';
 import type { AdminPaymentOrder } from '../types';
 import { buildAccountPayload, formatCost, formatNumber, getAccountId, getAccountName, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
 
+type OrderFilterKey = 'status' | 'channel';
+type OrderColumnKey = 'user' | 'plan' | 'pricing' | 'channel' | 'amount' | 'status' | 'fulfillment';
+
+const DEFAULT_VISIBLE_COLUMNS: OrderColumnKey[] = ['user', 'plan', 'pricing', 'channel', 'amount', 'status', 'fulfillment'];
+const DEFAULT_VISIBLE_FILTERS: OrderFilterKey[] = ['status', 'channel'];
 const STORAGE_KEY = 'admin-payment-orders-view-state';
 
 export function AdminPaymentOrdersPage() {
@@ -24,12 +29,16 @@ export function AdminPaymentOrdersPage() {
     statusFilter: '',
     channelFilter: '',
     pageSize: 20,
+    visibleColumns: DEFAULT_VISIBLE_COLUMNS,
+    visibleFilters: DEFAULT_VISIBLE_FILTERS,
   });
   const [search, setSearch] = useState(savedState.search);
   const [statusFilter, setStatusFilter] = useState(savedState.statusFilter);
   const [channelFilter, setChannelFilter] = useState(savedState.channelFilter || '');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
+  const [visibleColumns, setVisibleColumns] = useState<Set<OrderColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
+  const [visibleFilters, setVisibleFilters] = useState<Set<OrderFilterKey>>(new Set(savedState.visibleFilters || DEFAULT_VISIBLE_FILTERS));
 
   const createMutation = useMutation({
     mutationFn: createAdminPaymentOrder,
@@ -107,8 +116,28 @@ export function AdminPaymentOrdersPage() {
       statusFilter,
       channelFilter,
       pageSize,
+      visibleColumns: Array.from(visibleColumns),
+      visibleFilters: Array.from(visibleFilters),
     });
-  }, [channelFilter, pageSize, search, statusFilter]);
+  }, [channelFilter, pageSize, search, statusFilter, visibleColumns, visibleFilters]);
+
+  function toggleColumn(key: OrderColumnKey) {
+    setVisibleColumns((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleFilter(key: OrderFilterKey) {
+    setVisibleFilters((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   return (
     <section className="grid-page">
@@ -131,6 +160,28 @@ export function AdminPaymentOrdersPage() {
             right={
               <ToolbarButtonRow>
                 <ActionButton onClick={() => ordersQuery.refetch()}><RefreshCw size={15} />刷新</ActionButton>
+                <ToolsMenu label="筛选设置" icon={false}>
+                  <button type="button" onClick={() => toggleFilter('status')}>
+                    <span>状态</span>
+                    <strong>{visibleFilters.has('status') ? '✓' : ''}</strong>
+                  </button>
+                  <button type="button" onClick={() => toggleFilter('channel')}>
+                    <span>通道</span>
+                    <strong>{visibleFilters.has('channel') ? '✓' : ''}</strong>
+                  </button>
+                </ToolsMenu>
+                <ColumnMenu
+                  label="列设置"
+                  items={[
+                    { key: 'user', label: '用户', checked: visibleColumns.has('user'), onToggle: () => toggleColumn('user') },
+                    { key: 'plan', label: '计划', checked: visibleColumns.has('plan'), onToggle: () => toggleColumn('plan') },
+                    { key: 'pricing', label: '分组 / 定价', checked: visibleColumns.has('pricing'), onToggle: () => toggleColumn('pricing') },
+                    { key: 'channel', label: '通道', checked: visibleColumns.has('channel'), onToggle: () => toggleColumn('channel') },
+                    { key: 'amount', label: '金额', checked: visibleColumns.has('amount'), onToggle: () => toggleColumn('amount') },
+                    { key: 'status', label: '状态', checked: visibleColumns.has('status'), onToggle: () => toggleColumn('status') },
+                    { key: 'fulfillment', label: '履约', checked: visibleColumns.has('fulfillment'), onToggle: () => toggleColumn('fulfillment') },
+                  ]}
+                />
                 <ToolsMenu>
                   <button type="button" onClick={() => { setSearch(''); setStatusFilter(''); setChannelFilter(''); setPage(1); }}>
                     <span>清空筛选</span>
@@ -149,16 +200,20 @@ export function AdminPaymentOrdersPage() {
             }
           >
             <SearchField value={search} placeholder="搜索订单 / 用户 / 计划 / 通道" onChange={(value) => { setSearch(value); setPage(1); }} />
-            <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}>
-              <option value="">全部状态</option>
-              <option value="pending">pending</option>
-              <option value="paid">paid</option>
-              <option value="failed">failed</option>
-            </Select>
-            <Select value={channelFilter} onChange={(event) => { setChannelFilter(event.target.value); setPage(1); }}>
-              <option value="">全部通道</option>
-              {channelOptions.map(([value, label]) => <option key={String(value)} value={String(value)}>{String(label)}</option>)}
-            </Select>
+            {visibleFilters.has('status') ? (
+              <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}>
+                <option value="">全部状态</option>
+                <option value="pending">pending</option>
+                <option value="paid">paid</option>
+                <option value="failed">failed</option>
+              </Select>
+            ) : null}
+            {visibleFilters.has('channel') ? (
+              <Select value={channelFilter} onChange={(event) => { setChannelFilter(event.target.value); setPage(1); }}>
+                <option value="">全部通道</option>
+                {channelOptions.map(([value, label]) => <option key={String(value)} value={String(value)}>{String(label)}</option>)}
+              </Select>
+            ) : null}
           </FilterToolbar>
         }
         table={
@@ -167,14 +222,13 @@ export function AdminPaymentOrdersPage() {
               <thead>
                 <tr>
                   <th>订单</th>
-                  <th>用户</th>
-                  <th>计划</th>
-                  <th>分组 / 定价</th>
-                  <th>通道</th>
-                  <th>金额</th>
-                  <th>状态</th>
-                  <th>履约</th>
-                  <th>详情</th>
+                  {visibleColumns.has('user') ? <th>用户</th> : null}
+                  {visibleColumns.has('plan') ? <th>计划</th> : null}
+                  {visibleColumns.has('pricing') ? <th>分组 / 定价</th> : null}
+                  {visibleColumns.has('channel') ? <th>通道</th> : null}
+                  {visibleColumns.has('amount') ? <th>金额</th> : null}
+                  {visibleColumns.has('status') ? <th>状态</th> : null}
+                  {visibleColumns.has('fulfillment') ? <th>履约</th> : null}
                   <th>操作</th>
                 </tr>
               </thead>
@@ -187,65 +241,67 @@ export function AdminPaymentOrdersPage() {
                         <small>{item.provider_order_id || item.resume_token || '-'}</small>
                       </div>
                     </td>
-                    <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{getAccountName(item)}</strong><small>{getAccountId(item)}</small></div></td>
-                    <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.plan_name || item.plan_id}</strong><small>{item.plan_id}</small></div></td>
-                    <td>
-                      <div className="sub2-cell-stack sub2-cell-stack-tight">
-                        <strong>{item.group_name || item.group_id || '-'}</strong>
-                        <small>{Number(item.base_price_cents ?? item.plan_price_cents ?? 0)} × {Number(item.rate_multiplier || 1)}</small>
-                      </div>
-                    </td>
-                    <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.channel_name || item.channel_id || item.provider || '-'}</strong><small>{item.provider || 'manual'}</small></div></td>
-                    <td>
-                      <div className="sub2-order-amount">
-                        <strong>${formatCost(Number(item.final_price_cents ?? item.amount_cents ?? 0) / 100, 2)}</strong>
-                        <small>{item.currency || 'USD'}</small>
-                      </div>
-                    </td>
-                    <td>
-                      <div className="sub2-order-status">
-                        <Badge tone={item.status === 'paid' ? 'ok' : item.status === 'pending' ? 'warn' : 'bad'}>{item.status || '-'}</Badge>
-                        <small>{item.provider ? `provider: ${item.provider}` : 'manual'}</small>
-                      </div>
-                    </td>
-                    <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.subscription_id || '-'}</strong><small>{Array.isArray(item.fulfillment_logs) ? `${item.fulfillment_logs.length} 条日志` : '0 条日志'}</small></div></td>
+                    {visibleColumns.has('user') ? <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{getAccountName(item)}</strong><small>{getAccountId(item)}</small></div></td> : null}
+                    {visibleColumns.has('plan') ? <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.plan_name || item.plan_id}</strong><small>{item.plan_id}</small></div></td> : null}
+                    {visibleColumns.has('pricing') ? (
+                      <td>
+                        <div className="sub2-cell-stack sub2-cell-stack-tight">
+                          <strong>{item.group_name || item.group_id || '-'}</strong>
+                          <small>{Number(item.base_price_cents ?? item.plan_price_cents ?? 0)} × {Number(item.rate_multiplier || 1)}</small>
+                        </div>
+                      </td>
+                    ) : null}
+                    {visibleColumns.has('channel') ? <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.channel_name || item.channel_id || item.provider || '-'}</strong><small>{item.provider || 'manual'}</small></div></td> : null}
+                    {visibleColumns.has('amount') ? (
+                      <td>
+                        <div className="sub2-order-amount">
+                          <strong>${formatCost(Number(item.final_price_cents ?? item.amount_cents ?? 0) / 100, 2)}</strong>
+                          <small>{item.currency || 'USD'}</small>
+                        </div>
+                      </td>
+                    ) : null}
+                    {visibleColumns.has('status') ? (
+                      <td>
+                        <div className="sub2-order-status">
+                          <Badge tone={item.status === 'paid' ? 'ok' : item.status === 'pending' ? 'warn' : 'bad'}>{item.status || '-'}</Badge>
+                          <small>{item.provider ? `provider: ${item.provider}` : 'manual'}</small>
+                        </div>
+                      </td>
+                    ) : null}
+                    {visibleColumns.has('fulfillment') ? <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.subscription_id || '-'}</strong><small>{Array.isArray(item.fulfillment_logs) ? `${item.fulfillment_logs.length} 条日志` : '0 条日志'}</small></div></td> : null}
                     <td>
                       <RowActions>
                         <RowAction icon={Eye} label="详情" onClick={() => setInspectOrder(item)} />
+                        {item.status === 'paid' ? (
+                          <RowAction icon={ShieldCheck} label="已完成" onClick={() => setInspectOrder(item)} />
+                        ) : (
+                          <ToolsMenu label="更多">
+                            <button
+                              type="button"
+                              onClick={() => setStatusTarget({ id: item.id, status: 'paid', title: '确认完成订单', subtitle: `${getAccountName(item) || item.id} · ${item.plan_name || item.plan_id || '-'}` })}
+                            >
+                              <span>标记已支付</span>
+                              <BadgeCheck size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setStatusTarget({ id: item.id, status: 'failed', title: '确认标记失败', subtitle: `${getAccountName(item) || item.id} · ${item.plan_name || item.plan_id || '-'}` })}
+                            >
+                              <span>标记失败</span>
+                              <CircleX size={14} />
+                            </button>
+                            <button type="button" onClick={() => setInspectOrder(item)}>
+                              <span>查看拉起参数</span>
+                              <ShieldCheck size={14} />
+                            </button>
+                          </ToolsMenu>
+                        )}
                       </RowActions>
-                    </td>
-                    <td>
-                      {item.status === 'paid' ? (
-                        <div className="sub2-order-done">
-                          <Badge tone="ok">已完成</Badge>
-                        </div>
-                      ) : (
-                        <ToolsMenu label="订单操作" icon={false}>
-                          <button
-                            type="button"
-                            onClick={() => setStatusTarget({ id: item.id, status: 'paid', title: '确认完成订单', subtitle: `${getAccountName(item) || item.id} · ${item.plan_name || item.plan_id || '-'}` })}
-                          >
-                            <span>标记已支付</span>
-                            <BadgeCheck size={14} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setStatusTarget({ id: item.id, status: 'failed', title: '确认标记失败', subtitle: `${getAccountName(item) || item.id} · ${item.plan_name || item.plan_id || '-'}` })}
-                          >
-                            <span>标记失败</span>
-                            <CircleX size={14} />
-                          </button>
-                          <button type="button" onClick={() => setInspectOrder(item)}>
-                            <span>查看拉起参数</span>
-                            <ShieldCheck size={14} />
-                          </button>
-                        </ToolsMenu>
-                      )}
                     </td>
                   </tr>
                 )) : (
                   <ListEmptyRow
-                    colSpan={10}
+                    colSpan={visibleColumns.size + 2}
                     title="暂无订单"
                     action={<Button tone="primary" onClick={() => setDraft({ account_id: '', plan_id: '', channel_id: '', amount_cents: 0, currency: 'CNY' })}>创建订单</Button>}
                   />
