@@ -30,8 +30,10 @@ type KeyDraft = {
 type StatusFilter = '' | 'enabled' | 'disabled';
 type SubscriptionFilter = '' | 'active' | 'inactive';
 type ColumnKey = 'group' | 'subscription' | 'preview' | 'usage' | 'lastUsed' | 'status';
+type FilterKey = 'group' | 'status' | 'subscription';
 
 const DEFAULT_VISIBLE_COLUMNS: ColumnKey[] = ['group', 'subscription', 'preview', 'usage', 'lastUsed', 'status'];
+const DEFAULT_VISIBLE_FILTERS: FilterKey[] = ['group', 'status', 'subscription'];
 const STORAGE_KEY = 'account-api-keys-view-state';
 
 export function AccountApiKeysPage() {
@@ -44,6 +46,7 @@ export function AccountApiKeysPage() {
     groupFilter: '',
     pageSize: 20,
     visibleColumns: DEFAULT_VISIBLE_COLUMNS,
+    visibleFilters: DEFAULT_VISIBLE_FILTERS,
   });
 
   const [draft, setDraft] = useState<KeyDraft | null>(null);
@@ -59,6 +62,7 @@ export function AccountApiKeysPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
+  const [visibleFilters, setVisibleFilters] = useState<Set<FilterKey>>(new Set(savedState.visibleFilters || DEFAULT_VISIBLE_FILTERS));
 
   const createMutation = useMutation({
     mutationFn: createAccountApiKey,
@@ -148,8 +152,9 @@ export function AccountApiKeysPage() {
       groupFilter,
       pageSize,
       visibleColumns: Array.from(visibleColumns),
+      visibleFilters: Array.from(visibleFilters),
     });
-  }, [groupFilter, pageSize, search, statusFilter, subscriptionFilter, visibleColumns]);
+  }, [groupFilter, pageSize, search, statusFilter, subscriptionFilter, visibleColumns, visibleFilters]);
 
   function openCreate() {
     setDraft({ group_id: defaultKeyGroupId(account, groups), name: '', enabled: true });
@@ -176,6 +181,15 @@ export function AccountApiKeysPage() {
 
   function toggleColumn(key: ColumnKey) {
     setVisibleColumns((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleFilter(key: FilterKey) {
+    setVisibleFilters((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -222,6 +236,20 @@ export function AccountApiKeysPage() {
             right={
               <ToolbarButtonRow>
                 <Button onClick={() => void reload()}><RefreshCw size={15} />刷新</Button>
+                <ToolsMenu label="筛选设置" icon={false}>
+                  <button type="button" onClick={() => toggleFilter('group')}>
+                    <span>分组</span>
+                    <strong>{visibleFilters.has('group') ? '✓' : ''}</strong>
+                  </button>
+                  <button type="button" onClick={() => toggleFilter('status')}>
+                    <span>状态</span>
+                    <strong>{visibleFilters.has('status') ? '✓' : ''}</strong>
+                  </button>
+                  <button type="button" onClick={() => toggleFilter('subscription')}>
+                    <span>订阅</span>
+                    <strong>{visibleFilters.has('subscription') ? '✓' : ''}</strong>
+                  </button>
+                </ToolsMenu>
                 <ColumnMenu
                   label="列设置"
                   items={[
@@ -252,20 +280,26 @@ export function AccountApiKeysPage() {
             }
           >
             <SearchField value={search} placeholder="搜索名称 / Key / 计划" onChange={(value) => { setSearch(value); setPage(1); }} />
-            <Select value={groupFilter} onChange={(event) => { setGroupFilter(event.target.value); setPage(1); }}>
-              <option value="">全部分组</option>
-              {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
-            </Select>
-            <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StatusFilter); setPage(1); }}>
-              <option value="">全部状态</option>
-              <option value="enabled">启用</option>
-              <option value="disabled">停用</option>
-            </Select>
-            <Select value={subscriptionFilter} onChange={(event) => { setSubscriptionFilter(event.target.value as SubscriptionFilter); setPage(1); }}>
-              <option value="">全部订阅</option>
-              <option value="active">订阅有效</option>
-              <option value="inactive">无可用订阅</option>
-            </Select>
+            {visibleFilters.has('group') ? (
+              <Select value={groupFilter} onChange={(event) => { setGroupFilter(event.target.value); setPage(1); }}>
+                <option value="">全部分组</option>
+                {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+              </Select>
+            ) : null}
+            {visibleFilters.has('status') ? (
+              <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StatusFilter); setPage(1); }}>
+                <option value="">全部状态</option>
+                <option value="enabled">启用</option>
+                <option value="disabled">停用</option>
+              </Select>
+            ) : null}
+            {visibleFilters.has('subscription') ? (
+              <Select value={subscriptionFilter} onChange={(event) => { setSubscriptionFilter(event.target.value as SubscriptionFilter); setPage(1); }}>
+                <option value="">全部订阅</option>
+                <option value="active">订阅有效</option>
+                <option value="inactive">无可用订阅</option>
+              </Select>
+            ) : null}
           </FilterToolbar>
         )}
         table={(
