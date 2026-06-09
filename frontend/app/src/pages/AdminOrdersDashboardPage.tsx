@@ -6,7 +6,7 @@ import { fetchAdminPaymentChannels, fetchAdminPaymentOrders, fetchAdminSubscript
 import { Badge, Panel, PanelHead } from '../components';
 import { ActionButton, FilterToolbar, TablePageLayout, ToolbarButtonRow } from '../components/admin';
 import { buildPageIntro } from '../navigation';
-import { formatCost, formatNumber, getBusinessUserName } from '../utils';
+import { formatCost, formatNumber, getAccountName } from '../utils';
 
 export function AdminOrdersDashboardPage() {
   const ordersQuery = useQuery({ queryKey: ['admin-payment-orders'], queryFn: fetchAdminPaymentOrders, refetchInterval: 10000 });
@@ -81,7 +81,7 @@ export function AdminOrdersDashboardPage() {
                     {recentOrders.length ? recentOrders.map((item) => (
                       <tr key={item.id}>
                         <td>{item.id}</td>
-                        <td>{getBusinessUserName(item)}</td>
+                        <td>{getAccountName(item)}</td>
                         <td>{item.plan_name || item.plan_id || '-'}</td>
                         <td>{item.channel_name || item.provider || '-'}</td>
                         <td><Badge tone={item.status === 'paid' ? 'ok' : item.status === 'pending' ? 'warn' : 'bad'}>{item.status || '-'}</Badge></td>

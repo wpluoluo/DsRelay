@@ -13,10 +13,10 @@ import type {
   AdminContentItem,
   AdminBalanceEvent,
   AdminProviderAccount,
-  AdminUser,
+  AdminAccount,
   AdminSubscriptionPlan,
   AdminUsageItem,
-  AdminUserSubscription,
+  AdminAccountSubscription,
   AccountAffiliatePayload,
   AccountAffiliateTransferResult,
   AccountRedeemPayload,
@@ -85,52 +85,52 @@ export function fetchAdminProviderAccounts(): Promise<AdminListPayload<AdminProv
   return requestJson<AdminListPayload<AdminProviderAccount>>('/admin/accounts');
 }
 
-export function fetchAdminUsers(): Promise<AdminListPayload<AdminUser>> {
-  return requestJson<AdminListPayload<AdminUser>>('/admin/users');
+export function fetchAdminAccounts(): Promise<AdminListPayload<AdminAccount>> {
+  return requestJson<AdminListPayload<AdminAccount>>('/admin/users');
 }
 
-export function createAdminUser(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminUser }> {
-  return requestJson<{ ok?: boolean; item?: AdminUser }>('/admin/users', {
+export function createAdminAccount(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminAccount }> {
+  return requestJson<{ ok?: boolean; item?: AdminAccount }>('/admin/users', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
-export function updateAdminUser(userId: string, payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminUser }> {
-  return requestJson<{ ok?: boolean; item?: AdminUser }>(`/admin/users/${userId}`, {
+export function updateAdminAccount(accountId: string, payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminAccount }> {
+  return requestJson<{ ok?: boolean; item?: AdminAccount }>(`/admin/users/${accountId}`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
-export function setAdminUserEnabled(userId: string, enabled: boolean): Promise<{ ok?: boolean; item?: AdminUser }> {
-  return requestJson<{ ok?: boolean; item?: AdminUser }>(`/admin/users/${userId}/enabled`, {
+export function setAdminAccountEnabled(accountId: string, enabled: boolean): Promise<{ ok?: boolean; item?: AdminAccount }> {
+  return requestJson<{ ok?: boolean; item?: AdminAccount }>(`/admin/users/${accountId}/enabled`, {
     method: 'POST',
     body: JSON.stringify({ enabled }),
   });
 }
 
-export function resetAdminUserExternalKey(userId: string): Promise<{ ok?: boolean; item?: AdminUser }> {
-  return requestJson<{ ok?: boolean; item?: AdminUser }>(`/admin/users/${userId}/reset-key`, {
+export function resetAdminAccountExternalKey(accountId: string): Promise<{ ok?: boolean; item?: AdminAccount }> {
+  return requestJson<{ ok?: boolean; item?: AdminAccount }>(`/admin/users/${accountId}/reset-key`, {
     method: 'POST',
   });
 }
 
-export function deleteAdminUser(userId: string): Promise<{ ok?: boolean; id?: string }> {
-  return requestJson<{ ok?: boolean; id?: string }>(`/admin/users/${userId}`, {
+export function deleteAdminAccount(accountId: string): Promise<{ ok?: boolean; id?: string }> {
+  return requestJson<{ ok?: boolean; id?: string }>(`/admin/users/${accountId}`, {
     method: 'DELETE',
   });
 }
 
-export function adjustAdminUserBalance(userId: string, payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminUser; event?: AdminBalanceEvent }> {
-  return requestJson<{ ok?: boolean; item?: AdminUser; event?: AdminBalanceEvent }>(`/admin/users/${userId}/balance`, {
+export function adjustAdminAccountBalance(accountId: string, payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminAccount; event?: AdminBalanceEvent }> {
+  return requestJson<{ ok?: boolean; item?: AdminAccount; event?: AdminBalanceEvent }>(`/admin/users/${accountId}/balance`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
-export function fetchAdminUserBalanceEvents(userId: string): Promise<AdminListPayload<AdminBalanceEvent>> {
-  return requestJson<AdminListPayload<AdminBalanceEvent>>(`/admin/users/${userId}/balance-events`);
+export function fetchAdminAccountBalanceEvents(accountId: string): Promise<AdminListPayload<AdminBalanceEvent>> {
+  return requestJson<AdminListPayload<AdminBalanceEvent>>(`/admin/users/${accountId}/balance-events`);
 }
 
 export function fetchAdminGroups(): Promise<AdminListPayload<AdminGroup>> {
@@ -225,32 +225,32 @@ export function saveAdminSubscriptionPlan(payload: Record<string, unknown>): Pro
   });
 }
 
-export function fetchAdminUserSubscriptions(): Promise<AdminListPayload<AdminUserSubscription>> {
-  return requestJson<AdminListPayload<AdminUserSubscription>>('/admin/subscriptions');
+export function fetchAdminAccountSubscriptions(): Promise<AdminListPayload<AdminAccountSubscription>> {
+  return requestJson<AdminListPayload<AdminAccountSubscription>>('/admin/subscriptions');
 }
 
-export function assignAdminUserSubscription(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminUserSubscription }> {
-  return requestJson<{ ok?: boolean; item?: AdminUserSubscription }>('/admin/subscriptions/assign', {
+export function assignAdminAccountSubscription(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminAccountSubscription }> {
+  return requestJson<{ ok?: boolean; item?: AdminAccountSubscription }>('/admin/subscriptions/assign', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
-export function extendAdminUserSubscription(subscriptionId: string, days: number): Promise<{ ok?: boolean; item?: AdminUserSubscription }> {
-  return requestJson<{ ok?: boolean; item?: AdminUserSubscription }>(`/admin/subscriptions/${subscriptionId}/extend`, {
+export function extendAdminAccountSubscription(subscriptionId: string, days: number): Promise<{ ok?: boolean; item?: AdminAccountSubscription }> {
+  return requestJson<{ ok?: boolean; item?: AdminAccountSubscription }>(`/admin/subscriptions/${subscriptionId}/extend`, {
     method: 'POST',
     body: JSON.stringify({ days }),
   });
 }
 
-export function revokeAdminUserSubscription(subscriptionId: string): Promise<{ ok?: boolean; item?: AdminUserSubscription }> {
-  return requestJson<{ ok?: boolean; item?: AdminUserSubscription }>(`/admin/subscriptions/${subscriptionId}`, {
+export function revokeAdminAccountSubscription(subscriptionId: string): Promise<{ ok?: boolean; item?: AdminAccountSubscription }> {
+  return requestJson<{ ok?: boolean; item?: AdminAccountSubscription }>(`/admin/subscriptions/${subscriptionId}`, {
     method: 'DELETE',
   });
 }
 
-export function resetAdminUserSubscriptionQuota(subscriptionId: string, payload: { daily: boolean; weekly: boolean; monthly: boolean }): Promise<{ ok?: boolean; item?: AdminUserSubscription }> {
-  return requestJson<{ ok?: boolean; item?: AdminUserSubscription }>(`/admin/subscriptions/${subscriptionId}/reset-quota`, {
+export function resetAdminAccountSubscriptionQuota(subscriptionId: string, payload: { daily: boolean; weekly: boolean; monthly: boolean }): Promise<{ ok?: boolean; item?: AdminAccountSubscription }> {
+  return requestJson<{ ok?: boolean; item?: AdminAccountSubscription }>(`/admin/subscriptions/${subscriptionId}/reset-quota`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -313,8 +313,8 @@ export function deleteAdminContent(
   });
 }
 
-export function fetchAccountMe(): Promise<{ ok?: boolean; item?: AdminUser }> {
-  return requestJson<{ ok?: boolean; item?: AdminUser }>('/account/me');
+export function fetchAccountMe(): Promise<{ ok?: boolean; item?: AdminAccount }> {
+  return requestJson<{ ok?: boolean; item?: AdminAccount }>('/account/me');
 }
 
 export function fetchAccountGroups(): Promise<AdminListPayload<AdminGroup>> {
@@ -372,8 +372,8 @@ export function fetchAccountPaymentChannels(): Promise<AdminListPayload<AdminPay
   return requestJson<AdminListPayload<AdminPaymentChannel>>('/account/payment-channels');
 }
 
-export function fetchAccountSubscriptions(): Promise<AdminListPayload<AdminUserSubscription>> {
-  return requestJson<AdminListPayload<AdminUserSubscription>>('/account/subscriptions');
+export function fetchAccountSubscriptions(): Promise<AdminListPayload<AdminAccountSubscription>> {
+  return requestJson<AdminListPayload<AdminAccountSubscription>>('/account/subscriptions');
 }
 
 export function fetchAccountOrders(): Promise<AdminListPayload<AdminPaymentOrder>> {

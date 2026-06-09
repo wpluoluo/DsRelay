@@ -54,24 +54,19 @@ export function maskEmpty(value: unknown): string {
   return text || '-';
 }
 
-export function getBusinessUserId(item: Record<string, unknown> | null | undefined): string {
+export function getAccountId(item: Record<string, unknown> | null | undefined): string {
   if (!item) return '';
-  return String(item.user_id || item.consumer_id || item.account_id || '').trim();
+  return String(item.account_id || item.consumer_id || '').trim();
 }
 
-export function getBusinessUserName(item: Record<string, unknown> | null | undefined): string {
+export function getAccountName(item: Record<string, unknown> | null | undefined): string {
   if (!item) return '-';
-  const id = getBusinessUserId(item);
-  return maskEmpty(item.user_name || item.consumer_name || item.account_name || id);
+  const id = getAccountId(item);
+  return maskEmpty(item.account_name || item.consumer_name || id);
 }
 
-export function getBusinessUserKey(item: Record<string, unknown> | null | undefined): string {
-  if (!item) return '';
-  return String(item.user_key || item.consumer_preview || item.external_key || '').trim();
-}
-
-export function buildBusinessUserPayload(userId: string, payload: Record<string, unknown> = {}): Record<string, unknown> {
-  return { ...payload, user_id: userId };
+export function buildAccountPayload(accountId: string, payload: Record<string, unknown> = {}): Record<string, unknown> {
+  return { ...payload, account_id: accountId };
 }
 
 export function splitLines(value: unknown): string[] {

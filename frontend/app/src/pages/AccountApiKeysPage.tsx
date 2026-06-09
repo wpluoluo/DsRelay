@@ -526,13 +526,13 @@ function keyGroupName(item: AdminApiKey | null | undefined, groups: AdminGroup[]
   return String(item?.group_name || groups.find((group) => group.id === groupId)?.name || groupId);
 }
 
-function keyGroupOptions(account: { allowed_group_ids?: string[]; user_allowed_group_ids?: string[] } | null | undefined, groups: AdminGroup[]): AdminGroup[] {
-  const allowedIds = account?.allowed_group_ids || account?.user_allowed_group_ids || [];
+function keyGroupOptions(account: { allowed_group_ids?: string[] } | null | undefined, groups: AdminGroup[]): AdminGroup[] {
+  const allowedIds = account?.allowed_group_ids || [];
   if (!allowedIds.length) return groups;
   return groups.filter((group) => allowedIds.includes(group.id));
 }
 
-function defaultKeyGroupId(account: { group_id?: string; group_ids?: string[]; allowed_group_ids?: string[]; user_allowed_group_ids?: string[] } | null | undefined, groups: AdminGroup[]): string {
+function defaultKeyGroupId(account: { group_id?: string; group_ids?: string[]; allowed_group_ids?: string[] } | null | undefined, groups: AdminGroup[]): string {
   const options = keyGroupOptions(account, groups);
   if (options.length === 1) return options[0].id;
   const userGroups = account?.group_ids || (account?.group_id ? [account.group_id] : []);

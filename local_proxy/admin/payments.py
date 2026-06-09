@@ -96,9 +96,6 @@ class AdminPaymentsMixin(AdminServiceBase):
                     **row,
                     "account_id": storage_account_id,
                     "account_name": coerce_text(accounts.get(storage_account_id, {}).get("name")) or storage_account_id,
-                    "user_id": storage_account_id,
-                    "user_name": coerce_text(accounts.get(storage_account_id, {}).get("name")) or storage_account_id,
-                    "user_key": coerce_text(accounts.get(storage_account_id, {}).get("external_key")),
                     "plan_name": coerce_text(plans.get(str(row.get("plan_id") or ""), {}).get("name")) or coerce_text(row.get("plan_id")),
                     "channel_name": coerce_text(channels.get(str(row.get("channel_id") or ""), {}).get("name")) or coerce_text(row.get("channel_id")),
                     "rate_multiplier": payload.get("rate_multiplier"),
@@ -112,15 +109,15 @@ class AdminPaymentsMixin(AdminServiceBase):
     def create_payment_order(self, payload: dict) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
-        account_id = coerce_text(payload.get("user_id") or payload.get("account_id"))
+        account_id = coerce_text(payload.get("account_id"))
         plan_id = coerce_text(payload.get("plan_id"))
         channel_id = coerce_text(payload.get("channel_id"))
         amount_cents = safe_int(payload.get("amount_cents"))
         if not account_id or not plan_id:
-            raise ValueError("user_id and plan_id are required")
+            raise ValueError("account_id and plan_id are required")
         account = self.storage.get_admin_account(account_id)
         if not account:
-            raise ValueError("user not found")
+            raise ValueError("account not found")
         self._validate_account_active(account)
         plan = next((item for item in self.storage.list_admin_subscription_plans() if coerce_text(item.get("id")) == plan_id), None)
         if not plan:
@@ -235,7 +232,7 @@ class AdminPaymentsMixin(AdminServiceBase):
             raise ValueError("subscription plan not found")
         account = self.storage.get_admin_account(coerce_text(current.get("account_id")))
         if not account:
-            raise ValueError("user not found")
+            raise ValueError("account not found")
         resolved_group_id = self._resolve_plan_group_id(plan, current)
         if resolved_group_id:
             self._validate_group_set([resolved_group_id])

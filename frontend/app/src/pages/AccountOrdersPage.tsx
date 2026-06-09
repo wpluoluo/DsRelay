@@ -6,7 +6,7 @@ import { Badge, Button, Field, Modal, ModalActions, Select, TextArea, TextInput 
 import { EmptyState, FilterToolbar, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow } from '../components/admin';
 import { queryClient } from '../state/queryClient';
 import { useAccountCenter } from '../state/accountCenterContext';
-import { formatNumber, formatUsdCost, getBusinessUserName, maskEmpty } from '../utils';
+import { formatNumber, formatUsdCost, getAccountName, maskEmpty } from '../utils';
 
 export function AccountOrdersPage() {
   const { account, orders, reload } = useAccountCenter();
@@ -106,7 +106,7 @@ export function AccountOrdersPage() {
               <tbody>
                 {rows.length ? rows.map((item) => (
                   <tr key={item.id}>
-                    <td><div className="sub2-cell-stack"><strong>{item.id}</strong><small>{getBusinessUserName(item)}</small></div></td>
+                    <td><div className="sub2-cell-stack"><strong>{item.id}</strong><small>{getAccountName(item)}</small></div></td>
                     <td><div className="sub2-cell-stack"><strong>{item.plan_name || item.plan_id}</strong><small>{item.group_name || item.group_id || '-'}</small></div></td>
                     <td><div className="sub2-cell-stack"><strong>{item.channel_name || item.channel_id || item.provider || '-'}</strong><small>{item.provider_order_id || item.resume_token || '-'}</small></div></td>
                     <td><strong className="sub2-number-cell">{formatUsdCost(Number(item.final_price_cents ?? item.amount_cents ?? 0) / 100, 2)}</strong></td>

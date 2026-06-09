@@ -136,7 +136,7 @@ class AdminUserKeyBalanceTests(unittest.TestCase):
         storage = FakeUserKeyBalanceStorage()
         service = AdminConsoleService(storage=storage)
 
-        result = service.create_api_key({"user_id": "acct_a", "name": "Key A", "group_id": "group_a"})
+        result = service.create_api_key({"account_id": "acct_a", "name": "Key A", "group_id": "group_a"})
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["item"]["group_id"], "group_a")
@@ -147,7 +147,7 @@ class AdminUserKeyBalanceTests(unittest.TestCase):
         service = AdminConsoleService(storage=storage)
 
         with self.assertRaises(ValueError):
-            service.create_api_key({"user_id": "acct_a", "name": "Key B", "group_id": "group_b"})
+            service.create_api_key({"account_id": "acct_a", "name": "Key B", "group_id": "group_b"})
 
     def test_balance_adjustment_records_events(self):
         storage = FakeUserKeyBalanceStorage()

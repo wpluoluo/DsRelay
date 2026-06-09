@@ -17,15 +17,15 @@ import type {
   AdminPaymentChannel,
   AdminPaymentOrder,
   AdminSubscriptionPlan,
-  AdminUser,
-  AdminUserSubscription,
+  AdminAccount,
+  AdminAccountSubscription,
 } from '../types';
 
 export type AccountCenterContextValue = {
-  account?: AdminUser;
+  account?: AdminAccount;
   groups: AdminGroup[];
   apiKeys: AdminApiKey[];
-  subscriptions: AdminUserSubscription[];
+  subscriptions: AdminAccountSubscription[];
   orders: AdminPaymentOrder[];
   plans: AdminSubscriptionPlan[];
   channels: AdminPaymentChannel[];

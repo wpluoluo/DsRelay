@@ -34,7 +34,7 @@ class AdminUsersMixin(AdminServiceBase):
         email = coerce_text(payload.get("email"))
         username = coerce_text(payload.get("username"))
         display_name = coerce_text(payload.get("name")) or username or email
-        external_key = coerce_text(payload.get("external_key") or payload.get("user_key")) or email or f"user_{uuid.uuid4().hex[:16]}"
+        external_key = coerce_text(payload.get("external_key")) or email or f"acct_{uuid.uuid4().hex[:16]}"
         allowed_group_ids = self._normalize_group_ids(payload.get("allowed_group_ids") if isinstance(payload.get("allowed_group_ids"), list) else [])
         group_ids = self._normalize_group_ids(payload.get("group_ids") if isinstance(payload.get("group_ids"), list) else [])
         self._validate_group_set(group_ids)
@@ -42,7 +42,7 @@ class AdminUsersMixin(AdminServiceBase):
         item = normalize_admin_account_payload(
             {
                 **payload,
-                "id": coerce_text(payload.get("id") or payload.get("user_id")) or f"user_{uuid.uuid4().hex[:16]}",
+                "id": coerce_text(payload.get("id")) or f"acct_{uuid.uuid4().hex[:16]}",
                 "name": display_name,
                 "external_key": external_key,
                 "source_type": "managed",
@@ -63,8 +63,8 @@ class AdminUsersMixin(AdminServiceBase):
         refreshed.update(self._get_account_subscription_status(saved["id"]))
         return {"ok": True, "item": refreshed}
 
-    def update_user(self, user_id: str, payload: dict) -> dict:
-        current = self._require_account(user_id)
+    def update_user(self, account_id: str, payload: dict) -> dict:
+        current = self._require_account(account_id)
         email = coerce_text(payload.get("email"))
         username = coerce_text(payload.get("username"))
         display_name = coerce_text(payload.get("name")) or username or email or coerce_text(current.get("name"))
@@ -85,7 +85,7 @@ class AdminUsersMixin(AdminServiceBase):
                 **payload,
                 "id": current["id"],
                 "name": display_name,
-                "external_key": coerce_text(payload.get("external_key") or payload.get("user_key")) or coerce_text(current.get("external_key")),
+                "external_key": coerce_text(payload.get("external_key")) or coerce_text(current.get("external_key")),
                 "source_type": "managed",
                 "role": coerce_text(payload.get("role")) or coerce_text(current.get("role")) or "user",
                 "status": coerce_text(payload.get("status")) or ("active" if payload.get("enabled", current.get("enabled")) is not False else "disabled"),
@@ -104,8 +104,8 @@ class AdminUsersMixin(AdminServiceBase):
         refreshed.update(self._get_account_subscription_status(saved["id"]))
         return {"ok": True, "item": refreshed}
 
-    def set_user_enabled(self, user_id: str, enabled: bool) -> dict:
-        current = self._require_account(user_id)
+    def set_user_enabled(self, account_id: str, enabled: bool) -> dict:
+        current = self._require_account(account_id)
         merged = normalize_admin_account_payload(
             {
                 **current,
@@ -118,12 +118,12 @@ class AdminUsersMixin(AdminServiceBase):
         saved = self.storage.upsert_admin_account(merged)
         return {"ok": True, "item": saved}
 
-    def reset_user_external_key(self, user_id: str) -> dict:
-        current = self._require_account(user_id)
+    def reset_user_external_key(self, account_id: str) -> dict:
+        current = self._require_account(account_id)
         merged = normalize_admin_account_payload(
             {
                 **current,
-                "external_key": f"user_{uuid.uuid4().hex[:16]}",
+                "external_key": f"acct_{uuid.uuid4().hex[:16]}",
                 "source_type": "managed",
                 "role": "user",
             }
@@ -131,17 +131,17 @@ class AdminUsersMixin(AdminServiceBase):
         saved = self.storage.upsert_admin_account(merged)
         return {"ok": True, "item": saved}
 
-    def delete_user(self, user_id: str) -> dict:
+    def delete_user(self, account_id: str) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
-        current = self._require_account(user_id)
+        current = self._require_account(account_id)
         self.storage.delete_admin_account(current["id"])
         return {"ok": True, "id": current["id"]}
 
-    def adjust_user_balance(self, user_id: str, payload: dict) -> dict:
+    def adjust_user_balance(self, account_id: str, payload: dict) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
-        current = self._require_account(user_id)
+        current = self._require_account(account_id)
         operation = coerce_text(payload.get("operation") or payload.get("type") or "deposit")
         amount_cents = safe_int(payload.get("amount_cents"))
         if not amount_cents:
@@ -170,9 +170,9 @@ class AdminUsersMixin(AdminServiceBase):
         refreshed.update(self._get_account_subscription_status(current["id"]))
         return {"ok": True, "item": refreshed, "event": event}
 
-    def list_user_balance_events(self, user_id: str, limit: int = 200) -> dict:
+    def list_user_balance_events(self, account_id: str, limit: int = 200) -> dict:
         if self.storage is None:
             return {"ok": True, "items": [], "total": 0}
-        current = self._require_account(user_id)
+        current = self._require_account(account_id)
         rows = self.storage.list_admin_balance_events(current["id"], limit=limit)
         return {"ok": True, "items": rows, "total": len(rows)}

@@ -9,22 +9,22 @@ from .base import AdminServiceBase, coerce_text, safe_float, safe_int
 
 
 class AdminAccountPortalMixin(AdminServiceBase):
-    def account_redeem_profile(self, user_id: str) -> dict:
-        account = self._require_account(user_id)
+    def account_redeem_profile(self, account_id: str) -> dict:
+        account = self._require_account(account_id)
         history = self._account_redeem_history(account["id"])
         return {
             "ok": True,
-            "user_id": account["id"],
+            "account_id": account["id"],
             "balance_cents": safe_int(account.get("balance_cents")),
             "concurrency_limit": safe_int(account.get("concurrency_limit")),
             "history": history,
             "total": len(history),
         }
 
-    def redeem_account_code(self, user_id: str, payload: dict) -> dict:
+    def redeem_account_code(self, account_id: str, payload: dict) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
-        account = self._require_account(user_id)
+        account = self._require_account(account_id)
         self._validate_account_active(account)
         code = coerce_text(payload.get("code"))
         if not code:
@@ -100,7 +100,7 @@ class AdminAccountPortalMixin(AdminServiceBase):
             validity_days = safe_int(matched_meta.get("validity_days")) or safe_int(plan.get("validity_days")) or 30
             subscription = self.assign_subscription(
                 {
-                    "user_id": account["id"],
+                    "account_id": account["id"],
                     "plan_id": plan_id,
                     "group_id": coerce_text(matched_meta.get("group_id")) or coerce_text(plan.get("group_id")),
                     "status": "active",
@@ -137,8 +137,8 @@ class AdminAccountPortalMixin(AdminServiceBase):
         self._save_content_bucket("redeem-codes", next_items)
         return result
 
-    def account_affiliate_detail(self, user_id: str) -> dict:
-        account = self._require_account(user_id)
+    def account_affiliate_detail(self, account_id: str) -> dict:
+        account = self._require_account(account_id)
         aff_code = self._ensure_affiliate_code(account)
         invite_items = self._filter_affiliate_items("affiliate-invites", account["id"], aff_code)
         rebate_items = self._filter_affiliate_items("affiliate-rebates", account["id"], aff_code)
@@ -148,7 +148,7 @@ class AdminAccountPortalMixin(AdminServiceBase):
         available_cents = max(0, total_rebate_cents - transferred_cents)
         return {
             "ok": True,
-            "user_id": account["id"],
+            "account_id": account["id"],
             "aff_code": aff_code,
             "effective_rebate_rate_percent": self._affiliate_rebate_rate(account),
             "aff_count": len(invite_items),
@@ -160,10 +160,10 @@ class AdminAccountPortalMixin(AdminServiceBase):
             "transfers": transfer_items,
         }
 
-    def transfer_account_affiliate_quota(self, user_id: str) -> dict:
+    def transfer_account_affiliate_quota(self, account_id: str) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
-        account = self._require_account(user_id)
+        account = self._require_account(account_id)
         detail = self.account_affiliate_detail(account["id"])
         amount_cents = safe_int(detail.get("aff_quota_cents"))
         if amount_cents <= 0:
@@ -185,7 +185,7 @@ class AdminAccountPortalMixin(AdminServiceBase):
             "summary": f"{amount_cents}",
             "content": json.dumps(
                 {
-                    "user_id": account["id"],
+                    "account_id": account["id"],
                     "aff_code": coerce_text(detail.get("aff_code")),
                     "amount_cents": amount_cents,
                     "balance_event_id": coerce_text(event.get("id")),
@@ -315,8 +315,8 @@ class AdminAccountPortalMixin(AdminServiceBase):
             self.storage.upsert_admin_account({**account, "extra": {**extra, "aff_code": aff_code}})
         return aff_code
 
-    def _filter_affiliate_items(self, bucket: str, user_id: str, aff_code: str) -> list[dict]:
-        user_key = user_id.lower()
+    def _filter_affiliate_items(self, bucket: str, account_id: str, aff_code: str) -> list[dict]:
+        account_key = account_id.lower()
         code_key = aff_code.lower()
         rows = []
         for item in self._load_content_bucket(bucket):
@@ -329,9 +329,9 @@ class AdminAccountPortalMixin(AdminServiceBase):
                     coerce_text(item.get("note")),
                 ]
             ).lower()
-            owner = coerce_text(payload.get("user_id") or payload.get("account_id")).lower()
+            owner = coerce_text(payload.get("account_id")).lower()
             code = coerce_text(payload.get("aff_code") or payload.get("code")).lower()
-            if owner == user_key or code == code_key or user_key in text or code_key in text:
+            if owner == account_key or code == code_key or account_key in text or code_key in text:
                 rows.append({**item, "amount_cents": self._content_amount_cents(item)})
         return rows
 

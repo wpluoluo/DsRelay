@@ -81,7 +81,7 @@ class AccountPortalService:
         items = [
             item
             for item in self.admin_service.list_api_keys().get("items", [])
-            if coerce_text(item.get("account_id") or item.get("user_id")) == account["id"]
+            if coerce_text(item.get("account_id")) == account["id"]
         ]
         return {"ok": True, "items": items, "total": len(items)}
 
@@ -124,7 +124,7 @@ class AccountPortalService:
                 started_after=started_after,
                 started_before=started_before,
             ).get("items", [])
-            if coerce_text(item.get("consumer_id") or item.get("account_id") or item.get("user_id")) == account["id"]
+            if coerce_text(item.get("consumer_id") or item.get("account_id")) == account["id"]
         ]
         return {"ok": True, "items": items, "total": len(items)}
 
@@ -196,7 +196,7 @@ class AccountPortalService:
         items = [
             item
             for item in self.admin_service.list_account_subscriptions().get("items", [])
-            if coerce_text(item.get("account_id") or item.get("user_id")) == account["id"]
+            if coerce_text(item.get("account_id")) == account["id"]
         ]
         return {"ok": True, "items": items, "total": len(items)}
 
@@ -205,7 +205,7 @@ class AccountPortalService:
         items = [
             item
             for item in self.admin_service.list_payment_orders().get("items", [])
-            if coerce_text(item.get("account_id") or item.get("user_id")) == account["id"]
+            if coerce_text(item.get("account_id")) == account["id"]
         ]
         return {"ok": True, "items": items, "total": len(items)}
 
@@ -216,7 +216,6 @@ class AccountPortalService:
             {
                 **(payload if isinstance(payload, dict) else {}),
                 "account_id": account["id"],
-                "user_id": account["id"],
             }
         )
 

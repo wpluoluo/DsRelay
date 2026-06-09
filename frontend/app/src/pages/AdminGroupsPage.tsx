@@ -32,7 +32,7 @@ type GroupDraft = {
 
 type GroupColumnKey = 'platform' | 'billing' | 'users' | 'subscriptions' | 'requests' | 'errors' | 'tokens' | 'input' | 'output' | 'status';
 type ExclusiveFilter = '' | 'exclusive' | 'public';
-type GroupExtraEntry = { user_id: string; user_name?: string; value: number };
+type GroupExtraEntry = { account_id: string; account_name?: string; value: number };
 
 const EMPTY_GROUP: GroupDraft = {
   name: '',
@@ -724,12 +724,12 @@ export function AdminGroupsPage() {
         <GroupEntriesModal
           title="分组专属倍率管理"
           group={rateGroup}
-          entries={extractEntries(rateGroup.extra?.user_rate_multipliers)}
+          entries={extractEntries(rateGroup.extra?.account_rate_multipliers)}
           valueLabel="倍率"
           valueStep="0.001"
           defaultValue={1}
           onClose={() => setRateGroup(null)}
-          onSave={(entries) => { updateGroupExtra(rateGroup, { user_rate_multipliers: entries }); setRateGroup(null); }}
+          onSave={(entries) => { updateGroupExtra(rateGroup, { account_rate_multipliers: entries }); setRateGroup(null); }}
         />
       ) : null}
 
@@ -737,12 +737,12 @@ export function AdminGroupsPage() {
         <GroupEntriesModal
           title="分组专属 RPM 管理"
           group={rpmGroup}
-          entries={extractEntries(rpmGroup.extra?.user_rpm_overrides)}
+          entries={extractEntries(rpmGroup.extra?.account_rpm_overrides)}
           valueLabel="RPM"
           valueStep="1"
           defaultValue={0}
           onClose={() => setRpmGroup(null)}
-          onSave={(entries) => { updateGroupExtra(rpmGroup, { user_rpm_overrides: entries }); setRpmGroup(null); }}
+          onSave={(entries) => { updateGroupExtra(rpmGroup, { account_rpm_overrides: entries }); setRpmGroup(null); }}
         />
       ) : null}
     </section>
@@ -777,11 +777,11 @@ function GroupEntriesModal({
   };
   const normalizedRows = rows
     .map((item) => ({
-      user_id: String(item.user_id || '').trim(),
-      user_name: String(item.user_name || '').trim(),
+      account_id: String(item.account_id || '').trim(),
+      account_name: String(item.account_name || '').trim(),
       value: Number(item.value || 0),
     }))
-    .filter((item) => item.user_id);
+    .filter((item) => item.account_id);
 
   return (
     <Modal
@@ -801,12 +801,12 @@ function GroupEntriesModal({
         </div>
         <div className="admin-entry-list">
           {rows.map((entry, index) => (
-            <div className="admin-entry-row" key={`${entry.user_id}-${index}`}>
+            <div className="admin-entry-row" key={`${entry.account_id}-${index}`}>
               <Field label="用户 ID">
-                <TextInput value={entry.user_id} onChange={(event) => updateRow(index, { user_id: event.target.value })} />
+                <TextInput value={entry.account_id} onChange={(event) => updateRow(index, { account_id: event.target.value })} />
               </Field>
               <Field label="用户名称">
-                <TextInput value={entry.user_name || ''} onChange={(event) => updateRow(index, { user_name: event.target.value })} />
+                <TextInput value={entry.account_name || ''} onChange={(event) => updateRow(index, { account_name: event.target.value })} />
               </Field>
               <Field label={valueLabel}>
                 <TextInput type="number" step={valueStep} value={String(entry.value ?? defaultValue)} onChange={(event) => updateRow(index, { value: Number(event.target.value || 0) })} />
@@ -814,7 +814,7 @@ function GroupEntriesModal({
               <Button tone="danger" onClick={() => removeRow(index)}>删除</Button>
             </div>
           ))}
-          <Button onClick={() => setRows((current) => [...current, { user_id: '', user_name: '', value: defaultValue }])}>
+          <Button onClick={() => setRows((current) => [...current, { account_id: '', account_name: '', value: defaultValue }])}>
             <Plus size={15} />
             添加规则
           </Button>
@@ -830,11 +830,11 @@ function extractEntries(value: unknown): GroupExtraEntry[] {
       if (!item || typeof item !== 'object') return entries;
       const record = item as Record<string, unknown>;
       const entry = {
-        user_id: String(record.user_id || '').trim(),
-        user_name: String(record.user_name || '').trim(),
+        account_id: String(record.account_id || '').trim(),
+        account_name: String(record.account_name || '').trim(),
         value: Number(record.value || 0),
       };
-      if (entry.user_id) entries.push(entry);
+      if (entry.account_id) entries.push(entry);
       return entries;
     }, []);
 }

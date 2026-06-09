@@ -5,8 +5,8 @@ import { createAccountOrder } from '../api';
 import { Badge, Button, Empty, Field, Metric, Modal, ModalActions, Panel, PanelHead, Select, TextArea, TextInput } from '../components';
 import { queryClient } from '../state/queryClient';
 import { useAccountCenter } from '../state/accountCenterContext';
-import type { AdminPaymentOrder, AdminUserSubscription } from '../types';
-import { formatNumber, formatUsdCost, getBusinessUserName } from '../utils';
+import type { AdminAccountSubscription, AdminPaymentOrder } from '../types';
+import { formatNumber, formatUsdCost, getAccountName } from '../utils';
 
 type PurchaseDraft = {
   plan_id: string;
@@ -175,7 +175,7 @@ export function PurchaseCenterPage() {
               {selectedOrders.length ? selectedOrders.map((item) => (
                 <tr key={item.id}>
                   <td><strong>{item.id}</strong><small>{item.provider_order_id || item.resume_token || '-'}</small></td>
-                  <td>{getBusinessUserName(item)}</td>
+                  <td>{getAccountName(item)}</td>
                   <td>{item.plan_name || item.plan_id}</td>
                   <td>{item.channel_name || item.channel_id || item.provider || '-'}</td>
                   <td>{formatUsdCost(Number(item.final_price_cents ?? item.amount_cents ?? 0) / 100, 2)}</td>
@@ -208,7 +208,7 @@ export function PurchaseCenterPage() {
               <div className="admin-dialog-summary-card">
                 <span>状态</span>
                 <strong>{createdOrder.status || '-'}</strong>
-                <small>{getBusinessUserName(createdOrder)}</small>
+                <small>{getAccountName(createdOrder)}</small>
               </div>
               <div className="admin-dialog-summary-card">
                 <span>计划</span>
@@ -303,7 +303,7 @@ export function PurchaseCenterPage() {
               </div>
             </div>
             <div className="admin-dialog-grid">
-              <Field label="用户"><TextInput readOnly value={getBusinessUserName(inspectOrder)} /></Field>
+              <Field label="用户"><TextInput readOnly value={getAccountName(inspectOrder)} /></Field>
               <Field label="计划"><TextInput readOnly value={inspectOrder.plan_name || inspectOrder.plan_id || '-'} /></Field>
               <Field label="通道"><TextInput readOnly value={inspectOrder.channel_name || inspectOrder.channel_id || inspectOrder.provider || '-'} /></Field>
               <Field label="金额"><TextInput readOnly value={formatUsdCost(Number(inspectOrder.final_price_cents ?? inspectOrder.amount_cents ?? 0) / 100, 2)} /></Field>
@@ -318,7 +318,7 @@ export function PurchaseCenterPage() {
   );
 }
 
-function SubscriptionCard({ item }: { item: AdminUserSubscription }) {
+function SubscriptionCard({ item }: { item: AdminAccountSubscription }) {
   const tone = item.status === 'active' ? 'ok' : item.status === 'expired' ? 'warn' : 'bad';
   return (
     <div className="channel-card">
@@ -328,7 +328,7 @@ function SubscriptionCard({ item }: { item: AdminUserSubscription }) {
       </div>
       <div className="channel-card-body">
         <MetricLine label="订阅 ID" value={item.id} />
-        <MetricLine label="用户" value={getBusinessUserName(item)} />
+        <MetricLine label="用户" value={getAccountName(item)} />
         <MetricLine label="到期" value={formatDateTime(item.expires_at)} />
       </div>
     </div>

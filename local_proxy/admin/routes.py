@@ -24,43 +24,43 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
         payload = request.get_json(silent=True) or {}
         return jsonify(analytics_service.create_user(payload))
 
-    @app.post("/admin/users/<user_id>")
+    @app.post("/admin/users/<account_id>")
     @admin_required
-    def admin_users_update(user_id: str):
+    def admin_users_update(account_id: str):
         payload = request.get_json(silent=True) or {}
-        return jsonify(analytics_service.update_user(user_id, payload))
+        return jsonify(analytics_service.update_user(account_id, payload))
 
-    @app.post("/admin/users/<user_id>/enabled")
+    @app.post("/admin/users/<account_id>/enabled")
     @admin_required
-    def admin_users_enabled(user_id: str):
+    def admin_users_enabled(account_id: str):
         payload = request.get_json(silent=True) or {}
-        return jsonify(analytics_service.set_user_enabled(user_id, payload.get("enabled") is True))
+        return jsonify(analytics_service.set_user_enabled(account_id, payload.get("enabled") is True))
 
-    @app.post("/admin/users/<user_id>/reset-key")
+    @app.post("/admin/users/<account_id>/reset-key")
     @admin_required
-    def admin_users_reset_key(user_id: str):
-        return jsonify(analytics_service.reset_user_external_key(user_id))
+    def admin_users_reset_key(account_id: str):
+        return jsonify(analytics_service.reset_user_external_key(account_id))
 
-    @app.get("/admin/users/<user_id>/balance-events")
+    @app.get("/admin/users/<account_id>/balance-events")
     @admin_required
-    def admin_users_balance_events(user_id: str):
+    def admin_users_balance_events(account_id: str):
         limit = request.args.get("limit", "200")
         try:
             normalized_limit = int(limit)
         except Exception:
             normalized_limit = 200
-        return jsonify(analytics_service.list_user_balance_events(user_id, limit=normalized_limit))
+        return jsonify(analytics_service.list_user_balance_events(account_id, limit=normalized_limit))
 
-    @app.post("/admin/users/<user_id>/balance")
+    @app.post("/admin/users/<account_id>/balance")
     @admin_required
-    def admin_users_balance(user_id: str):
+    def admin_users_balance(account_id: str):
         payload = request.get_json(silent=True) or {}
-        return jsonify(analytics_service.adjust_user_balance(user_id, payload))
+        return jsonify(analytics_service.adjust_user_balance(account_id, payload))
 
-    @app.delete("/admin/users/<user_id>")
+    @app.delete("/admin/users/<account_id>")
     @admin_required
-    def admin_users_delete(user_id: str):
-        return jsonify(analytics_service.delete_user(user_id))
+    def admin_users_delete(account_id: str):
+        return jsonify(analytics_service.delete_user(account_id))
 
     @app.get("/admin/groups")
     @admin_required
@@ -326,27 +326,6 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
     @admin_required
     def admin_affiliate_transfers_delete(item_id: str):
         return jsonify(analytics_service.delete_content_bucket_item("affiliate-transfers", item_id))
-
-    @app.get("/account/users/<user_id>/redeem")
-    @admin_required
-    def account_redeem_profile(user_id: str):
-        return jsonify(analytics_service.account_redeem_profile(user_id))
-
-    @app.post("/account/users/<user_id>/redeem")
-    @admin_required
-    def account_redeem_code(user_id: str):
-        payload = request.get_json(silent=True) or {}
-        return jsonify(analytics_service.redeem_account_code(user_id, payload))
-
-    @app.get("/account/users/<user_id>/affiliate")
-    @admin_required
-    def account_affiliate_detail(user_id: str):
-        return jsonify(analytics_service.account_affiliate_detail(user_id))
-
-    @app.post("/account/users/<user_id>/affiliate/transfer")
-    @admin_required
-    def account_affiliate_transfer(user_id: str):
-        return jsonify(analytics_service.transfer_account_affiliate_quota(user_id))
 
     @app.get("/admin/protocols")
     @admin_required

@@ -82,12 +82,6 @@ class AdminApiKeysMixin(AdminServiceBase):
                 "account_source_type": account.get("source_type"),
                 "account_enabled": account.get("enabled"),
                 "account_note": account.get("note"),
-                "user_id": storage_account_id,
-                "user_name": coerce_text(account.get("name")) or storage_account_id,
-                "user_key": coerce_text(account.get("external_key")),
-                "user_source_type": account.get("source_type"),
-                "user_enabled": account.get("enabled"),
-                "user_note": account.get("note"),
                 "subscription_active": account.get("subscription_active"),
                 "active_subscription_id": account.get("active_subscription_id"),
                 "active_plan_id": account.get("active_plan_id"),
@@ -115,10 +109,10 @@ class AdminApiKeysMixin(AdminServiceBase):
     def create_api_key(self, payload: dict) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
-        account_id = coerce_text(payload.get("user_id") or payload.get("account_id"))
+        account_id = coerce_text(payload.get("account_id"))
         name = coerce_text(payload.get("name")) or "默认业务 Key"
         if not account_id:
-            raise ValueError("user_id is required")
+            raise ValueError("account_id is required")
         account = self._require_account(account_id)
         self._validate_account_active(account)
         membership_rows = self.storage.list_admin_account_groups()
@@ -149,7 +143,9 @@ class AdminApiKeysMixin(AdminServiceBase):
         current = self.storage.get_admin_api_key(key_id)
         if not current:
             raise ValueError("api key not found")
-        next_account_id = coerce_text(payload.get("user_id") or payload.get("account_id")) or coerce_text(current.get("account_id"))
+        next_account_id = coerce_text(current.get("account_id"))
+        if "account_id" in payload:
+            next_account_id = coerce_text(payload.get("account_id"))
         next_name = coerce_text(payload.get("name")) or coerce_text(current.get("name")) or "默认业务 Key"
         account = self._require_account(next_account_id)
         self._validate_account_active(account)

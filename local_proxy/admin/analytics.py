@@ -8,28 +8,26 @@ from local_proxy.platform import normalize_admin_group_payload
 
 
 class AdminAnalyticsMixin(AdminServiceBase):
-    def _user_public_fields(self, account: dict) -> dict:
+    def _account_public_fields(self, account: dict) -> dict:
         extra = account.get("extra") if isinstance(account.get("extra"), dict) else {}
-        user_id = coerce_text(account.get("id"))
-        user_name = coerce_text(account.get("name"))
+        account_id = coerce_text(account.get("id"))
+        account_name = coerce_text(account.get("name"))
         return {
-            "user_id": user_id,
-            "user_name": user_name,
-            "user_key": coerce_text(account.get("external_key")),
-            "user_preview": coerce_text(account.get("preview")),
-            "user_source_type": coerce_text(account.get("source_type")),
-            "user_role": coerce_text(account.get("role")) or "user",
-            "user_status": coerce_text(account.get("status")) or ("active" if account.get("enabled") is not False else "disabled"),
-            "user_enabled": account.get("enabled") is not False,
-            "user_email": coerce_text(account.get("email") or extra.get("email")),
-            "user_username": coerce_text(account.get("username") or extra.get("username")),
-            "user_rpm_limit": safe_int(account.get("rpm_limit") or extra.get("rpm_limit")),
-            "user_password_set": bool(extra.get("password_set") or extra.get("password_hash")),
-            "user_balance_cents": safe_int(account.get("balance_cents")),
-            "user_concurrency_limit": safe_int(account.get("concurrency_limit")),
-            "user_allowed_group_ids": account.get("allowed_group_ids") if isinstance(account.get("allowed_group_ids"), list) else [],
-            "account_id": user_id,
-            "account_name": user_name,
+            "account_id": account_id,
+            "account_name": account_name,
+            "external_key": coerce_text(account.get("external_key")),
+            "preview": coerce_text(account.get("preview")),
+            "source_type": coerce_text(account.get("source_type")),
+            "role": coerce_text(account.get("role")) or "user",
+            "status": coerce_text(account.get("status")) or ("active" if account.get("enabled") is not False else "disabled"),
+            "enabled": account.get("enabled") is not False,
+            "email": coerce_text(account.get("email") or extra.get("email")),
+            "username": coerce_text(account.get("username") or extra.get("username")),
+            "rpm_limit": safe_int(account.get("rpm_limit") or extra.get("rpm_limit")),
+            "password_set": bool(extra.get("password_set") or extra.get("password_hash")),
+            "balance_cents": safe_int(account.get("balance_cents")),
+            "concurrency_limit": safe_int(account.get("concurrency_limit")),
+            "allowed_group_ids": account.get("allowed_group_ids") if isinstance(account.get("allowed_group_ids"), list) else [],
         }
 
     def list_provider_accounts(self, limit: int = 500) -> dict:
@@ -336,15 +334,15 @@ class AdminAnalyticsMixin(AdminServiceBase):
         items = []
         for account in accounts_payload.get("items", []):
             account_id = coerce_text(account.get("id"))
-            user_fields = self._user_public_fields(account)
+            account_fields = self._account_public_fields(account)
             items.append(
                 {
                     "id": account_id,
                     "name": coerce_text(account.get("name")) or "未命名用户",
-                    "email": user_fields["user_email"],
-                    "username": user_fields["user_username"],
-                    "rpm_limit": user_fields["user_rpm_limit"],
-                    "password_set": user_fields["user_password_set"],
+                    "email": account_fields["email"],
+                    "username": account_fields["username"],
+                    "rpm_limit": account_fields["rpm_limit"],
+                    "password_set": account_fields["password_set"],
                     "preview": coerce_text(account.get("preview")),
                     "source_type": coerce_text(account.get("source_type")),
                     "group_id": coerce_text(account.get("group_id")),
@@ -373,7 +371,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     "active_plan_name": coerce_text(account.get("active_plan_name")),
                     "active_group_id": coerce_text(account.get("active_group_id")),
                     "active_group_name": coerce_text(account.get("active_group_name")),
-                    **user_fields,
+                    **account_fields,
                 }
             )
         return {"ok": True, "items": items, "total": len(items)}
@@ -571,7 +569,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     "consumer_name": resolved["name"],
                     "consumer_type": resolved["source_type"],
                     "consumer_preview": preview,
-                    **self._user_public_fields(resolved),
+                    **self._account_public_fields(resolved),
                     "api_key_id": coerce_text(row.get("proxy_api_key_id")),
                     "api_key_name": coerce_text(row.get("proxy_api_key_name")),
                     "api_key_preview": coerce_text(row.get("proxy_api_key_preview")),
@@ -714,8 +712,6 @@ class AdminAnalyticsMixin(AdminServiceBase):
                             "subscription_id": coerce_text(chosen_order.get("subscription_id")),
                             "account_id": coerce_text(chosen_order.get("account_id")),
                             "account_name": coerce_text(chosen_order.get("account_name")) or account_name,
-                            "user_id": coerce_text(chosen_order.get("user_id") or chosen_order.get("account_id")),
-                            "user_name": coerce_text(chosen_order.get("user_name") or chosen_order.get("account_name")) or account_name,
                             "plan_id": coerce_text(chosen_order.get("plan_id")) or plan_id,
                             "plan_name": coerce_text(chosen_order.get("plan_name")) or plan_name,
                             "group_id": coerce_text(chosen_order.get("group_id")) or group_id,
@@ -771,8 +767,6 @@ class AdminAnalyticsMixin(AdminServiceBase):
                 {
                     "account_id": account_id or "anonymous",
                     "account_name": account_name,
-                    "user_id": account_id or "anonymous",
-                    "user_name": account_name,
                     "consumer_type": coerce_text(item.get("consumer_type")),
                     "group_ids": set(),
                     "group_names": set(),
@@ -824,7 +818,6 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     "group_id": group_id or "",
                     "group_name": group_name,
                     "account_ids": set(),
-                    "user_ids": set(),
                     "plan_ids": set(),
                     "subscription_ids": set(),
                     "request_count": 0,
@@ -839,7 +832,6 @@ class AdminAnalyticsMixin(AdminServiceBase):
                 },
             )
             group_entry["account_ids"].add(account_id or "anonymous")
-            group_entry["user_ids"].add(account_id or "anonymous")
             if plan_id:
                 group_entry["plan_ids"].add(plan_id)
             if subscription_id:
@@ -863,7 +855,6 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     "group_name": group_name,
                     "plan_price_cents": plan_price_cents,
                     "account_ids": set(),
-                    "user_ids": set(),
                     "subscription_ids": set(),
                     "request_count": 0,
                     "error_count": 0,
@@ -877,7 +868,6 @@ class AdminAnalyticsMixin(AdminServiceBase):
                 },
             )
             plan_entry["account_ids"].add(account_id or "anonymous")
-            plan_entry["user_ids"].add(account_id or "anonymous")
             if subscription_id:
                 plan_entry["subscription_ids"].add(subscription_id)
             plan_entry["request_count"] += request_count
@@ -899,8 +889,6 @@ class AdminAnalyticsMixin(AdminServiceBase):
                         "status": coerce_text(subscription.get("status")) or "unknown",
                         "account_id": account_id,
                         "account_name": account_name,
-                        "user_id": account_id,
-                        "user_name": account_name,
                         "plan_id": plan_id,
                         "plan_name": plan_name,
                         "group_id": group_id,
@@ -943,7 +931,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     normalized.pop(field, None)
                 items.append(normalized)
             sort_keys = sort_keys or ["amount_cents", "total_tokens", "request_count"]
-            items.sort(key=lambda item: tuple(-safe_int(item.get(key)) for key in sort_keys) + (coerce_text(item.get("user_name") or item.get("account_name") or item.get("group_name") or item.get("plan_name") or item.get("subscription_id")),))
+            items.sort(key=lambda item: tuple(-safe_int(item.get(key)) for key in sort_keys) + (coerce_text(item.get("account_name") or item.get("group_name") or item.get("plan_name") or item.get("subscription_id")),))
             return items
 
         return {
@@ -963,7 +951,6 @@ class AdminAnalyticsMixin(AdminServiceBase):
                 by_group,
                 set_fields={
                     "account_ids": "account_ids",
-                    "user_ids": "user_ids",
                     "plan_ids": "plan_ids",
                     "subscription_ids": "subscription_ids",
                 },
@@ -972,7 +959,6 @@ class AdminAnalyticsMixin(AdminServiceBase):
                 by_plan,
                 set_fields={
                     "account_ids": "account_ids",
-                    "user_ids": "user_ids",
                     "subscription_ids": "subscription_ids",
                 },
             ),

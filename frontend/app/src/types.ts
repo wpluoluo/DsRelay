@@ -203,7 +203,7 @@ export type AdminOverviewPayload = {
   input_bytes?: number;
   output_bytes?: number;
   error_count?: number;
-  top_accounts?: AdminUser[];
+  top_accounts?: AdminAccount[];
   top_groups?: AdminGroup[];
 };
 
@@ -268,24 +268,9 @@ export type AdminProviderAccount = {
   active_subscription_price_cents?: number;
 };
 
-export type AdminUser = {
+export type AdminAccount = {
   id: string;
   name: string;
-  user_id?: string;
-  user_name?: string;
-  user_key?: string;
-  user_preview?: string;
-  user_source_type?: string;
-  user_role?: string;
-  user_status?: string;
-  user_enabled?: boolean;
-  user_email?: string;
-  user_username?: string;
-  user_rpm_limit?: number;
-  user_password_set?: boolean;
-  user_balance_cents?: number;
-  user_concurrency_limit?: number;
-  user_allowed_group_ids?: string[];
   email?: string;
   username?: string;
   rpm_limit?: number;
@@ -407,8 +392,6 @@ export type AdminBillingSummary = {
 export type AdminBillingAccountItem = {
   account_id: string;
   account_name?: string;
-  user_id?: string;
-  user_name?: string;
   consumer_type?: string;
   group_ids?: string[];
   group_names?: string[];
@@ -434,7 +417,6 @@ export type AdminBillingGroupItem = {
   group_id?: string;
   group_name?: string;
   account_ids?: string[];
-  user_ids?: string[];
   plan_ids?: string[];
   subscription_ids?: string[];
   request_count?: number;
@@ -455,7 +437,6 @@ export type AdminBillingPlanItem = {
   group_name?: string;
   plan_price_cents?: number;
   account_ids?: string[];
-  user_ids?: string[];
   subscription_ids?: string[];
   request_count?: number;
   error_count?: number;
@@ -473,8 +454,6 @@ export type AdminBillingSubscriptionItem = {
   status?: string;
   account_id?: string;
   account_name?: string;
-  user_id?: string;
-  user_name?: string;
   plan_id?: string;
   plan_name?: string;
   group_id?: string;
@@ -498,8 +477,6 @@ export type AdminBillingOrderItem = {
   subscription_id?: string;
   account_id?: string;
   account_name?: string;
-  user_id?: string;
-  user_name?: string;
   plan_id?: string;
   plan_name?: string;
   group_id?: string;
@@ -575,12 +552,6 @@ export type AdminApiKey = {
   account_source_type?: string;
   account_enabled?: boolean;
   account_note?: string;
-  user_id?: string;
-  user_name?: string;
-  user_key?: string;
-  user_source_type?: string;
-  user_enabled?: boolean;
-  user_note?: string;
   name: string;
   key_preview: string;
   enabled?: boolean;
@@ -637,13 +608,10 @@ export type AdminSubscriptionPlan = {
   note?: string;
 };
 
-export type AdminUserSubscription = {
+export type AdminAccountSubscription = {
   id: string;
   account_id: string;
   account_name?: string;
-  user_id?: string;
-  user_name?: string;
-  user_key?: string;
   plan_id: string;
   plan_name?: string;
   group_id?: string;
@@ -694,9 +662,6 @@ export type AdminPaymentOrder = {
   id: string;
   account_id: string;
   account_name?: string;
-  user_id?: string;
-  user_name?: string;
-  user_key?: string;
   plan_id: string;
   plan_name?: string;
   group_id?: string;
@@ -751,7 +716,7 @@ export type AccountRedeemHistoryItem = {
 
 export type AccountRedeemPayload = {
   ok?: boolean;
-  user_id?: string;
+  account_id?: string;
   balance_cents?: number;
   concurrency_limit?: number;
   history?: AccountRedeemHistoryItem[];
@@ -774,7 +739,7 @@ export type AccountRedeemResult = {
 
 export type AccountAffiliatePayload = {
   ok?: boolean;
-  user_id?: string;
+  account_id?: string;
   aff_code?: string;
   effective_rebate_rate_percent?: number;
   aff_count?: number;

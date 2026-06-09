@@ -89,7 +89,7 @@ class FakeAccountPortalStorage:
                         "title": "AFFUSERA rebate",
                         "status": "active",
                         "summary": "250",
-                        "content": '{"user_id":"acct_a","aff_code":"AFFUSERA","amount_cents":250}',
+                        "content": '{"account_id":"acct_a","aff_code":"AFFUSERA","amount_cents":250}',
                         "note": "",
                         "created_at": 1.0,
                         "updated_at": 1.0,

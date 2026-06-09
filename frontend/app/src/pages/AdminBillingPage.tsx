@@ -5,7 +5,7 @@ import { fetchAdminBilling, fetchAdminOverview, fetchAdminUsage } from '../api';
 import { Button, Field, Modal, ModalActions, TextArea, TextInput } from '../components';
 import { ActionButton, ColumnMenu, EmptyState, FilterToolbar, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import type { AdminBillingAccountItem, AdminBillingGroupItem, AdminBillingOrderItem, AdminBillingPlanItem, AdminBillingSubscriptionItem, AdminUsageItem } from '../types';
-import { formatByteCount, formatCost, formatNumber, formatTokenCount, formatUsdCost, getBusinessUserId, getBusinessUserName, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
+import { formatByteCount, formatCost, formatNumber, formatTokenCount, formatUsdCost, getAccountId, getAccountName, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
 
 const STORAGE_KEY = 'admin-billing-view-state';
 
@@ -530,11 +530,11 @@ function resolveAggregateMeta(
 ) {
   if (scope === 'account') {
     const item = row as AdminBillingAccountItem;
-    const userId = getBusinessUserId(item);
+    const accountId = getAccountId(item);
     return {
-      key: userId,
-      title: getBusinessUserName(item),
-      subtitle: userId,
+      key: accountId,
+      title: getAccountName(item),
+      subtitle: accountId,
       owner: (item.group_names || []).join(' / ') || '-',
       ownerExtra: (item.plan_names || []).join(' / ') || '-',
     };
@@ -545,7 +545,7 @@ function resolveAggregateMeta(
       key: item.group_id || item.group_name || 'group',
       title: item.group_name || item.group_id || '未分组',
       subtitle: item.group_id || '-',
-      owner: `${formatNumber(((item as any).user_ids || item.account_ids || []).length)} 用户`,
+      owner: `${formatNumber((item.account_ids || []).length)} 用户`,
       ownerExtra: `${formatNumber(item.subscription_ids?.length || 0)} 订阅`,
     };
   }
@@ -565,7 +565,7 @@ function resolveAggregateMeta(
       key: item.subscription_id,
       title: item.plan_name || item.subscription_id,
       subtitle: item.subscription_id,
-      owner: getBusinessUserName(item),
+      owner: getAccountName(item),
       ownerExtra: `${item.group_name || item.group_id || '-'} · ${item.status || '-'}`,
     };
   }
@@ -574,7 +574,7 @@ function resolveAggregateMeta(
     key: item.order_id,
     title: item.order_id,
     subtitle: item.channel_name || item.channel_id || '-',
-    owner: getBusinessUserName(item),
+    owner: getAccountName(item),
     ownerExtra: `${item.plan_name || item.plan_id || '-'} · ${item.status || '-'}`,
   };
 }

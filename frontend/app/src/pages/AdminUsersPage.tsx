@@ -2,24 +2,24 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Copy, Edit, Eye, History, KeyRound, ListChecks, Minus, Plus, RefreshCw, ShieldCheck, Ticket, Trash2, Users, Wallet } from 'lucide-react';
 import {
-  adjustAdminUserBalance,
-  assignAdminUserSubscription,
+  adjustAdminAccountBalance,
+  assignAdminAccountSubscription,
   createAdminApiKey,
-  createAdminUser,
+  createAdminAccount,
   deleteAdminApiKey,
-  deleteAdminUser,
+  deleteAdminAccount,
   fetchAdminApiKeys,
   fetchAdminGroups,
   fetchAdminSubscriptionPlans,
-  fetchAdminUserBalanceEvents,
+  fetchAdminAccountBalanceEvents,
   fetchAdminUsage,
-  fetchAdminUsers,
-  fetchAdminUserSubscriptions,
-  resetAdminUserExternalKey,
+  fetchAdminAccounts,
+  fetchAdminAccountSubscriptions,
+  resetAdminAccountExternalKey,
   setAdminApiKeyEnabled,
-  setAdminUserEnabled,
+  setAdminAccountEnabled,
   updateAdminApiKey,
-  updateAdminUser,
+  updateAdminAccount,
 } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
 import {
@@ -36,8 +36,8 @@ import {
   ToolsMenu,
 } from '../components/admin';
 import { queryClient } from '../state/queryClient';
-import type { AdminApiKey, AdminBalanceEvent, AdminUser } from '../types';
-import { copyTextToClipboard, formatByteCount, formatNumber, formatTokenCount, formatUsdCost, getBusinessUserId, readStorageJSON, writeStorageJSON } from '../utils';
+import type { AdminApiKey, AdminBalanceEvent, AdminAccount } from '../types';
+import { copyTextToClipboard, formatByteCount, formatNumber, formatTokenCount, formatUsdCost, getAccountId, readStorageJSON, writeStorageJSON } from '../utils';
 
 type UserDraft = {
   id?: string;
@@ -58,26 +58,26 @@ type UserDraft = {
 };
 
 type KeyDraft = {
-  userId: string;
+  accountId: string;
   name: string;
   groupId: string;
   enabled: boolean;
 };
 
 type SubscriptionDraft = {
-  userId: string;
+  accountId: string;
   planId: string;
   status: string;
 };
 
 type GroupAccessDraft = {
-  userId: string;
+  accountId: string;
   group_ids: string[];
   allowed_group_ids: string[];
 };
 
 type BalanceDraft = {
-  userId: string;
+  accountId: string;
   operation: 'deposit' | 'withdraw';
   amount_cents: number;
   note: string;
@@ -111,11 +111,11 @@ const DEFAULT_VISIBLE_FILTERS: UserFilterKey[] = ['role', 'status', 'group', 'su
 const STORAGE_KEY = 'admin-users-view-state';
 
 export function AdminUsersPage() {
-  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, refetchInterval: 10000 });
+  const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
   const groupsQuery = useQuery({ queryKey: ['admin-groups'], queryFn: fetchAdminGroups, refetchInterval: 10000 });
   const keysQuery = useQuery({ queryKey: ['admin-api-keys'], queryFn: fetchAdminApiKeys, refetchInterval: 10000 });
   const usageQuery = useQuery({ queryKey: ['admin-usage'], queryFn: () => fetchAdminUsage(), refetchInterval: 10000 });
-  const subscriptionsQuery = useQuery({ queryKey: ['admin-user-subscriptions'], queryFn: fetchAdminUserSubscriptions, refetchInterval: 10000 });
+  const subscriptionsQuery = useQuery({ queryKey: ['admin-account-subscriptions'], queryFn: fetchAdminAccountSubscriptions, refetchInterval: 10000 });
   const plansQuery = useQuery({ queryKey: ['admin-subscription-plans'], queryFn: fetchAdminSubscriptionPlans, refetchInterval: 10000 });
 
   const savedState = readStorageJSON(STORAGE_KEY, {
@@ -139,52 +139,52 @@ export function AdminUsersPage() {
   const [visibleColumns, setVisibleColumns] = useState<Set<UserColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
   const [visibleFilters, setVisibleFilters] = useState<Set<UserFilterKey>>(new Set(savedState.visibleFilters || DEFAULT_VISIBLE_FILTERS));
   const [draft, setDraft] = useState<UserDraft | null>(null);
-  const [inspectUser, setInspectUser] = useState<AdminUser | null>(null);
-  const [viewKeysUser, setViewKeysUser] = useState<AdminUser | null>(null);
-  const [viewSubscriptionsUser, setViewSubscriptionsUser] = useState<AdminUser | null>(null);
-  const [viewUsageUser, setViewUsageUser] = useState<AdminUser | null>(null);
+  const [inspectUser, setInspectUser] = useState<AdminAccount | null>(null);
+  const [viewKeysUser, setViewKeysUser] = useState<AdminAccount | null>(null);
+  const [viewSubscriptionsUser, setViewSubscriptionsUser] = useState<AdminAccount | null>(null);
+  const [viewUsageUser, setViewUsageUser] = useState<AdminAccount | null>(null);
   const [groupAccessDraft, setGroupAccessDraft] = useState<GroupAccessDraft | null>(null);
   const [balanceDraft, setBalanceDraft] = useState<BalanceDraft | null>(null);
-  const [balanceHistoryUser, setBalanceHistoryUser] = useState<AdminUser | null>(null);
+  const [balanceHistoryUser, setBalanceHistoryUser] = useState<AdminAccount | null>(null);
   const [keyDraft, setKeyDraft] = useState<KeyDraft | null>(null);
   const [subscriptionDraft, setSubscriptionDraft] = useState<SubscriptionDraft | null>(null);
   const [generatedKey, setGeneratedKey] = useState('');
   const [copiedKeyId, setCopiedKeyId] = useState('');
-  const [toggleTarget, setToggleTarget] = useState<AdminUser | null>(null);
-  const [resetTarget, setResetTarget] = useState<AdminUser | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
+  const [toggleTarget, setToggleTarget] = useState<AdminAccount | null>(null);
+  const [resetTarget, setResetTarget] = useState<AdminAccount | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AdminAccount | null>(null);
   const [deleteKeyTarget, setDeleteKeyTarget] = useState<AdminApiKey | null>(null);
 
   const createMutation = useMutation({
-    mutationFn: createAdminUser,
+    mutationFn: createAdminAccount,
     onSuccess: async () => {
       setDraft(null);
       await refreshAll();
     },
   });
   const updateMutation = useMutation({
-    mutationFn: ({ userId, payload }: { userId: string; payload: Record<string, unknown> }) => updateAdminUser(userId, payload),
+    mutationFn: ({ accountId, payload }: { accountId: string; payload: Record<string, unknown> }) => updateAdminAccount(accountId, payload),
     onSuccess: async () => {
       setDraft(null);
       await refreshAll();
     },
   });
   const toggleMutation = useMutation({
-    mutationFn: ({ userId, enabled }: { userId: string; enabled: boolean }) => setAdminUserEnabled(userId, enabled),
+    mutationFn: ({ accountId, enabled }: { accountId: string; enabled: boolean }) => setAdminAccountEnabled(accountId, enabled),
     onSuccess: async () => {
       setToggleTarget(null);
       await refreshAll();
     },
   });
   const resetMutation = useMutation({
-    mutationFn: (userId: string) => resetAdminUserExternalKey(userId),
+    mutationFn: (accountId: string) => resetAdminAccountExternalKey(accountId),
     onSuccess: async () => {
       setResetTarget(null);
       await refreshAll();
     },
   });
   const deleteMutation = useMutation({
-    mutationFn: (userId: string) => deleteAdminUser(userId),
+    mutationFn: (accountId: string) => deleteAdminAccount(accountId),
     onSuccess: async () => {
       setDeleteTarget(null);
       await refreshAll();
@@ -218,27 +218,27 @@ export function AdminUsersPage() {
     },
   });
   const assignSubscriptionMutation = useMutation({
-    mutationFn: assignAdminUserSubscription,
+    mutationFn: assignAdminAccountSubscription,
     onSuccess: async () => {
       setSubscriptionDraft(null);
       await refreshAll();
     },
   });
   const groupAccessMutation = useMutation({
-    mutationFn: ({ userId, payload }: { userId: string; payload: Record<string, unknown> }) => updateAdminUser(userId, payload),
+    mutationFn: ({ accountId, payload }: { accountId: string; payload: Record<string, unknown> }) => updateAdminAccount(accountId, payload),
     onSuccess: async () => {
       setGroupAccessDraft(null);
       await refreshAll();
     },
   });
   const balanceMutation = useMutation({
-    mutationFn: ({ userId, payload }: { userId: string; payload: Record<string, unknown> }) => adjustAdminUserBalance(userId, payload),
+    mutationFn: ({ accountId, payload }: { accountId: string; payload: Record<string, unknown> }) => adjustAdminAccountBalance(accountId, payload),
     onSuccess: async () => {
-      const targetUserId = balanceDraft?.userId || '';
+      const targetAccountId = balanceDraft?.accountId || '';
       setBalanceDraft(null);
       await refreshAll();
-      if (targetUserId) {
-        await queryClient.invalidateQueries({ queryKey: ['admin-user-balance-events', targetUserId] });
+      if (targetAccountId) {
+        await queryClient.invalidateQueries({ queryKey: ['admin-account-balance-events', targetAccountId] });
       }
     },
   });
@@ -249,8 +249,8 @@ export function AdminUsersPage() {
   const subscriptionItems = subscriptionsQuery.data?.items || [];
   const planItems = plansQuery.data?.items || [];
   const balanceEventsQuery = useQuery({
-    queryKey: ['admin-user-balance-events', balanceHistoryUser?.id || ''],
-    queryFn: () => fetchAdminUserBalanceEvents(balanceHistoryUser?.id || ''),
+    queryKey: ['admin-account-balance-events', balanceHistoryUser?.id || ''],
+    queryFn: () => fetchAdminAccountBalanceEvents(balanceHistoryUser?.id || ''),
     enabled: Boolean(balanceHistoryUser?.id),
     refetchInterval: 10000,
   });
@@ -278,7 +278,7 @@ export function AdminUsersPage() {
         const enabledValue = statusFilter === 'enabled';
         if ((item.enabled !== false) !== enabledValue) return false;
       }
-      if (roleFilter && (item.role || item.user_role || 'user') !== roleFilter) return false;
+      if (roleFilter && (item.role || 'user') !== roleFilter) return false;
       if (groupFilter) {
         const ids = item.group_ids || (item.group_id ? [item.group_id] : []);
         const allowedIds = item.allowed_group_ids || [];
@@ -309,18 +309,18 @@ export function AdminUsersPage() {
   }, [filteredRows, page, pageSize]);
 
   const relatedKeys = useMemo(
-    () => keyItems.filter((item) => viewKeysUser && getBusinessUserId(item) === viewKeysUser.id),
+    () => keyItems.filter((item) => viewKeysUser && getAccountId(item) === viewKeysUser.id),
     [keyItems, viewKeysUser],
   );
   const relatedSubscriptions = useMemo(
-    () => subscriptionItems.filter((item) => viewSubscriptionsUser && getBusinessUserId(item) === viewSubscriptionsUser.id),
+    () => subscriptionItems.filter((item) => viewSubscriptionsUser && getAccountId(item) === viewSubscriptionsUser.id),
     [subscriptionItems, viewSubscriptionsUser],
   );
   const relatedUsage = useMemo(
-    () => usageItems.filter((item) => viewUsageUser && getBusinessUserId(item) === viewUsageUser.id),
+    () => usageItems.filter((item) => viewUsageUser && getAccountId(item) === viewUsageUser.id),
     [usageItems, viewUsageUser],
   );
-  const keyOwner = keyDraft ? rows.find((item) => item.id === keyDraft.userId) : null;
+  const keyOwner = keyDraft ? rows.find((item) => item.id === keyDraft.accountId) : null;
   const keyGroupOptions = useMemo(() => {
     if (!keyOwner) return groups;
     const allowedIds = keyOwner.allowed_group_ids || [];
@@ -345,7 +345,7 @@ export function AdminUsersPage() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
       queryClient.invalidateQueries({ queryKey: ['admin-api-keys'] }),
-      queryClient.invalidateQueries({ queryKey: ['admin-user-subscriptions'] }),
+      queryClient.invalidateQueries({ queryKey: ['admin-account-subscriptions'] }),
       queryClient.invalidateQueries({ queryKey: ['admin-subscription-plans'] }),
       queryClient.invalidateQueries({ queryKey: ['admin-usage'] }),
     ]);
@@ -355,47 +355,47 @@ export function AdminUsersPage() {
     setDraft({ ...EMPTY_DRAFT, password: randomPassword() });
   }
 
-  function openEdit(user: AdminUser) {
+  function openEdit(user: AdminAccount) {
     setDraft({
       id: user.id,
       name: user.name || '',
-      email: user.email || user.user_email || '',
-      username: user.username || user.user_username || '',
+      email: user.email || '',
+      username: user.username || '',
       password: '',
-      external_key: user.external_key || user.user_key || '',
+      external_key: user.external_key || '',
       auto_external_key: false,
       group_ids: user.group_ids || (user.group_id ? [user.group_id] : []),
-      allowed_group_ids: user.allowed_group_ids || user.user_allowed_group_ids || [],
-      role: user.role || user.user_role || 'user',
-      balance_cents: Number(user.balance_cents ?? user.user_balance_cents ?? 0),
-      concurrency_limit: Number(user.concurrency_limit ?? user.user_concurrency_limit ?? 1),
-      rpm_limit: Number(user.rpm_limit ?? user.user_rpm_limit ?? 0),
+      allowed_group_ids: user.allowed_group_ids || [],
+      role: user.role || 'user',
+      balance_cents: Number(user.balance_cents ?? 0),
+      concurrency_limit: Number(user.concurrency_limit ?? 1),
+      rpm_limit: Number(user.rpm_limit ?? 0),
       note: user.note || '',
       enabled: user.enabled !== false,
     });
   }
 
-  function openGroupAccess(user: AdminUser) {
+  function openGroupAccess(user: AdminAccount) {
     setGroupAccessDraft({
-      userId: user.id,
+      accountId: user.id,
       group_ids: user.group_ids || (user.group_id ? [user.group_id] : []),
-      allowed_group_ids: user.allowed_group_ids || user.user_allowed_group_ids || [],
+      allowed_group_ids: user.allowed_group_ids || [],
     });
   }
 
-  function openBalance(user: AdminUser, operation: 'deposit' | 'withdraw') {
-    setBalanceDraft({ userId: user.id, operation, amount_cents: 0, note: '' });
+  function openBalance(user: AdminAccount, operation: 'deposit' | 'withdraw') {
+    setBalanceDraft({ accountId: user.id, operation, amount_cents: 0, note: '' });
   }
 
-  function openBalanceFromHistory(user: AdminUser, operation: 'deposit' | 'withdraw') {
+  function openBalanceFromHistory(user: AdminAccount, operation: 'deposit' | 'withdraw') {
     setBalanceHistoryUser(null);
-    setBalanceDraft({ userId: user.id, operation, amount_cents: 0, note: '' });
+    setBalanceDraft({ accountId: user.id, operation, amount_cents: 0, note: '' });
   }
 
   function submitGroupAccess() {
     if (!groupAccessDraft) return;
     groupAccessMutation.mutate({
-      userId: groupAccessDraft.userId,
+      accountId: groupAccessDraft.accountId,
       payload: {
         group_ids: groupAccessDraft.group_ids,
         allowed_group_ids: groupAccessDraft.allowed_group_ids,
@@ -406,7 +406,7 @@ export function AdminUsersPage() {
   function submitBalance() {
     if (!balanceDraft || balanceDraft.amount_cents <= 0) return;
     balanceMutation.mutate({
-      userId: balanceDraft.userId,
+      accountId: balanceDraft.accountId,
       payload: {
         operation: balanceDraft.operation,
         amount_cents: balanceDraft.amount_cents,
@@ -434,7 +434,7 @@ export function AdminUsersPage() {
       status: draft.enabled ? 'active' : 'disabled',
     };
     if (draft.id) {
-      updateMutation.mutate({ userId: draft.id, payload });
+      updateMutation.mutate({ accountId: draft.id, payload });
       return;
     }
     createMutation.mutate(payload);
@@ -612,15 +612,15 @@ export function AdminUsersPage() {
                   <tr key={item.id}>
                     <td>
                       <div className="sub2-cell-stack sub2-cell-stack-tight">
-                        <strong>{item.email || item.user_email || item.name}</strong>
-                        <small>{item.username || item.user_username || item.name}</small>
+                        <strong>{item.email || item.name}</strong>
+                        <small>{item.username || item.name}</small>
                       </div>
                     </td>
                     {visibleColumns.has('identity') ? (
                       <td>
                         <div className="sub2-cell-stack sub2-cell-stack-tight">
-                          <strong>{item.external_key || item.user_key || '-'}</strong>
-                          <small>{item.role || item.user_role || 'user'} · {item.id}</small>
+                          <strong>{item.external_key || '-'}</strong>
+                          <small>{item.role || 'user'} · {item.id}</small>
                         </div>
                       </td>
                     ) : null}
@@ -635,8 +635,8 @@ export function AdminUsersPage() {
                     {visibleColumns.has('limits') ? (
                       <td>
                         <div className="sub2-cell-stack sub2-cell-stack-tight">
-                          <strong>{formatMoneyCents(item.balance_cents || item.user_balance_cents || 0)}</strong>
-                          <small>并发 {formatNumber(item.concurrency_limit || item.user_concurrency_limit || 0)} · RPM {formatNumber(item.rpm_limit || item.user_rpm_limit || 0)}</small>
+                          <strong>{formatMoneyCents(item.balance_cents || 0)}</strong>
+                          <small>并发 {formatNumber(item.concurrency_limit || 0)} · RPM {formatNumber(item.rpm_limit || 0)}</small>
                         </div>
                       </td>
                     ) : null}
@@ -668,7 +668,7 @@ export function AdminUsersPage() {
                       <td>
                         <div className="sub2-cell-stack sub2-cell-stack-tight">
                           <Badge tone={item.enabled === false ? 'warn' : 'ok'}>{item.enabled === false ? '停用' : '启用'}</Badge>
-                          <small>{item.password_set || item.user_password_set ? '已设置密码' : '未设置密码'}</small>
+                          <small>{item.password_set ? '已设置密码' : '未设置密码'}</small>
                         </div>
                       </td>
                     ) : null}
@@ -830,7 +830,7 @@ export function AdminUsersPage() {
           onClose={() => setViewKeysUser(null)}
           footer={
             <ModalActions>
-              <Button onClick={() => setKeyDraft({ userId: viewKeysUser.id, name: '默认业务 Key', groupId: '', enabled: true })}>添加 Key</Button>
+              <Button onClick={() => setKeyDraft({ accountId: viewKeysUser.id, name: '默认业务 Key', groupId: '', enabled: true })}>添加 Key</Button>
               <Button onClick={() => setViewKeysUser(null)}>关闭</Button>
             </ModalActions>
           }
@@ -900,7 +900,7 @@ export function AdminUsersPage() {
                       </td>
                     </tr>
                   )) : (
-                    <ListEmptyRow colSpan={7} title="暂无 API Key" action={<Button tone="primary" onClick={() => setKeyDraft({ userId: viewKeysUser.id, name: '默认业务 Key', groupId: '', enabled: true })}>添加 Key</Button>} />
+                    <ListEmptyRow colSpan={7} title="暂无 API Key" action={<Button tone="primary" onClick={() => setKeyDraft({ accountId: viewKeysUser.id, name: '默认业务 Key', groupId: '', enabled: true })}>添加 Key</Button>} />
                   )}
                 </tbody>
               </table>
@@ -917,7 +917,7 @@ export function AdminUsersPage() {
           footer={
             <ModalActions>
               <Button onClick={() => setKeyDraft(null)}>取消</Button>
-              <Button tone="primary" disabled={!keyDraft.name.trim() || createKeyMutation.isPending} onClick={() => createKeyMutation.mutate({ user_id: keyDraft.userId, name: keyDraft.name, group_id: keyDraft.groupId, enabled: keyDraft.enabled })}>生成</Button>
+              <Button tone="primary" disabled={!keyDraft.name.trim() || createKeyMutation.isPending} onClick={() => createKeyMutation.mutate({ account_id: keyDraft.accountId, name: keyDraft.name, group_id: keyDraft.groupId, enabled: keyDraft.enabled })}>生成</Button>
             </ModalActions>
           }
         >
@@ -1047,7 +1047,7 @@ export function AdminUsersPage() {
           onClose={() => setViewSubscriptionsUser(null)}
           footer={
             <ModalActions>
-              <Button onClick={() => setSubscriptionDraft({ userId: viewSubscriptionsUser.id, planId: '', status: 'active' })}>分配订阅</Button>
+              <Button onClick={() => setSubscriptionDraft({ accountId: viewSubscriptionsUser.id, planId: '', status: 'active' })}>分配订阅</Button>
               <Button onClick={() => setViewSubscriptionsUser(null)}>关闭</Button>
             </ModalActions>
           }
@@ -1077,7 +1077,7 @@ export function AdminUsersPage() {
                       <td><Badge tone={item.status === 'active' ? 'ok' : item.status === 'expired' ? 'warn' : 'bad'}>{item.status || '-'}</Badge></td>
                     </tr>
                   )) : (
-                    <ListEmptyRow colSpan={5} title="暂无订阅" action={<Button tone="primary" onClick={() => setSubscriptionDraft({ userId: viewSubscriptionsUser.id, planId: '', status: 'active' })}>分配订阅</Button>} />
+                    <ListEmptyRow colSpan={5} title="暂无订阅" action={<Button tone="primary" onClick={() => setSubscriptionDraft({ accountId: viewSubscriptionsUser.id, planId: '', status: 'active' })}>分配订阅</Button>} />
                   )}
                 </tbody>
               </table>
@@ -1138,7 +1138,7 @@ export function AdminUsersPage() {
               <Button
                 tone="primary"
                 disabled={!subscriptionDraft.planId || assignSubscriptionMutation.isPending}
-                onClick={() => assignSubscriptionMutation.mutate({ user_id: subscriptionDraft.userId, plan_id: subscriptionDraft.planId, status: subscriptionDraft.status })}
+                onClick={() => assignSubscriptionMutation.mutate({ account_id: subscriptionDraft.accountId, plan_id: subscriptionDraft.planId, status: subscriptionDraft.status })}
               >
                 分配
               </Button>
@@ -1195,7 +1195,7 @@ export function AdminUsersPage() {
           footer={
             <ModalActions>
               <Button onClick={() => setToggleTarget(null)}>取消</Button>
-              <Button tone="primary" disabled={toggleMutation.isPending} onClick={() => toggleMutation.mutate({ userId: toggleTarget.id, enabled: toggleTarget.enabled === false })}>
+              <Button tone="primary" disabled={toggleMutation.isPending} onClick={() => toggleMutation.mutate({ accountId: toggleTarget.id, enabled: toggleTarget.enabled === false })}>
                 确认
               </Button>
             </ModalActions>
@@ -1262,17 +1262,17 @@ export function AdminUsersPage() {
   );
 }
 
-function UserInspect({ user, groups }: { user: AdminUser; groups: Array<{ id: string; name: string }> }) {
+function UserInspect({ user, groups }: { user: AdminAccount; groups: Array<{ id: string; name: string }> }) {
   return (
     <div className="admin-dialog">
       <div className="admin-dialog-intro">
-        <strong>{user.email || user.user_email || user.username || user.user_username || user.name}</strong>
+        <strong>{user.email || user.username || user.name}</strong>
       </div>
       <div className="admin-dialog-summary">
         <div className="admin-dialog-summary-card">
           <span>余额</span>
-          <strong>{formatMoneyCents(user.balance_cents || user.user_balance_cents || 0)}</strong>
-          <small>并发 {formatNumber(user.concurrency_limit || user.user_concurrency_limit || 0)}</small>
+          <strong>{formatMoneyCents(user.balance_cents || 0)}</strong>
+          <small>并发 {formatNumber(user.concurrency_limit || 0)}</small>
         </div>
         <div className="admin-dialog-summary-card">
           <span>订阅</span>
@@ -1287,13 +1287,13 @@ function UserInspect({ user, groups }: { user: AdminUser; groups: Array<{ id: st
       </div>
       <div className="admin-dialog-grid">
         <Field label="用户 ID"><TextInput readOnly value={user.id || '-'} /></Field>
-        <Field label="用户密钥"><TextInput readOnly value={user.external_key || user.user_key || '-'} /></Field>
-        <Field label="邮箱"><TextInput readOnly value={user.email || user.user_email || '-'} /></Field>
-        <Field label="用户名"><TextInput readOnly value={user.username || user.user_username || '-'} /></Field>
-        <Field label="角色"><TextInput readOnly value={user.role || user.user_role || 'user'} /></Field>
-        <Field label="RPM"><TextInput readOnly value={formatNumber(user.rpm_limit || user.user_rpm_limit || 0)} /></Field>
+        <Field label="用户密钥"><TextInput readOnly value={user.external_key || '-'} /></Field>
+        <Field label="邮箱"><TextInput readOnly value={user.email || '-'} /></Field>
+        <Field label="用户名"><TextInput readOnly value={user.username || '-'} /></Field>
+        <Field label="角色"><TextInput readOnly value={user.role || 'user'} /></Field>
+        <Field label="RPM"><TextInput readOnly value={formatNumber(user.rpm_limit || 0)} /></Field>
         <Field label="所属分组"><TextInput readOnly value={groupNames(user.group_ids || (user.group_id ? [user.group_id] : []), groups) || '未分组'} /></Field>
-        <Field label="允许分组"><TextInput readOnly value={groupNames(user.allowed_group_ids || user.user_allowed_group_ids || [], groups) || '全部可用分组'} /></Field>
+        <Field label="允许分组"><TextInput readOnly value={groupNames(user.allowed_group_ids || [], groups) || '全部可用分组'} /></Field>
         <Field label="请求次数"><TextInput readOnly value={formatNumber(user.request_count || 0)} /></Field>
         <Field label="总 Token"><TextInput readOnly value={formatTokenCount(user.total_tokens || 0)} /></Field>
         <Field label="错误次数"><TextInput readOnly value={formatNumber(user.error_count || 0)} /></Field>
@@ -1310,7 +1310,7 @@ function BalanceHistoryPanel({
   onDeposit,
   onWithdraw,
 }: {
-  user: AdminUser;
+  user: AdminAccount;
   events: AdminBalanceEvent[];
   loading?: boolean;
   onDeposit: () => void;
@@ -1321,12 +1321,12 @@ function BalanceHistoryPanel({
     <div className="admin-dialog">
       <div className="admin-dialog-intro balance-history-head">
         <div>
-          <strong>{user.email || user.user_email || user.username || user.user_username || user.name}</strong>
+          <strong>{user.email || user.username || user.name}</strong>
           <span>{user.id}</span>
         </div>
         <div>
           <small>当前余额</small>
-          <strong>{formatMoneyCents(user.balance_cents || user.user_balance_cents || 0)}</strong>
+          <strong>{formatMoneyCents(user.balance_cents || 0)}</strong>
         </div>
       </div>
       <div className="admin-dialog-summary">
