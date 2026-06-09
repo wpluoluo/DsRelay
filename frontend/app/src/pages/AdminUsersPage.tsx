@@ -550,7 +550,7 @@ export function AdminUsersPage() {
               </ToolbarButtonRow>
             }
           >
-            <SearchField value={search} placeholder="搜索邮箱 / 用户名 / 名称 / 密钥" onChange={(value) => { setSearch(value); setPage(1); }} />
+            <SearchField value={search} placeholder="搜索邮箱 / 用户名 / 名称 / 调用标识" onChange={(value) => { setSearch(value); setPage(1); }} />
             {visibleFilters.has('role') ? (
               <Select value={roleFilter} onChange={(event) => { setRoleFilter(event.target.value as RoleFilter); setPage(1); }}>
                 <option value="">全部角色</option>
@@ -685,7 +685,7 @@ export function AdminUsersPage() {
                           <button type="button" onClick={() => setViewSubscriptionsUser(item)}><span>订阅</span><Ticket size={14} /></button>
                           <button type="button" onClick={() => setViewUsageUser(item)}><span>使用记录</span><ListChecks size={14} /></button>
                           <button type="button" onClick={() => setToggleTarget(item)}><span>{item.enabled === false ? '启用' : '停用'}</span><ShieldCheck size={14} /></button>
-                          <button type="button" onClick={() => setResetTarget(item)}><span>重置密钥</span><KeyRound size={14} /></button>
+                          <button type="button" onClick={() => setResetTarget(item)}><span>重置调用标识</span><KeyRound size={14} /></button>
                           <button type="button" className="danger" onClick={() => setDeleteTarget(item)}><span>删除</span><Trash2 size={14} /></button>
                         </ToolsMenu>
                       </RowActions>
@@ -758,7 +758,7 @@ export function AdminUsersPage() {
                   <option value="disabled">停用</option>
                 </Select>
               </Field>
-              <Field label="用户密钥">
+              <Field label="调用标识">
                 <Select value={draft.auto_external_key ? 'auto' : 'manual'} onChange={(event) => setDraft({ ...draft, auto_external_key: event.target.value === 'auto' })}>
                   <option value="auto">系统生成</option>
                   <option value="manual">手工填写</option>
@@ -1207,7 +1207,7 @@ export function AdminUsersPage() {
 
       {resetTarget ? (
         <Modal
-          title="重置用户密钥"
+          title="重置调用标识"
           size="md"
           onClose={() => setResetTarget(null)}
           footer={
@@ -1287,7 +1287,7 @@ function UserInspect({ user, groups }: { user: AdminAccount; groups: Array<{ id:
       </div>
       <div className="admin-dialog-grid">
         <Field label="用户 ID"><TextInput readOnly value={user.id || '-'} /></Field>
-        <Field label="用户密钥"><TextInput readOnly value={user.external_key || '-'} /></Field>
+        <Field label="调用标识"><TextInput readOnly value={user.external_key || '-'} /></Field>
         <Field label="邮箱"><TextInput readOnly value={user.email || '-'} /></Field>
         <Field label="用户名"><TextInput readOnly value={user.username || '-'} /></Field>
         <Field label="角色"><TextInput readOnly value={user.role || 'user'} /></Field>

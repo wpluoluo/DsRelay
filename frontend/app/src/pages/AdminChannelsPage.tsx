@@ -438,7 +438,7 @@ export function AdminChannelsMonitorPage() {
       await queryClient.invalidateQueries({ queryKey: ['admin-provider-accounts'] });
     },
     onError: (error) => {
-      setAccountStatus(error instanceof Error ? error.message : '账号保存失败');
+      setAccountStatus(error instanceof Error ? error.message : '上游账号保存失败');
     },
   });
   const poolsByProtocol = useMemo(() => {
@@ -475,7 +475,7 @@ export function AdminChannelsMonitorPage() {
           action={
             <div className="button-row">
               <Button onClick={() => channelsQuery.refetch()}><RefreshCw size={14} />刷新</Button>
-              <Button tone="primary" onClick={openCreateAccount}><Plus size={14} />添加账号</Button>
+              <Button tone="primary" onClick={openCreateAccount}><Plus size={14} />添加上游账号</Button>
             </div>
           }
         />
@@ -540,7 +540,7 @@ export function AdminChannelsMonitorPage() {
       {accountDraft ? (
         <ProviderAccountModal
           pool={accountDraft}
-          title="添加账号"
+          title="添加上游账号"
           saving={savePoolsMutation.isPending}
           testing={false}
           status={accountStatus}

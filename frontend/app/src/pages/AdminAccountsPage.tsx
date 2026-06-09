@@ -115,7 +115,7 @@ export function AdminAccountsPage() {
       await queryClient.invalidateQueries({ queryKey: ['admin-provider-accounts'] });
     },
     onError: (error) => {
-      setAccountStatus(error instanceof Error ? error.message : '账号保存失败');
+      setAccountStatus(error instanceof Error ? error.message : '上游账号保存失败');
     },
   });
   const testMutation = useMutation({
@@ -397,7 +397,7 @@ export function AdminAccountsPage() {
                     <Download size={14} />
                   </button>
                 </ToolsMenu>
-                <Button tone="primary" data-tour="accounts-create-btn" onClick={() => openAccountForm(null)}><Plus size={15} />添加账号</Button>
+                <Button tone="primary" data-tour="accounts-create-btn" onClick={() => openAccountForm(null)}><Plus size={15} />添加上游账号</Button>
               </ToolbarButtonRow>
             }
           >
@@ -427,7 +427,7 @@ export function AdminAccountsPage() {
           <div className="table-wrap table-scroll table-wide">
             {selectedIds.size ? (
               <div className="sub2-bulk-bar">
-                <strong>已选择 {formatNumber(selectedIds.size)} 个账号</strong>
+                <strong>已选择 {formatNumber(selectedIds.size)} 个上游账号</strong>
                 <div className="button-row">
                   <Button tone="danger" onClick={() => setBulkDeleteOpen(true)}><Trash2 size={14} />删除</Button>
                   <Button onClick={() => updateSelectedAccountsEnabled(true)}><ShieldCheck size={14} />启用</Button>
@@ -525,8 +525,8 @@ export function AdminAccountsPage() {
                 )) : (
                   <ListEmptyRow
                     colSpan={visibleColumns.size + 3}
-                    title="暂无账号数据"
-                    action={<Button tone="primary" data-tour="accounts-create-btn" onClick={() => openAccountForm(null)}><Plus size={14} />添加账号</Button>}
+                    title="暂无上游账号数据"
+                    action={<Button tone="primary" data-tour="accounts-create-btn" onClick={() => openAccountForm(null)}><Plus size={14} />添加上游账号</Button>}
                   />
                 )}
               </tbody>
@@ -632,7 +632,7 @@ export function AdminAccountsPage() {
 
       {bulkDeleteOpen ? (
         <Modal
-          title="批量删除账号"
+          title="批量删除上游账号"
           size="md"
           onClose={() => setBulkDeleteOpen(false)}
           footer={
@@ -644,13 +644,13 @@ export function AdminAccountsPage() {
         >
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
-              <strong>已选择 {formatNumber(selectedItems.length)} 个账号</strong>
+              <strong>已选择 {formatNumber(selectedItems.length)} 个上游账号</strong>
             </div>
             <div className="table-wrap table-scroll">
               <table>
                 <thead>
                   <tr>
-                    <th>账号</th>
+                    <th>上游账号</th>
                     <th>线路</th>
                     <th>状态</th>
                   </tr>
@@ -672,7 +672,7 @@ export function AdminAccountsPage() {
 
       {bulkEditTarget ? (
         <Modal
-          title="批量编辑账号"
+          title="批量编辑上游账号"
           size="lg"
           onClose={() => setBulkEditTarget(null)}
           footer={
@@ -684,7 +684,7 @@ export function AdminAccountsPage() {
         >
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
-              <strong>{bulkTargetLabel(bulkEditTarget)} {formatNumber(getBulkTargetItems(bulkEditTarget).length)} 个账号</strong>
+              <strong>{bulkTargetLabel(bulkEditTarget)} {formatNumber(getBulkTargetItems(bulkEditTarget).length)} 个上游账号</strong>
             </div>
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
@@ -762,7 +762,7 @@ export function AdminAccountsPage() {
       {accountDraft ? (
         <ProviderAccountModal
           pool={accountDraft}
-          title={accountIndex == null ? '添加账号' : '编辑账号'}
+          title={accountIndex == null ? '添加上游账号' : '编辑上游账号'}
           saving={savePoolsMutation.isPending}
           testing={testMutation.isPending}
           status={accountStatus}
@@ -823,7 +823,7 @@ export function ProviderAccountModal({
         <ModalActions>
           <Button onClick={onTest} disabled={!canTest || testing}>{testing ? '测试中' : '测试线路'}</Button>
           <Button onClick={onClose}>取消</Button>
-          <Button tone="primary" disabled={saving || !String(p.name || '').trim()} onClick={onSave}>{saving ? '保存中' : '保存账号'}</Button>
+          <Button tone="primary" disabled={saving || !String(p.name || '').trim()} onClick={onSave}>{saving ? '保存中' : '保存上游账号'}</Button>
         </ModalActions>
       }
     >
@@ -833,7 +833,7 @@ export function ProviderAccountModal({
             <strong>基础信息</strong>
           </div>
           <div className="admin-dialog-grid modal-grid">
-            <Field label="账号名称"><TextInput value={p.name || ''} onChange={(event) => patch({ name: event.target.value })} /></Field>
+            <Field label="上游账号名称"><TextInput value={p.name || ''} onChange={(event) => patch({ name: event.target.value })} /></Field>
             <Field label="优先级"><NumberInput value={p.priority ?? 100} onChange={(event) => patch({ priority: Number(event.target.value || 100) })} /></Field>
             <Toggle label="启用账号" checked={p.enabled !== false} onChange={(enabled) => patch({ enabled })} />
           </div>
