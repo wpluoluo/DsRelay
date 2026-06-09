@@ -235,18 +235,7 @@ export type AdminProviderAccount = {
   models?: string[];
   supported_models_text?: string;
   model_aliases_text?: string;
-  name: string;
-  source_type: string;
-  preview?: string;
-  external_key?: string;
-  role?: string;
-  status?: string;
-  balance_cents?: number;
-  concurrency_limit?: number;
-  allowed_group_ids?: string[];
-  extra?: Record<string, unknown>;
   enabled?: boolean;
-  note?: string;
   request_count?: number;
   error_count?: number;
   prompt_tokens?: number;
@@ -255,17 +244,6 @@ export type AdminProviderAccount = {
   input_bytes?: number;
   output_bytes?: number;
   last_seen_at?: string;
-  group_id?: string;
-  group_name?: string;
-  subscription_active?: boolean;
-  active_subscription_id?: string;
-  active_plan_id?: string;
-  active_plan_name?: string;
-  active_group_id?: string;
-  active_group_name?: string;
-  active_subscription_status?: string;
-  active_subscription_expires_at?: number | string | null;
-  active_subscription_price_cents?: number;
 };
 
 export type AdminAccount = {

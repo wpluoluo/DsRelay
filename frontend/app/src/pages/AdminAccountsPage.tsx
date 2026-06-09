@@ -27,9 +27,41 @@ import { PoolTestView } from '../features/routes/RouteTable';
 type StatusFilter = '' | 'enabled' | 'disabled';
 type HealthFilter = '' | 'error' | 'used' | 'unused';
 type AccountColumnKey = 'route' | 'protocol' | 'models' | 'requests' | 'traffic' | 'status';
+type BulkEditTarget = 'selected' | 'filtered';
+
+type BulkEditDraft = {
+  enabled: '' | 'enabled' | 'disabled';
+  priority: string;
+  protocol: string;
+  prompt_cache_mode: string;
+  prompt_cache_hints_mode: string;
+  prompt_cache_provider: string;
+  route_cooldown_seconds: string;
+  route_cooldown_multiplier: string;
+  route_cooldown_max_seconds: string;
+  rate_limit_retry_attempts: string;
+  rate_limit_backoff_initial_ms: string;
+  rate_limit_backoff_multiplier: string;
+  rate_limit_backoff_max_ms: string;
+};
 
 const DEFAULT_VISIBLE_COLUMNS: AccountColumnKey[] = ['route', 'protocol', 'models', 'requests', 'traffic', 'status'];
 const STORAGE_KEY = 'admin-provider-accounts-view-state';
+const EMPTY_BULK_EDIT: BulkEditDraft = {
+  enabled: '',
+  priority: '',
+  protocol: '',
+  prompt_cache_mode: '',
+  prompt_cache_hints_mode: '',
+  prompt_cache_provider: '',
+  route_cooldown_seconds: '',
+  route_cooldown_multiplier: '',
+  route_cooldown_max_seconds: '',
+  rate_limit_retry_attempts: '',
+  rate_limit_backoff_initial_ms: '',
+  rate_limit_backoff_multiplier: '',
+  rate_limit_backoff_max_ms: '',
+};
 
 export function AdminAccountsPage() {
   const dashboard = useDashboard();
@@ -59,6 +91,9 @@ export function AdminAccountsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [inspectAccount, setInspectAccount] = useState<AdminProviderAccount | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminProviderAccount | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkEditTarget, setBulkEditTarget] = useState<BulkEditTarget | null>(null);
+  const [bulkEditDraft, setBulkEditDraft] = useState<BulkEditDraft>({ ...EMPTY_BULK_EDIT });
   const [accountIndex, setAccountIndex] = useState<number | null>(null);
   const [accountDraft, setAccountDraft] = useState<Pool | null>(null);
   const [accountTest, setAccountTest] = useState<PoolTestResult | null>(null);
@@ -189,11 +224,66 @@ export function AdminAccountsPage() {
   }
 
   function updateSelectedAccountsEnabled(enabled: boolean) {
-    const selectedIndexes = new Set(selectedItems.map(resolvePoolIndex).filter((index) => index >= 0));
+    const selectedIndexes = selectedPoolIndexes(selectedItems);
     if (!selectedIndexes.size) return;
     const next = dashboard.pools.map((pool, index) => (selectedIndexes.has(index) ? normalizePool({ ...pool, enabled }) : pool));
     saveAccountPools(next);
     setSelectedIds(new Set());
+  }
+
+  function openBulkEdit(target: BulkEditTarget) {
+    const targetItems = getBulkTargetItems(target);
+    if (!targetItems.length) return;
+    setBulkEditDraft({ ...EMPTY_BULK_EDIT });
+    setBulkEditTarget(target);
+  }
+
+  function selectedPoolIndexes(sourceItems: AdminProviderAccount[]) {
+    return new Set(sourceItems.map(resolvePoolIndex).filter((index) => index >= 0 && index < dashboard.pools.length));
+  }
+
+  function getBulkTargetItems(target: BulkEditTarget) {
+    return target === 'selected' ? selectedItems : filteredItems;
+  }
+
+  function applyBulkEdit() {
+    if (!bulkEditTarget) return;
+    const indexes = selectedPoolIndexes(getBulkTargetItems(bulkEditTarget));
+    if (!indexes.size) return;
+    const next = dashboard.pools.map((pool, index) => {
+      if (!indexes.has(index)) return pool;
+      const current = normalizePool(pool);
+      const policy = { ...defaultPolicy, ...(current.route_policy || {}) };
+      const policyPatch: Partial<NonNullable<Pool['route_policy']>> = {};
+      const updated: Pool = { ...current };
+      if (bulkEditDraft.enabled) updated.enabled = bulkEditDraft.enabled === 'enabled';
+      const priority = parseOptionalNumber(bulkEditDraft.priority);
+      if (priority !== undefined) updated.priority = priority;
+      if (bulkEditDraft.protocol) policyPatch.text_upstream_protocol = bulkEditDraft.protocol;
+      if (bulkEditDraft.prompt_cache_mode) policyPatch.prompt_cache_mode = bulkEditDraft.prompt_cache_mode;
+      if (bulkEditDraft.prompt_cache_hints_mode) policyPatch.prompt_cache_hints_mode = bulkEditDraft.prompt_cache_hints_mode;
+      if (bulkEditDraft.prompt_cache_provider) policyPatch.prompt_cache_provider = bulkEditDraft.prompt_cache_provider;
+      patchNumber(policyPatch, 'route_cooldown_seconds', bulkEditDraft.route_cooldown_seconds);
+      patchNumber(policyPatch, 'route_cooldown_multiplier', bulkEditDraft.route_cooldown_multiplier);
+      patchNumber(policyPatch, 'route_cooldown_max_seconds', bulkEditDraft.route_cooldown_max_seconds);
+      patchNumber(policyPatch, 'rate_limit_retry_attempts', bulkEditDraft.rate_limit_retry_attempts);
+      patchNumber(policyPatch, 'rate_limit_backoff_initial_ms', bulkEditDraft.rate_limit_backoff_initial_ms);
+      patchNumber(policyPatch, 'rate_limit_backoff_multiplier', bulkEditDraft.rate_limit_backoff_multiplier);
+      patchNumber(policyPatch, 'rate_limit_backoff_max_ms', bulkEditDraft.rate_limit_backoff_max_ms);
+      if (Object.keys(policyPatch).length) updated.route_policy = { ...policy, ...policyPatch };
+      return normalizePool(updated);
+    });
+    saveAccountPools(next);
+    setSelectedIds(new Set());
+    setBulkEditTarget(null);
+  }
+
+  function confirmBulkDeleteAccounts() {
+    const selectedIndexes = selectedPoolIndexes(selectedItems);
+    if (!selectedIndexes.size) return;
+    saveAccountPools(dashboard.pools.filter((_, index) => !selectedIndexes.has(index)));
+    setSelectedIds(new Set());
+    setBulkDeleteOpen(false);
   }
 
   function exportFilteredAccounts() {
@@ -298,9 +388,9 @@ export function AdminAccountsPage() {
                   <button type="button" onClick={() => { setPageSize(50); setPage(1); }}>
                     <span>切换 50 / 页</span>
                   </button>
-                  <button type="button" onClick={() => setInspectAccount(pagedItems[0] || null)} disabled={!pagedItems.length}>
-                    <span>查看首条详情</span>
-                    <Eye size={14} />
+                  <button type="button" onClick={() => openBulkEdit('filtered')} disabled={!filteredItems.length}>
+                    <span>批量编辑筛选结果</span>
+                    <Edit size={14} />
                   </button>
                   <button type="button" onClick={exportFilteredAccounts}>
                     <span>数据导出</span>
@@ -339,8 +429,10 @@ export function AdminAccountsPage() {
               <div className="sub2-bulk-bar">
                 <strong>已选择 {formatNumber(selectedIds.size)} 个账号</strong>
                 <div className="button-row">
+                  <Button tone="danger" onClick={() => setBulkDeleteOpen(true)}><Trash2 size={14} />删除</Button>
                   <Button onClick={() => updateSelectedAccountsEnabled(true)}><ShieldCheck size={14} />启用</Button>
                   <Button tone="danger" onClick={() => updateSelectedAccountsEnabled(false)}><Ban size={14} />停用</Button>
+                  <Button onClick={() => openBulkEdit('selected')}><Edit size={14} />批量编辑</Button>
                   <Button onClick={() => setSelectedIds(new Set())}>取消选择</Button>
                 </div>
               </div>
@@ -538,6 +630,135 @@ export function AdminAccountsPage() {
         </Modal>
       ) : null}
 
+      {bulkDeleteOpen ? (
+        <Modal
+          title="批量删除账号"
+          size="md"
+          onClose={() => setBulkDeleteOpen(false)}
+          footer={
+            <ModalActions>
+              <Button onClick={() => setBulkDeleteOpen(false)}>取消</Button>
+              <Button tone="danger" disabled={!selectedItems.length || savePoolsMutation.isPending} onClick={confirmBulkDeleteAccounts}>删除</Button>
+            </ModalActions>
+          }
+        >
+          <div className="admin-dialog">
+            <div className="admin-dialog-intro">
+              <strong>已选择 {formatNumber(selectedItems.length)} 个账号</strong>
+            </div>
+            <div className="table-wrap table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>账号</th>
+                    <th>线路</th>
+                    <th>状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedItems.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.pool_name || item.provider_name || item.id}</td>
+                      <td>{formatNumber(item.route_count || item.route_urls?.length || 0)}</td>
+                      <td>{item.enabled === false ? '停用' : '启用'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
+      {bulkEditTarget ? (
+        <Modal
+          title="批量编辑账号"
+          size="lg"
+          onClose={() => setBulkEditTarget(null)}
+          footer={
+            <ModalActions>
+              <Button onClick={() => setBulkEditTarget(null)}>取消</Button>
+              <Button tone="primary" disabled={!getBulkTargetItems(bulkEditTarget).length || savePoolsMutation.isPending} onClick={applyBulkEdit}>保存</Button>
+            </ModalActions>
+          }
+        >
+          <div className="admin-dialog">
+            <div className="admin-dialog-intro">
+              <strong>{bulkTargetLabel(bulkEditTarget)} {formatNumber(getBulkTargetItems(bulkEditTarget).length)} 个账号</strong>
+            </div>
+            <div className="admin-dialog-section">
+              <div className="admin-dialog-section-head">
+                <strong>基础信息</strong>
+              </div>
+              <div className="admin-dialog-grid modal-grid">
+                <Field label="状态">
+                  <Select value={bulkEditDraft.enabled} onChange={(event) => setBulkEditDraft({ ...bulkEditDraft, enabled: event.target.value as BulkEditDraft['enabled'] })}>
+                    <option value="">保持不变</option>
+                    <option value="enabled">启用</option>
+                    <option value="disabled">停用</option>
+                  </Select>
+                </Field>
+                <Field label="优先级">
+                  <TextInput type="number" value={bulkEditDraft.priority} onChange={(event) => setBulkEditDraft({ ...bulkEditDraft, priority: event.target.value })} placeholder="保持不变" />
+                </Field>
+                <Field label="文本上游协议">
+                  <Select value={bulkEditDraft.protocol} onChange={(event) => setBulkEditDraft({ ...bulkEditDraft, protocol: event.target.value })}>
+                    <option value="">保持不变</option>
+                    <option value="auto">自动</option>
+                    <option value="openai">OpenAI 兼容</option>
+                    <option value="responses">Responses</option>
+                    <option value="anthropic">Anthropic</option>
+                    <option value="gemini">Gemini</option>
+                  </Select>
+                </Field>
+              </div>
+            </div>
+            <div className="admin-dialog-section">
+              <div className="admin-dialog-section-head">
+                <strong>缓存与退避</strong>
+              </div>
+              <div className="admin-dialog-grid modal-grid">
+                <Field label="本地精确缓存">
+                  <Select value={bulkEditDraft.prompt_cache_mode} onChange={(event) => setBulkEditDraft({ ...bulkEditDraft, prompt_cache_mode: event.target.value })}>
+                    <option value="">保持不变</option>
+                    <option value="off">关闭</option>
+                    <option value="exact">开启</option>
+                  </Select>
+                </Field>
+                <Field label="上游缓存 Hint">
+                  <Select value={bulkEditDraft.prompt_cache_hints_mode} onChange={(event) => setBulkEditDraft({ ...bulkEditDraft, prompt_cache_hints_mode: event.target.value })}>
+                    <option value="">保持不变</option>
+                    <option value="off">关闭</option>
+                    <option value="auto">自动判断</option>
+                    <option value="passthrough">仅透传</option>
+                  </Select>
+                </Field>
+                <Field label="缓存提供方">
+                  <Select value={bulkEditDraft.prompt_cache_provider} onChange={(event) => setBulkEditDraft({ ...bulkEditDraft, prompt_cache_provider: event.target.value })}>
+                    <option value="">保持不变</option>
+                    <option value="auto">自动识别</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="openrouter">OpenRouter</option>
+                    <option value="deepseek">DeepSeek</option>
+                    <option value="anthropic">Anthropic</option>
+                    <option value="gemini">Gemini</option>
+                    <option value="observe">仅观测</option>
+                    <option value="none">不支持</option>
+                  </Select>
+                </Field>
+                <BulkNumberField label="基础冷却秒数" value={bulkEditDraft.route_cooldown_seconds} onChange={(value) => setBulkEditDraft({ ...bulkEditDraft, route_cooldown_seconds: value })} />
+                <BulkNumberField label="冷却指数" step="0.1" value={bulkEditDraft.route_cooldown_multiplier} onChange={(value) => setBulkEditDraft({ ...bulkEditDraft, route_cooldown_multiplier: value })} />
+                <BulkNumberField label="最大冷却秒数" value={bulkEditDraft.route_cooldown_max_seconds} onChange={(value) => setBulkEditDraft({ ...bulkEditDraft, route_cooldown_max_seconds: value })} />
+                <BulkNumberField label="429 重试次数" value={bulkEditDraft.rate_limit_retry_attempts} onChange={(value) => setBulkEditDraft({ ...bulkEditDraft, rate_limit_retry_attempts: value })} />
+                <BulkNumberField label="429 初始退避毫秒" value={bulkEditDraft.rate_limit_backoff_initial_ms} onChange={(value) => setBulkEditDraft({ ...bulkEditDraft, rate_limit_backoff_initial_ms: value })} />
+                <BulkNumberField label="429 退避倍率" step="0.1" value={bulkEditDraft.rate_limit_backoff_multiplier} onChange={(value) => setBulkEditDraft({ ...bulkEditDraft, rate_limit_backoff_multiplier: value })} />
+                <BulkNumberField label="429 最大退避毫秒" value={bulkEditDraft.rate_limit_backoff_max_ms} onChange={(value) => setBulkEditDraft({ ...bulkEditDraft, rate_limit_backoff_max_ms: value })} />
+              </div>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
       {accountDraft ? (
         <ProviderAccountModal
           pool={accountDraft}
@@ -707,6 +928,40 @@ function routeHost(value: string | undefined) {
   } catch {
     return text.split('://', 2).pop()?.split('/', 1)[0] || text;
   }
+}
+
+function parseOptionalNumber(value: string) {
+  const text = String(value || '').trim();
+  if (!text) return undefined;
+  const number = Number(text);
+  return Number.isFinite(number) ? number : undefined;
+}
+
+function patchNumber(target: Partial<NonNullable<Pool['route_policy']>>, key: keyof NonNullable<Pool['route_policy']>, value: string) {
+  const number = parseOptionalNumber(value);
+  if (number !== undefined) target[key] = number as never;
+}
+
+function bulkTargetLabel(target: BulkEditTarget) {
+  return target === 'selected' ? '已选择' : '当前筛选';
+}
+
+function BulkNumberField({
+  label,
+  value,
+  step,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  step?: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Field label={label}>
+      <TextInput type="number" step={step} value={value} onChange={(event) => onChange(event.target.value)} placeholder="保持不变" />
+    </Field>
+  );
 }
 
 function resolvePoolIndex(item: AdminProviderAccount) {

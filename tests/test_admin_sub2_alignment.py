@@ -111,6 +111,25 @@ class AdminSub2AlignmentTests(unittest.TestCase):
         self.assertEqual(item["protocol"], "openai")
         self.assertEqual(item["models"], ["deepseek-v4-flash"])
 
+    def test_provider_accounts_do_not_expose_business_user_fields(self):
+        service = AdminConsoleService(storage=FakeSub2AlignmentStorage())
+
+        payload = service.list_provider_accounts()
+
+        item = payload["items"][0]
+        business_fields = {
+            "name",
+            "source_type",
+            "external_key",
+            "role",
+            "balance_cents",
+            "concurrency_limit",
+            "allowed_group_ids",
+            "subscription_active",
+            "active_subscription_id",
+        }
+        self.assertFalse(business_fields.intersection(item.keys()))
+
     def test_groups_expose_sub2_account_and_subscription_metrics(self):
         service = AdminConsoleService(storage=FakeSub2AlignmentStorage())
 
