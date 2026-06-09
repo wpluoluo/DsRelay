@@ -1,19 +1,35 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Eye, RefreshCw, ReceiptText, Wallet, XCircle } from 'lucide-react';
+import { Eye, RefreshCw, XCircle } from 'lucide-react';
 import { cancelAccountOrder } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
-import { EmptyState, FilterToolbar, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow } from '../components/admin';
+import { ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { queryClient } from '../state/queryClient';
 import { useAccountCenter } from '../state/accountCenterContext';
-import { formatNumber, formatUsdCost, getAccountName, maskEmpty } from '../utils';
+import { formatNumber, formatUsdCost, getAccountName, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
+
+type OrderFilterKey = 'status';
+type OrderColumnKey = 'plan' | 'channel' | 'amount' | 'status' | 'fulfillment';
+
+const DEFAULT_VISIBLE_COLUMNS: OrderColumnKey[] = ['plan', 'channel', 'amount', 'status', 'fulfillment'];
+const DEFAULT_VISIBLE_FILTERS: OrderFilterKey[] = ['status'];
+const STORAGE_KEY = 'account-orders-view-state';
 
 export function AccountOrdersPage() {
   const { account, orders, reload } = useAccountCenter();
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('');
+  const savedState = readStorageJSON(STORAGE_KEY, {
+    search: '',
+    status: '',
+    pageSize: 20,
+    visibleColumns: DEFAULT_VISIBLE_COLUMNS,
+    visibleFilters: DEFAULT_VISIBLE_FILTERS,
+  });
+  const [search, setSearch] = useState(savedState.search || '');
+  const [status, setStatus] = useState(savedState.status || '');
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
+  const [visibleColumns, setVisibleColumns] = useState<Set<OrderColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
+  const [visibleFilters, setVisibleFilters] = useState<Set<OrderFilterKey>>(new Set(savedState.visibleFilters || DEFAULT_VISIBLE_FILTERS));
   const [cancelTarget, setCancelTarget] = useState<any | null>(null);
   const [inspectOrder, setInspectOrder] = useState<any | null>(null);
 
@@ -56,6 +72,34 @@ export function AccountOrdersPage() {
   const failedCount = filtered.filter((item) => item.status === 'failed').length;
   const totalAmount = filtered.reduce((sum, item) => sum + Number(item.final_price_cents ?? item.amount_cents ?? 0), 0);
 
+  useEffect(() => {
+    writeStorageJSON(STORAGE_KEY, {
+      search,
+      status,
+      pageSize,
+      visibleColumns: Array.from(visibleColumns),
+      visibleFilters: Array.from(visibleFilters),
+    });
+  }, [pageSize, search, status, visibleColumns, visibleFilters]);
+
+  function toggleColumn(key: OrderColumnKey) {
+    setVisibleColumns((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleFilter(key: OrderFilterKey) {
+    setVisibleFilters((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   return (
     <section className="grid-page">
       <div className="sub2-page-head">
@@ -76,17 +120,46 @@ export function AccountOrdersPage() {
             right={(
               <ToolbarButtonRow>
                 <Button onClick={() => void reload()}><RefreshCw size={15} />刷新</Button>
+                <ToolsMenu label="筛选设置" icon={false}>
+                  <button type="button" onClick={() => toggleFilter('status')}>
+                    <span>状态</span>
+                    <strong>{visibleFilters.has('status') ? '✓' : ''}</strong>
+                  </button>
+                </ToolsMenu>
+                <ColumnMenu
+                  label="列设置"
+                  items={[
+                    { key: 'plan', label: '计划', checked: visibleColumns.has('plan'), onToggle: () => toggleColumn('plan') },
+                    { key: 'channel', label: '通道', checked: visibleColumns.has('channel'), onToggle: () => toggleColumn('channel') },
+                    { key: 'amount', label: '金额', checked: visibleColumns.has('amount'), onToggle: () => toggleColumn('amount') },
+                    { key: 'status', label: '状态', checked: visibleColumns.has('status'), onToggle: () => toggleColumn('status') },
+                    { key: 'fulfillment', label: '履约', checked: visibleColumns.has('fulfillment'), onToggle: () => toggleColumn('fulfillment') },
+                  ]}
+                />
+                <ToolsMenu>
+                  <button type="button" onClick={() => { setSearch(''); setStatus(''); setPage(1); }}>
+                    <span>清空筛选</span>
+                  </button>
+                  <button type="button" onClick={() => { setStatus('pending'); setPage(1); }}>
+                    <span>仅看待支付</span>
+                  </button>
+                  <button type="button" onClick={() => { setPageSize(50); setPage(1); }}>
+                    <span>切换 50 / 页</span>
+                  </button>
+                </ToolsMenu>
               </ToolbarButtonRow>
             )}
           >
             <SearchField value={search} placeholder="搜索订单 / 计划 / 通道 / 上游单号" onChange={(value) => { setSearch(value); setPage(1); }} />
-            <Select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}>
-              <option value="">全部状态</option>
-              <option value="pending">待支付</option>
-              <option value="paid">已支付</option>
-              <option value="failed">失败</option>
-              <option value="cancelled">已取消</option>
-            </Select>
+            {visibleFilters.has('status') ? (
+              <Select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}>
+                <option value="">全部状态</option>
+                <option value="pending">待支付</option>
+                <option value="paid">已支付</option>
+                <option value="failed">失败</option>
+                <option value="cancelled">已取消</option>
+              </Select>
+            ) : null}
           </FilterToolbar>
         )}
         table={(
@@ -95,11 +168,11 @@ export function AccountOrdersPage() {
               <thead>
                 <tr>
                   <th>订单</th>
-                  <th>计划</th>
-                  <th>通道</th>
-                  <th>金额</th>
-                  <th>状态</th>
-                  <th>履约</th>
+                  {visibleColumns.has('plan') ? <th>计划</th> : null}
+                  {visibleColumns.has('channel') ? <th>通道</th> : null}
+                  {visibleColumns.has('amount') ? <th>金额</th> : null}
+                  {visibleColumns.has('status') ? <th>状态</th> : null}
+                  {visibleColumns.has('fulfillment') ? <th>履约</th> : null}
                   <th>操作</th>
                 </tr>
               </thead>
@@ -107,11 +180,11 @@ export function AccountOrdersPage() {
                 {rows.length ? rows.map((item) => (
                   <tr key={item.id}>
                     <td><div className="sub2-cell-stack"><strong>{item.id}</strong><small>{getAccountName(item)}</small></div></td>
-                    <td><div className="sub2-cell-stack"><strong>{item.plan_name || item.plan_id}</strong><small>{item.group_name || item.group_id || '-'}</small></div></td>
-                    <td><div className="sub2-cell-stack"><strong>{item.channel_name || item.channel_id || item.provider || '-'}</strong><small>{item.provider_order_id || item.resume_token || '-'}</small></div></td>
-                    <td><strong className="sub2-number-cell">{formatUsdCost(Number(item.final_price_cents ?? item.amount_cents ?? 0) / 100, 2)}</strong></td>
-                    <td><Badge tone={item.status === 'paid' ? 'ok' : item.status === 'pending' ? 'warn' : 'bad'}>{item.status || '-'}</Badge></td>
-                    <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.subscription_id || '-'}</strong><small>{Array.isArray(item.fulfillment_logs) ? `${item.fulfillment_logs.length} 条日志` : '0 条日志'}</small></div></td>
+                    {visibleColumns.has('plan') ? <td><div className="sub2-cell-stack"><strong>{item.plan_name || item.plan_id}</strong><small>{item.group_name || item.group_id || '-'}</small></div></td> : null}
+                    {visibleColumns.has('channel') ? <td><div className="sub2-cell-stack"><strong>{item.channel_name || item.channel_id || item.provider || '-'}</strong><small>{item.provider_order_id || item.resume_token || '-'}</small></div></td> : null}
+                    {visibleColumns.has('amount') ? <td><strong className="sub2-number-cell">{formatUsdCost(Number(item.final_price_cents ?? item.amount_cents ?? 0) / 100, 2)}</strong></td> : null}
+                    {visibleColumns.has('status') ? <td><Badge tone={item.status === 'paid' ? 'ok' : item.status === 'pending' ? 'warn' : 'bad'}>{item.status || '-'}</Badge></td> : null}
+                    {visibleColumns.has('fulfillment') ? <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.subscription_id || '-'}</strong><small>{Array.isArray(item.fulfillment_logs) ? `${item.fulfillment_logs.length} 条日志` : '0 条日志'}</small></div></td> : null}
                     <td>
                       <RowActions>
                         <RowAction icon={Eye} label="详情" onClick={() => setInspectOrder(item)} />
@@ -122,11 +195,7 @@ export function AccountOrdersPage() {
                     </td>
                   </tr>
                 )) : (
-                  <tr>
-                    <td colSpan={7}>
-                      <EmptyState title="暂无订单" />
-                    </td>
-                  </tr>
+                  <ListEmptyRow colSpan={visibleColumns.size + 2} title="暂无订单" />
                 )}
               </tbody>
             </table>

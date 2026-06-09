@@ -3,13 +3,17 @@ import { useQuery } from '@tanstack/react-query';
 import { Download, RefreshCw } from 'lucide-react';
 import { fetchAccountUsage } from '../api';
 import { Button, Select, TextInput } from '../components';
-import { EmptyState, FilterToolbar, Pager, SearchField, TablePageLayout, ToolbarButtonRow } from '../components/admin';
-import { RequestRow } from '../features/requests/RequestsView';
+import { ColumnMenu, FilterToolbar, Pager, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
+import { RequestRow, type RequestTableColumnKey } from '../features/requests/RequestsView';
 import { useAccountCenter } from '../state/accountCenterContext';
 import type { RequestEntry } from '../types';
 import { formatMs, formatNumber, formatTokenCount, formatUsdCost, readStorageJSON, writeStorageJSON } from '../utils';
 
 const STORAGE_KEY = 'account-usage-view-state';
+type UsageFilterKey = 'apiKeyId' | 'status' | 'start' | 'end';
+
+const DEFAULT_VISIBLE_COLUMNS: RequestTableColumnKey[] = ['source', 'route', 'model', 'metrics', 'repairs', 'status'];
+const DEFAULT_VISIBLE_FILTERS: UsageFilterKey[] = ['apiKeyId', 'status', 'start', 'end'];
 
 export function AccountUsagePage() {
   const { account, apiKeys } = useAccountCenter();
@@ -21,6 +25,8 @@ export function AccountUsagePage() {
     status: 'all',
     apiKeyId: '',
     pageSize: 20,
+    visibleColumns: DEFAULT_VISIBLE_COLUMNS,
+    visibleFilters: DEFAULT_VISIBLE_FILTERS,
   });
   const [filters, setFilters] = useState({
     start: savedState.start || '',
@@ -31,6 +37,8 @@ export function AccountUsagePage() {
   });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
+  const [visibleColumns, setVisibleColumns] = useState<Set<RequestTableColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
+  const [visibleFilters, setVisibleFilters] = useState<Set<UsageFilterKey>>(new Set(savedState.visibleFilters || DEFAULT_VISIBLE_FILTERS));
 
   const rows = useMemo<RequestEntry[]>(() => {
     const items = usageQuery.data?.items || [];
@@ -95,12 +103,35 @@ export function AccountUsagePage() {
   const averageDuration = stats.requests ? Math.round(stats.duration / stats.requests) : 0;
 
   useEffect(() => {
-    writeStorageJSON(STORAGE_KEY, { ...filters, pageSize });
-  }, [filters, pageSize]);
+    writeStorageJSON(STORAGE_KEY, {
+      ...filters,
+      pageSize,
+      visibleColumns: Array.from(visibleColumns),
+      visibleFilters: Array.from(visibleFilters),
+    });
+  }, [filters, pageSize, visibleColumns, visibleFilters]);
 
   function resetFilters() {
     setFilters({ start: '', end: '', model: '', status: 'all', apiKeyId: '' });
     setPage(1);
+  }
+
+  function toggleColumn(key: RequestTableColumnKey) {
+    setVisibleColumns((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleFilter(key: UsageFilterKey) {
+    setVisibleFilters((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   }
 
   function exportCurrentView() {
@@ -148,25 +179,75 @@ export function AccountUsagePage() {
             right={(
               <ToolbarButtonRow>
                 <Button onClick={() => void usageQuery.refetch()}><RefreshCw size={15} />刷新</Button>
-                <Button onClick={resetFilters}>清空筛选</Button>
+                <ToolsMenu label="筛选设置" icon={false}>
+                  <button type="button" onClick={() => toggleFilter('apiKeyId')}>
+                    <span>API Key</span>
+                    <strong>{visibleFilters.has('apiKeyId') ? '✓' : ''}</strong>
+                  </button>
+                  <button type="button" onClick={() => toggleFilter('status')}>
+                    <span>状态</span>
+                    <strong>{visibleFilters.has('status') ? '✓' : ''}</strong>
+                  </button>
+                  <button type="button" onClick={() => toggleFilter('start')}>
+                    <span>开始时间</span>
+                    <strong>{visibleFilters.has('start') ? '✓' : ''}</strong>
+                  </button>
+                  <button type="button" onClick={() => toggleFilter('end')}>
+                    <span>结束时间</span>
+                    <strong>{visibleFilters.has('end') ? '✓' : ''}</strong>
+                  </button>
+                </ToolsMenu>
+                <ColumnMenu
+                  label="列设置"
+                  items={[
+                    { key: 'source', label: '来源', checked: visibleColumns.has('source'), onToggle: () => toggleColumn('source') },
+                    { key: 'route', label: '线路', checked: visibleColumns.has('route'), onToggle: () => toggleColumn('route') },
+                    { key: 'model', label: '模型', checked: visibleColumns.has('model'), onToggle: () => toggleColumn('model') },
+                    { key: 'metrics', label: '指标', checked: visibleColumns.has('metrics'), onToggle: () => toggleColumn('metrics') },
+                    { key: 'repairs', label: '修复', checked: visibleColumns.has('repairs'), onToggle: () => toggleColumn('repairs') },
+                    { key: 'status', label: '状态', checked: visibleColumns.has('status'), onToggle: () => toggleColumn('status') },
+                  ]}
+                />
+                <ToolsMenu>
+                  <button type="button" onClick={resetFilters}>
+                    <span>清空筛选</span>
+                  </button>
+                  <button type="button" onClick={() => { setFilters((current) => ({ ...current, status: 'success' })); setPage(1); }}>
+                    <span>仅看成功</span>
+                  </button>
+                  <button type="button" onClick={() => { setFilters((current) => ({ ...current, status: 'error' })); setPage(1); }}>
+                    <span>仅看异常</span>
+                  </button>
+                  <button type="button" onClick={() => { setPageSize(50); setPage(1); }}>
+                    <span>切换 50 / 页</span>
+                  </button>
+                </ToolsMenu>
                 <Button onClick={exportCurrentView}><Download size={15} />导出</Button>
               </ToolbarButtonRow>
             )}
           >
             <SearchField value={filters.model} placeholder="搜索模型 / 入口 / 线路" onChange={(value) => { setFilters((current) => ({ ...current, model: value })); setPage(1); }} />
-            <Select value={filters.apiKeyId} onChange={(event) => { setFilters((current) => ({ ...current, apiKeyId: event.target.value })); setPage(1); }}>
-              <option value="">全部 API Key</option>
-              {apiKeys.map((item) => (
-                <option key={item.id} value={item.id}>{item.name}</option>
-              ))}
-            </Select>
-            <Select value={filters.status} onChange={(event) => { setFilters((current) => ({ ...current, status: event.target.value })); setPage(1); }}>
-              <option value="all">全部状态</option>
-              <option value="success">成功</option>
-              <option value="error">异常</option>
-            </Select>
-            <TextInput type="datetime-local" value={filters.start} onChange={(event) => { setFilters((current) => ({ ...current, start: event.target.value })); setPage(1); }} />
-            <TextInput type="datetime-local" value={filters.end} onChange={(event) => { setFilters((current) => ({ ...current, end: event.target.value })); setPage(1); }} />
+            {visibleFilters.has('apiKeyId') ? (
+              <Select value={filters.apiKeyId} onChange={(event) => { setFilters((current) => ({ ...current, apiKeyId: event.target.value })); setPage(1); }}>
+                <option value="">全部 API Key</option>
+                {apiKeys.map((item) => (
+                  <option key={item.id} value={item.id}>{item.name}</option>
+                ))}
+              </Select>
+            ) : null}
+            {visibleFilters.has('status') ? (
+              <Select value={filters.status} onChange={(event) => { setFilters((current) => ({ ...current, status: event.target.value })); setPage(1); }}>
+                <option value="all">全部状态</option>
+                <option value="success">成功</option>
+                <option value="error">异常</option>
+              </Select>
+            ) : null}
+            {visibleFilters.has('start') ? (
+              <TextInput type="datetime-local" value={filters.start} onChange={(event) => { setFilters((current) => ({ ...current, start: event.target.value })); setPage(1); }} />
+            ) : null}
+            {visibleFilters.has('end') ? (
+              <TextInput type="datetime-local" value={filters.end} onChange={(event) => { setFilters((current) => ({ ...current, end: event.target.value })); setPage(1); }} />
+            ) : null}
           </FilterToolbar>
         )}
         table={(
@@ -184,21 +265,24 @@ export function AccountUsagePage() {
               <thead>
                 <tr>
                   <th>时间</th>
-                  <th>来源</th>
-                  <th>线路</th>
-                  <th>模型</th>
-                  <th>指标</th>
-                  <th>用户</th>
-                  <th>状态</th>
+                  {visibleColumns.has('source') ? <th>来源</th> : null}
+                  {visibleColumns.has('route') ? <th>线路</th> : null}
+                  {visibleColumns.has('model') ? <th>模型</th> : null}
+                  {visibleColumns.has('metrics') ? <th>指标</th> : null}
+                  {visibleColumns.has('repairs') ? <th>修复</th> : null}
+                  {visibleColumns.has('status') ? <th>状态</th> : null}
                 </tr>
               </thead>
               <tbody>
                 {pagedRows.length ? pagedRows.map((entry, index) => (
-                  <RequestRow key={`${entry.request_id || index}-${index}`} entry={entry} />
+                  <RequestRow key={`${entry.request_id || index}-${index}`} entry={entry} visibleColumns={visibleColumns} />
                 )) : (
                   <tr>
-                    <td colSpan={7}>
-                      <EmptyState title="暂无使用记录" />
+                    <td colSpan={visibleColumns.size + 1}>
+                      <div className="sub2-empty-state">
+                        <div className="sub2-empty-icon">□</div>
+                        <h3>暂无使用记录</h3>
+                      </div>
                     </td>
                   </tr>
                 )}

@@ -9,6 +9,10 @@ import { queryClient } from '../../state/queryClient';
 import type { DashboardState, RequestEntry } from '../../types';
 import { formatByteCount, formatMs, formatNumber, formatTokenCount, maskEmpty, summarizeLocalCacheStatus, summarizeUpstreamCacheStatus } from '../../utils';
 
+export type RequestTableColumnKey = 'source' | 'route' | 'model' | 'metrics' | 'repairs' | 'status';
+
+const DEFAULT_REQUEST_TABLE_COLUMNS: RequestTableColumnKey[] = ['source', 'route', 'model', 'metrics', 'repairs', 'status'];
+
 export function RequestsView({ state }: { state: DashboardState }) {
   const [filters, setFilters] = useState({ scope: 'recent', start: '', end: '', requestId: '', model: '', protocol: '', remote: '' });
   const active = state.active_requests || [];
@@ -94,7 +98,14 @@ function RequestActions() {
   return <ToolbarButtonRow><ActionButton onClick={() => clearMutation.mutate()}><Trash2 size={14} />清空请求</ActionButton><ActionButton onClick={() => cacheMutation.mutate()}><Trash2 size={14} />清空缓存</ActionButton></ToolbarButtonRow>;
 }
 
-export function RequestRow({ entry }: { entry: RequestEntry }) {
+export function RequestRow({
+  entry,
+  visibleColumns,
+}: {
+  entry: RequestEntry;
+  visibleColumns?: Set<RequestTableColumnKey>;
+}) {
+  const columns = visibleColumns || new Set<RequestTableColumnKey>(DEFAULT_REQUEST_TABLE_COLUMNS);
   const isTerminal = Boolean(entry.error || entry.client_gone || entry.status_code);
   const status = isTerminal
     ? (entry.error ? '异常' : entry.client_gone ? '客户端断开' : entry.status_code || '-')
@@ -124,34 +135,46 @@ export function RequestRow({ entry }: { entry: RequestEntry }) {
   return (
     <tr>
       <td><div className="request-stack"><div className="request-cell-title">{maskEmpty(entry.started_at)}</div><div className="request-cell-sub request-mono">{maskEmpty(entry.request_id)}</div></div></td>
-      <td><div className="request-stack"><div className="request-cell-title">{maskEmpty(entry.remote)}</div><div className="request-cell-sub">重试 {entry.retry_count || 0} · 候选 {routePoolSize || 1}{routeAttemptCount ? ` · 已试 ${routeAttemptCount}` : ''}</div></div></td>
-      <td><div className="request-stack"><div className="request-line-main">{poolName} · {routeIndex} · {keyIndex}</div><div className="request-line-path request-ellipsis">{maskEmpty(actualRouteUrl)}</div></div></td>
-      <td><div className="request-stack"><div className="request-cell-title request-ellipsis">{logicalModel}</div><div className="request-cell-sub request-ellipsis">{resolvedModel}</div><div className="request-cell-sub">{poolName}</div></div></td>
-      <td>
-        <div className="request-metric-list">
-          <div className="request-chip-row">
-            <span className="request-chip ok">{formatMs(entry.duration_ms)}</span>
-            <span className="request-chip">请求字节 {formatByteCount(inputBytes)}</span>
-            <span className="request-chip">响应字节 {formatByteCount(outputBytes)}</span>
+      {columns.has('source') ? (
+        <td><div className="request-stack"><div className="request-cell-title">{maskEmpty(entry.remote)}</div><div className="request-cell-sub">重试 {entry.retry_count || 0} · 候选 {routePoolSize || 1}{routeAttemptCount ? ` · 已试 ${routeAttemptCount}` : ''}</div></div></td>
+      ) : null}
+      {columns.has('route') ? (
+        <td><div className="request-stack"><div className="request-line-main">{poolName} · {routeIndex} · {keyIndex}</div><div className="request-line-path request-ellipsis">{maskEmpty(actualRouteUrl)}</div></div></td>
+      ) : null}
+      {columns.has('model') ? (
+        <td><div className="request-stack"><div className="request-cell-title request-ellipsis">{logicalModel}</div><div className="request-cell-sub request-ellipsis">{resolvedModel}</div><div className="request-cell-sub">{poolName}</div></div></td>
+      ) : null}
+      {columns.has('metrics') ? (
+        <td>
+          <div className="request-metric-list">
+            <div className="request-chip-row">
+              <span className="request-chip ok">{formatMs(entry.duration_ms)}</span>
+              <span className="request-chip">请求字节 {formatByteCount(inputBytes)}</span>
+              <span className="request-chip">响应字节 {formatByteCount(outputBytes)}</span>
+            </div>
+            <div className="request-token-line">
+              <span className="token-flow in">↓ {formatTokenCount(promptTokens)}</span>
+              <span className="token-flow out">↑ {formatTokenCount(completionTokens)}</span>
+              <CacheHover
+                promptTokens={promptTokens}
+                completionTokens={completionTokens}
+                cacheReadTokens={cacheReadTokens}
+                cacheCreationTokens={cacheCreationTokens}
+                upstreamCacheText={upstreamCacheText}
+                localCacheText={localCacheText}
+                cacheReadBytes={cacheReadBytes}
+                totalTokens={totalTokens}
+              />
+            </div>
           </div>
-          <div className="request-token-line">
-            <span className="token-flow in">↓ {formatTokenCount(promptTokens)}</span>
-            <span className="token-flow out">↑ {formatTokenCount(completionTokens)}</span>
-            <CacheHover
-              promptTokens={promptTokens}
-              completionTokens={completionTokens}
-              cacheReadTokens={cacheReadTokens}
-              cacheCreationTokens={cacheCreationTokens}
-              upstreamCacheText={upstreamCacheText}
-              localCacheText={localCacheText}
-              cacheReadBytes={cacheReadBytes}
-              totalTokens={totalTokens}
-            />
-          </div>
-        </div>
-      </td>
-      <td><div className="request-stack"><div className="request-cell-sub">请求 {entry.request_repairs || 0} · DSML {entry.sanitized_markers || 0} · 工具 {entry.repaired_tool_args || 0}</div></div></td>
-      <td className="request-status-cell"><div className="request-chip-row"><span className={`request-chip ${statusTone}`}>状态 {String(status)}</span>{entry.error ? <span className="request-chip err">异常</span> : null}</div>{entry.error ? <div className="request-cell-sub request-ellipsis request-error">{entry.error}</div> : null}</td>
+        </td>
+      ) : null}
+      {columns.has('repairs') ? (
+        <td><div className="request-stack"><div className="request-cell-sub">请求 {entry.request_repairs || 0} · DSML {entry.sanitized_markers || 0} · 工具 {entry.repaired_tool_args || 0}</div></div></td>
+      ) : null}
+      {columns.has('status') ? (
+        <td className="request-status-cell"><div className="request-chip-row"><span className={`request-chip ${statusTone}`}>状态 {String(status)}</span>{entry.error ? <span className="request-chip err">异常</span> : null}</div>{entry.error ? <div className="request-cell-sub request-ellipsis request-error">{entry.error}</div> : null}</td>
+      ) : null}
     </tr>
   );
 }
