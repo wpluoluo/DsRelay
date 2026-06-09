@@ -1,26 +1,47 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Eye, RefreshCw } from 'lucide-react';
 import { fetchAccountUsage } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
-import { EmptyState, FilterToolbar, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow } from '../components/admin';
-import { buildPageIntro } from '../navigation';
+import { ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { useAccountCenter } from '../state/accountCenterContext';
 import { useDashboard } from '../state/dashboardContext';
 import type { AdminChannel, AdminChannelPricing, RouteObservability } from '../types';
-import { formatByteCount, formatMs, formatNumber, formatTokenCount, formatUsdCost, maskEmpty } from '../utils';
+import { formatByteCount, formatNumber, formatTokenCount, formatUsdCost, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
 
 type StatusFilter = '' | 'enabled' | 'disabled';
 type RouteStatusFilter = '' | 'ok' | 'degraded';
+type AvailableChannelColumnKey = 'platform' | 'groups' | 'models' | 'pricing' | 'status';
+type AvailableChannelFilterKey = 'group' | 'status';
+type MonitorColumnKey = 'status' | 'requests' | 'cache' | 'sessions' | 'reason';
+type MonitorFilterKey = 'status';
+
+const DEFAULT_AVAILABLE_VISIBLE_COLUMNS: AvailableChannelColumnKey[] = ['platform', 'groups', 'models', 'pricing', 'status'];
+const DEFAULT_AVAILABLE_VISIBLE_FILTERS: AvailableChannelFilterKey[] = ['group', 'status'];
+const DEFAULT_MONITOR_VISIBLE_COLUMNS: MonitorColumnKey[] = ['status', 'requests', 'cache', 'sessions', 'reason'];
+const DEFAULT_MONITOR_VISIBLE_FILTERS: MonitorFilterKey[] = ['status'];
+const AVAILABLE_CHANNELS_STORAGE_KEY = 'account-available-channels-view-state';
+const ACCOUNT_MONITOR_STORAGE_KEY = 'account-monitor-view-state';
 
 export function AccountAvailableChannelsPage() {
   const { account, groups, visiblePlans, visibleAvailableChannels, reload } = useAccountCenter();
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('');
-  const [groupFilter, setGroupFilter] = useState('');
+  const savedState = readStorageJSON(AVAILABLE_CHANNELS_STORAGE_KEY, {
+    search: '',
+    statusFilter: '' as StatusFilter,
+    groupFilter: '',
+    pageSize: 20,
+    visibleColumns: DEFAULT_AVAILABLE_VISIBLE_COLUMNS,
+    visibleFilters: DEFAULT_AVAILABLE_VISIBLE_FILTERS,
+  });
+
+  const [search, setSearch] = useState(savedState.search || '');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(savedState.statusFilter || '');
+  const [groupFilter, setGroupFilter] = useState(savedState.groupFilter || '');
   const [inspectChannel, setInspectChannel] = useState<AdminChannel | null>(null);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
+  const [visibleColumns, setVisibleColumns] = useState<Set<AvailableChannelColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_AVAILABLE_VISIBLE_COLUMNS));
+  const [visibleFilters, setVisibleFilters] = useState<Set<AvailableChannelFilterKey>>(new Set(savedState.visibleFilters || DEFAULT_AVAILABLE_VISIBLE_FILTERS));
 
   const allowedGroupIds = groups.map((group) => group.id);
   const channelRows = useMemo(() => {
@@ -40,73 +61,160 @@ export function AccountAvailableChannelsPage() {
         item.billing_model_source,
         ...(item.group_names || []),
         ...(item.model_pricing || []).map((price) => price.model),
-      ].map((value) => String(value || '').toLowerCase()).join(' ');
+      ]
+        .map((value) => String(value || '').toLowerCase())
+        .join(' ');
       return haystack.includes(keyword);
     });
   }, [allowedGroupIds, groupFilter, search, statusFilter, visibleAvailableChannels]);
 
   const totalPages = Math.max(1, Math.ceil(channelRows.length / pageSize));
-  const pagedRows = channelRows.slice((page - 1) * pageSize, page * pageSize);
+  const pagedRows = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return channelRows.slice(start, start + pageSize);
+  }, [channelRows, page, pageSize]);
   const activeCount = channelRows.filter((item) => item.enabled !== false).length;
   const pricingCount = channelRows.reduce((sum, item) => sum + Number(item.pricing_count || item.model_pricing?.length || 0), 0);
+  const supportedModelCount = new Set(
+    channelRows.flatMap((item) => (item.model_pricing || []).map((price) => String(price.model || '').trim()).filter(Boolean)),
+  ).size;
+
+  useEffect(() => {
+    writeStorageJSON(AVAILABLE_CHANNELS_STORAGE_KEY, {
+      search,
+      statusFilter,
+      groupFilter,
+      pageSize,
+      visibleColumns: Array.from(visibleColumns),
+      visibleFilters: Array.from(visibleFilters),
+    });
+  }, [groupFilter, pageSize, search, statusFilter, visibleColumns, visibleFilters]);
+
+  function toggleColumn(key: AvailableChannelColumnKey) {
+    setVisibleColumns((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleFilter(key: AvailableChannelFilterKey) {
+    setVisibleFilters((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   return (
     <section className="grid-page">
-      {buildPageIntro('/available-channels')}
+      <div className="sub2-page-head">
+        <div className="sub2-page-title">
+          <strong>可用渠道</strong>
+        </div>
+        <div className="sub2-inline-summary">
+          <div className="sub2-inline-summary-item"><span>账户</span><strong>{account?.name || '-'}</strong><small>{account?.group_name || account?.source_type || '-'}</small></div>
+          <div className="sub2-inline-summary-item"><span>可用渠道</span><strong>{formatNumber(activeCount)}</strong><small>当前筛选 {formatNumber(channelRows.length)}</small></div>
+          <div className="sub2-inline-summary-item"><span>可购计划</span><strong>{formatNumber(visiblePlans.length)}</strong><small>启用计划</small></div>
+          <div className="sub2-inline-summary-item"><span>支持模型</span><strong>{formatNumber(supportedModelCount)}</strong><small>价格规则 {formatNumber(pricingCount)}</small></div>
+        </div>
+      </div>
+
       <TablePageLayout
-        actions={(
-          <div className="sub2-inline-summary">
-            <div className="sub2-inline-summary-item"><span>账户</span><strong>{account?.name || '-'}</strong><small>{account?.group_name || account?.source_type || '-'}</small></div>
-            <div className="sub2-inline-summary-item"><span>可用渠道</span><strong>{formatNumber(activeCount)}</strong><small>当前筛选 {formatNumber(channelRows.length)}</small></div>
-            <div className="sub2-inline-summary-item"><span>可购计划</span><strong>{formatNumber(visiblePlans.length)}</strong><small>启用计划</small></div>
-            <div className="sub2-inline-summary-item"><span>价格规则</span><strong>{formatNumber(pricingCount)}</strong><small>模型计费</small></div>
-          </div>
-        )}
         filters={(
           <FilterToolbar
             right={(
               <ToolbarButtonRow>
                 <Button onClick={() => void reload()}><RefreshCw size={15} />刷新</Button>
+                <ToolsMenu label="筛选设置" icon={false}>
+                  <button type="button" onClick={() => toggleFilter('group')}>
+                    <span>分组</span>
+                    <strong>{visibleFilters.has('group') ? '✓' : ''}</strong>
+                  </button>
+                  <button type="button" onClick={() => toggleFilter('status')}>
+                    <span>状态</span>
+                    <strong>{visibleFilters.has('status') ? '✓' : ''}</strong>
+                  </button>
+                </ToolsMenu>
+                <ColumnMenu
+                  label="列设置"
+                  items={[
+                    { key: 'platform', label: '平台', checked: visibleColumns.has('platform'), onToggle: () => toggleColumn('platform') },
+                    { key: 'groups', label: '分组', checked: visibleColumns.has('groups'), onToggle: () => toggleColumn('groups') },
+                    { key: 'models', label: '支持模型', checked: visibleColumns.has('models'), onToggle: () => toggleColumn('models') },
+                    { key: 'pricing', label: '计费', checked: visibleColumns.has('pricing'), onToggle: () => toggleColumn('pricing') },
+                    { key: 'status', label: '状态', checked: visibleColumns.has('status'), onToggle: () => toggleColumn('status') },
+                  ]}
+                />
+                <ToolsMenu>
+                  <button type="button" onClick={() => { setSearch(''); setStatusFilter(''); setGroupFilter(''); setPage(1); }}>
+                    <span>清空筛选</span>
+                  </button>
+                  <button type="button" onClick={() => { setStatusFilter('enabled'); setPage(1); }}>
+                    <span>仅看启用渠道</span>
+                  </button>
+                  <button type="button" onClick={() => { setPageSize(50); setPage(1); }}>
+                    <span>切换 50 / 页</span>
+                  </button>
+                </ToolsMenu>
               </ToolbarButtonRow>
             )}
           >
             <SearchField value={search} placeholder="搜索渠道 / 平台 / 分组 / 模型" onChange={(value) => { setSearch(value); setPage(1); }} />
-            <Select value={groupFilter} onChange={(event) => { setGroupFilter(event.target.value); setPage(1); }}>
-              <option value="">全部分组</option>
-              {groups.filter((group) => !allowedGroupIds.length || allowedGroupIds.includes(group.id)).map((group) => (
-                <option key={group.id} value={group.id}>{group.name}</option>
-              ))}
-            </Select>
-            <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StatusFilter); setPage(1); }}>
-              <option value="">全部状态</option>
-              <option value="enabled">启用</option>
-              <option value="disabled">停用</option>
-            </Select>
+            {visibleFilters.has('group') ? (
+              <Select value={groupFilter} onChange={(event) => { setGroupFilter(event.target.value); setPage(1); }}>
+                <option value="">全部分组</option>
+                {groups
+                  .filter((group) => !allowedGroupIds.length || allowedGroupIds.includes(group.id))
+                  .map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+              </Select>
+            ) : null}
+            {visibleFilters.has('status') ? (
+              <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StatusFilter); setPage(1); }}>
+                <option value="">全部状态</option>
+                <option value="enabled">启用</option>
+                <option value="disabled">停用</option>
+              </Select>
+            ) : null}
           </FilterToolbar>
         )}
         table={(
-          <div className="table-wrap">
+          <div className="table-wrap table-scroll">
             <table>
               <thead>
                 <tr>
                   <th>渠道</th>
-                  <th>平台</th>
-                  <th>分组</th>
-                  <th>支持模型</th>
-                  <th>计费</th>
-                  <th>状态</th>
+                  {visibleColumns.has('platform') ? <th>平台</th> : null}
+                  {visibleColumns.has('groups') ? <th>分组</th> : null}
+                  {visibleColumns.has('models') ? <th>支持模型</th> : null}
+                  {visibleColumns.has('pricing') ? <th>计费</th> : null}
+                  {visibleColumns.has('status') ? <th>状态</th> : null}
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody>
                 {pagedRows.length ? pagedRows.map((item) => (
                   <tr key={item.id}>
-                    <td><div className="sub2-cell-stack"><strong>{item.name}</strong><small>{item.description || item.id}</small></div></td>
-                    <td>{item.platform || '-'}</td>
-                    <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{formatNumber(item.group_count || item.group_ids?.length || 0)}</strong><small>{item.group_names?.join(' / ') || '-'}</small></div></td>
-                    <td><PricingModels rows={item.model_pricing || []} /></td>
-                    <td><strong className="sub2-number-cell">{formatNumber(item.pricing_count || item.model_pricing?.length || 0)}</strong></td>
-                    <td><Badge tone={item.enabled === false ? 'warn' : 'ok'}>{item.enabled === false ? '停用' : '启用'}</Badge></td>
+                    <td>
+                      <div className="sub2-cell-stack">
+                        <strong>{item.name}</strong>
+                        <small>{item.description || item.id}</small>
+                      </div>
+                    </td>
+                    {visibleColumns.has('platform') ? <td>{item.platform || '-'}</td> : null}
+                    {visibleColumns.has('groups') ? (
+                      <td>
+                        <div className="sub2-cell-stack sub2-cell-stack-tight">
+                          <strong>{formatNumber(item.group_count || item.group_ids?.length || 0)}</strong>
+                          <small>{item.group_names?.join(' / ') || '-'}</small>
+                        </div>
+                      </td>
+                    ) : null}
+                    {visibleColumns.has('models') ? <td><PricingModels rows={item.model_pricing || []} /></td> : null}
+                    {visibleColumns.has('pricing') ? <td><strong className="sub2-number-cell">{formatNumber(item.pricing_count || item.model_pricing?.length || 0)}</strong></td> : null}
+                    {visibleColumns.has('status') ? <td><Badge tone={item.enabled === false ? 'warn' : 'ok'}>{item.enabled === false ? '停用' : '启用'}</Badge></td> : null}
                     <td>
                       <RowActions>
                         <RowAction icon={Eye} label="详情" onClick={() => setInspectChannel(item)} />
@@ -114,7 +222,7 @@ export function AccountAvailableChannelsPage() {
                     </td>
                   </tr>
                 )) : (
-                  <tr><td colSpan={7}><EmptyState title="暂无可用渠道" /></td></tr>
+                  <ListEmptyRow colSpan={visibleColumns.size + 2} title="暂无可用渠道" />
                 )}
               </tbody>
             </table>
@@ -156,9 +264,22 @@ export function AccountAvailableChannelsPage() {
 
 export function AccountMonitorPage() {
   const dashboard = useDashboard();
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<RouteStatusFilter>('');
+  const savedState = readStorageJSON(ACCOUNT_MONITOR_STORAGE_KEY, {
+    search: '',
+    statusFilter: '' as RouteStatusFilter,
+    pageSize: 20,
+    visibleColumns: DEFAULT_MONITOR_VISIBLE_COLUMNS,
+    visibleFilters: DEFAULT_MONITOR_VISIBLE_FILTERS,
+  });
+
+  const [search, setSearch] = useState(savedState.search || '');
+  const [statusFilter, setStatusFilter] = useState<RouteStatusFilter>(savedState.statusFilter || '');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
+  const [visibleColumns, setVisibleColumns] = useState<Set<MonitorColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_MONITOR_VISIBLE_COLUMNS));
+  const [visibleFilters, setVisibleFilters] = useState<Set<MonitorFilterKey>>(new Set(savedState.visibleFilters || DEFAULT_MONITOR_VISIBLE_FILTERS));
   const [inspectRoute, setInspectRoute] = useState<RouteObservability | null>(null);
+
   const routes = dashboard.state.route_observability || [];
   const rows = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -174,35 +295,109 @@ export function AccountMonitorPage() {
         item.route_status_text,
         item.route_status_note,
         item.last_reason,
-      ].map((value) => String(value || '').toLowerCase()).join(' ');
+      ]
+        .map((value) => String(value || '').toLowerCase())
+        .join(' ');
       return haystack.includes(keyword);
     });
   }, [routes, search, statusFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const pagedRows = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return rows.slice(start, start + pageSize);
+  }, [page, pageSize, rows]);
   const activeCount = rows.filter((item) => !item.cooling && Number(item.error_count || 0) === 0).length;
   const degradedCount = rows.length - activeCount;
   const totalRequests = rows.reduce((sum, item) => sum + Number(item.request_count || 0), 0);
   const cacheHitRequests = rows.reduce((sum, item) => sum + Number(item.upstream_prompt_cache_hit_count || 0), 0);
 
+  useEffect(() => {
+    writeStorageJSON(ACCOUNT_MONITOR_STORAGE_KEY, {
+      search,
+      statusFilter,
+      pageSize,
+      visibleColumns: Array.from(visibleColumns),
+      visibleFilters: Array.from(visibleFilters),
+    });
+  }, [pageSize, search, statusFilter, visibleColumns, visibleFilters]);
+
+  function toggleColumn(key: MonitorColumnKey) {
+    setVisibleColumns((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleFilter(key: MonitorFilterKey) {
+    setVisibleFilters((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   return (
     <section className="grid-page">
-      {buildPageIntro('/monitor')}
+      <div className="sub2-page-head">
+        <div className="sub2-page-title">
+          <strong>渠道状态</strong>
+        </div>
+        <div className="sub2-inline-summary">
+          <div className="sub2-inline-summary-item"><span>线路数</span><strong>{formatNumber(rows.length)}</strong><small>正常 {formatNumber(activeCount)}</small></div>
+          <div className="sub2-inline-summary-item"><span>异常线路</span><strong>{formatNumber(degradedCount)}</strong><small>冷却 / 失败</small></div>
+          <div className="sub2-inline-summary-item"><span>请求数</span><strong>{formatNumber(totalRequests)}</strong><small>观测窗口</small></div>
+          <div className="sub2-inline-summary-item"><span>缓存命中</span><strong>{formatNumber(cacheHitRequests)}</strong><small>上游读取</small></div>
+        </div>
+      </div>
+
       <TablePageLayout
-        actions={(
-          <div className="sub2-inline-summary">
-            <div className="sub2-inline-summary-item"><span>线路数</span><strong>{formatNumber(rows.length)}</strong><small>正常 {formatNumber(activeCount)}</small></div>
-            <div className="sub2-inline-summary-item"><span>异常线路</span><strong>{formatNumber(degradedCount)}</strong><small>冷却 / 失败</small></div>
-            <div className="sub2-inline-summary-item"><span>请求数</span><strong>{formatNumber(totalRequests)}</strong><small>观测窗口</small></div>
-            <div className="sub2-inline-summary-item"><span>缓存命中</span><strong>{formatNumber(cacheHitRequests)}</strong><small>上游读取</small></div>
-          </div>
-        )}
         filters={(
-          <FilterToolbar>
-            <SearchField value={search} placeholder="搜索线路 / 池 / 状态" onChange={setSearch} />
-            <Select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as RouteStatusFilter)}>
-              <option value="">全部状态</option>
-              <option value="ok">正常</option>
-              <option value="degraded">异常</option>
-            </Select>
+          <FilterToolbar
+            right={(
+              <ToolbarButtonRow>
+                <Button onClick={() => void dashboard.stateQuery.refetch()}><RefreshCw size={15} />刷新</Button>
+                <ToolsMenu label="筛选设置" icon={false}>
+                  <button type="button" onClick={() => toggleFilter('status')}>
+                    <span>状态</span>
+                    <strong>{visibleFilters.has('status') ? '✓' : ''}</strong>
+                  </button>
+                </ToolsMenu>
+                <ColumnMenu
+                  label="列设置"
+                  items={[
+                    { key: 'status', label: '状态', checked: visibleColumns.has('status'), onToggle: () => toggleColumn('status') },
+                    { key: 'requests', label: '请求', checked: visibleColumns.has('requests'), onToggle: () => toggleColumn('requests') },
+                    { key: 'cache', label: '缓存', checked: visibleColumns.has('cache'), onToggle: () => toggleColumn('cache') },
+                    { key: 'sessions', label: '会话', checked: visibleColumns.has('sessions'), onToggle: () => toggleColumn('sessions') },
+                    { key: 'reason', label: '说明', checked: visibleColumns.has('reason'), onToggle: () => toggleColumn('reason') },
+                  ]}
+                />
+                <ToolsMenu>
+                  <button type="button" onClick={() => { setSearch(''); setStatusFilter(''); setPage(1); }}>
+                    <span>清空筛选</span>
+                  </button>
+                  <button type="button" onClick={() => { setStatusFilter('degraded'); setPage(1); }}>
+                    <span>仅看异常线路</span>
+                  </button>
+                  <button type="button" onClick={() => { setPageSize(50); setPage(1); }}>
+                    <span>切换 50 / 页</span>
+                  </button>
+                </ToolsMenu>
+              </ToolbarButtonRow>
+            )}
+          >
+            <SearchField value={search} placeholder="搜索线路 / 池 / 状态" onChange={(value) => { setSearch(value); setPage(1); }} />
+            {visibleFilters.has('status') ? (
+              <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RouteStatusFilter); setPage(1); }}>
+                <option value="">全部状态</option>
+                <option value="ok">正常</option>
+                <option value="degraded">异常</option>
+              </Select>
+            ) : null}
           </FilterToolbar>
         )}
         table={(
@@ -211,33 +406,81 @@ export function AccountMonitorPage() {
               <thead>
                 <tr>
                   <th>线路</th>
-                  <th>状态</th>
-                  <th>请求</th>
-                  <th>缓存</th>
-                  <th>会话</th>
+                  {visibleColumns.has('status') ? <th>状态</th> : null}
+                  {visibleColumns.has('requests') ? <th>请求</th> : null}
+                  {visibleColumns.has('cache') ? <th>缓存</th> : null}
+                  {visibleColumns.has('sessions') ? <th>会话</th> : null}
+                  {visibleColumns.has('reason') ? <th>说明</th> : null}
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.length ? rows.map((item, index) => {
+                {pagedRows.length ? pagedRows.map((item, index) => {
                   const degraded = item.cooling === true || Number(item.error_count || 0) > 0;
                   return (
                     <tr key={`${item.route_url || item.pool_name || index}`}>
-                      <td><div className="sub2-cell-stack"><strong>{item.pool_name || item.route_url || `线路 ${index + 1}`}</strong><small>{item.route_url || '-'}</small></div></td>
-                      <td><Badge tone={degraded ? 'warn' : 'ok'}>{item.route_status_text || (degraded ? '异常' : '正常')}</Badge></td>
-                      <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{formatNumber(item.request_count || 0)}</strong><small>成功 {formatNumber(item.success_count || 0)} / 异常 {formatNumber(item.error_count || 0)}</small></div></td>
-                      <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{formatNumber(item.upstream_prompt_cache_hit_count || 0)}</strong><small>本地 {formatNumber(item.local_cache_hit_count || 0)}</small></div></td>
-                      <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{formatNumber(item.session_count || 0)}</strong><small>亲和 {formatNumber(item.sticky_session_count || 0)}</small></div></td>
-                      <td><RowActions><RowAction icon={Eye} label="详情" onClick={() => setInspectRoute(item)} /></RowActions></td>
+                      <td>
+                        <div className="sub2-cell-stack">
+                          <strong>{item.pool_name || item.route_url || `线路 ${index + 1}`}</strong>
+                          <small>{item.route_url || '-'}</small>
+                        </div>
+                      </td>
+                      {visibleColumns.has('status') ? <td><Badge tone={degraded ? 'warn' : 'ok'}>{item.route_status_text || (degraded ? '异常' : '正常')}</Badge></td> : null}
+                      {visibleColumns.has('requests') ? (
+                        <td>
+                          <div className="sub2-cell-stack sub2-cell-stack-tight">
+                            <strong>{formatNumber(item.request_count || 0)}</strong>
+                            <small>成功 {formatNumber(item.success_count || 0)} / 异常 {formatNumber(item.error_count || 0)}</small>
+                          </div>
+                        </td>
+                      ) : null}
+                      {visibleColumns.has('cache') ? (
+                        <td>
+                          <div className="sub2-cell-stack sub2-cell-stack-tight">
+                            <strong>{formatNumber(item.upstream_prompt_cache_hit_count || 0)}</strong>
+                            <small>本地 {formatNumber(item.local_cache_hit_count || 0)}</small>
+                          </div>
+                        </td>
+                      ) : null}
+                      {visibleColumns.has('sessions') ? (
+                        <td>
+                          <div className="sub2-cell-stack sub2-cell-stack-tight">
+                            <strong>{formatNumber(item.session_count || 0)}</strong>
+                            <small>亲和 {formatNumber(item.sticky_session_count || 0)}</small>
+                          </div>
+                        </td>
+                      ) : null}
+                      {visibleColumns.has('reason') ? (
+                        <td>
+                          <div className="sub2-cell-stack sub2-cell-stack-tight">
+                            <strong>{maskEmpty(item.last_reason || item.route_status_note)}</strong>
+                            <small>{item.cooling ? '冷却中' : item.route_status_note || '-'}</small>
+                          </div>
+                        </td>
+                      ) : null}
+                      <td>
+                        <RowActions>
+                          <RowAction icon={Eye} label="详情" onClick={() => setInspectRoute(item)} />
+                        </RowActions>
+                      </td>
                     </tr>
                   );
                 }) : (
-                  <tr><td colSpan={6}><EmptyState title="暂无渠道状态数据" /></td></tr>
+                  <ListEmptyRow colSpan={visibleColumns.size + 2} title="暂无渠道状态数据" />
                 )}
               </tbody>
             </table>
           </div>
         )}
+        pagination={rows.length ? (
+          <Pager
+            page={Math.min(page, totalPages)}
+            pageSize={pageSize}
+            total={rows.length}
+            onPageChange={(next) => setPage(Math.min(Math.max(1, next), totalPages))}
+            onPageSizeChange={(next) => { setPageSize(next); setPage(1); }}
+          />
+        ) : null}
       />
 
       {inspectRoute ? (
@@ -257,10 +500,12 @@ export function AccountMonitorPage() {
             <div className="admin-dialog-grid">
               <Field label="线路"><TextInput readOnly value={inspectRoute.route_url || '-'} /></Field>
               <Field label="状态"><TextInput readOnly value={inspectRoute.route_status_text || '-'} /></Field>
+              <Field label="状态说明"><TextInput readOnly value={inspectRoute.route_status_note || '-'} /></Field>
               <Field label="最近原因"><TextInput readOnly value={inspectRoute.last_reason || '-'} /></Field>
               <Field label="平均缓存读取"><TextInput readOnly value={formatTokenCount(inspectRoute.avg_cache_read_input_tokens || 0)} /></Field>
               <Field label="亲和率"><TextInput readOnly value={`${formatNumber(inspectRoute.sticky_session_rate || 0)}%`} /></Field>
               <Field label="提示率"><TextInput readOnly value={`${formatNumber(inspectRoute.hint_applied_rate || 0)}%`} /></Field>
+              <Field label="429 次数"><TextInput readOnly value={formatNumber(inspectRoute.status_429_count || 0)} /></Field>
             </div>
           </div>
         </Modal>
@@ -270,54 +515,82 @@ export function AccountMonitorPage() {
 }
 
 export function AccountProfilePage() {
-  const { account, apiKeys, subscriptions, orders, visiblePlans, visibleAvailableChannels } = useAccountCenter();
+  const { account, apiKeys, subscriptions, orders, visiblePlans, visibleAvailableChannels, reload } = useAccountCenter();
   const usageQuery = useQuery({ queryKey: ['account-usage'], queryFn: () => fetchAccountUsage(), refetchInterval: 30000, retry: false });
-  const userKeys = apiKeys;
-  const userSubscriptions = subscriptions;
-  const userOrders = orders;
   const usageRows = usageQuery.data?.items || [];
   const totalTokens = usageRows.reduce((sum, item) => sum + Number(item.total_tokens || 0), 0);
-  const totalBytes = usageRows.reduce((sum, item) => sum + Number(item.input_bytes || 0) + Number(item.output_bytes || 0), 0);
+  const totalInputBytes = usageRows.reduce((sum, item) => sum + Number(item.input_bytes || 0), 0);
+  const totalOutputBytes = usageRows.reduce((sum, item) => sum + Number(item.output_bytes || 0), 0);
   const totalCost = usageRows.reduce((sum, item) => sum + Number(item.actual_cost || item.total_cost || 0), 0);
-  const activeSubscriptions = userSubscriptions.filter((item) => item.status === 'active');
+  const activeSubscriptions = subscriptions.filter((item) => item.status === 'active');
+  const enabledKeys = apiKeys.filter((item) => item.enabled !== false);
+
+  const profileRows = useMemo(() => ([
+    { category: '账户资料', label: '账户名称', value: account?.name || '-', note: account?.id || '-' },
+    { category: '账户资料', label: '邮箱', value: account?.email || '-', note: account?.username || '-' },
+    { category: '账户资料', label: '角色', value: account?.role || '-', note: account?.status || '-' },
+    { category: '账户资料', label: '分组', value: account?.group_name || account?.group_id || '-', note: account?.source_type || '-' },
+    { category: '额度配置', label: '余额', value: formatUsdCost(Number(account?.balance_cents || 0) / 100, 2), note: `并发 ${formatNumber(account?.concurrency_limit || 0)}` },
+    { category: '额度配置', label: 'RPM', value: formatNumber(account?.rpm_limit || 0), note: account?.password_set ? '已设置密码' : '未设置密码' },
+    { category: '消费概览', label: '请求数', value: formatNumber(usageRows.length), note: `订单 ${formatNumber(orders.length)}` },
+    { category: '消费概览', label: '总 Token', value: formatTokenCount(totalTokens), note: `有效订阅 ${formatNumber(activeSubscriptions.length)}` },
+    { category: '消费概览', label: '输入字节', value: formatByteCount(totalInputBytes), note: `输出 ${formatByteCount(totalOutputBytes)}` },
+    { category: '消费概览', label: '消费金额', value: formatUsdCost(totalCost), note: `最近使用 ${maskEmpty(account?.last_seen_at)}` },
+    { category: '业务资源', label: 'API 密钥', value: formatNumber(apiKeys.length), note: `启用 ${formatNumber(enabledKeys.length)}` },
+    { category: '业务资源', label: '可购计划', value: formatNumber(visiblePlans.length), note: `可用渠道 ${formatNumber(visibleAvailableChannels.length)}` },
+  ]), [account, activeSubscriptions.length, apiKeys.length, enabledKeys.length, orders.length, totalCost, totalInputBytes, totalOutputBytes, totalTokens, usageRows.length, visibleAvailableChannels.length, visiblePlans.length]);
 
   return (
     <section className="grid-page">
-      {buildPageIntro('/profile')}
-      <div className="sub2-inline-summary">
-        <div className="sub2-inline-summary-item"><span>余额</span><strong>{formatUsdCost(Number(account?.balance_cents || 0) / 100, 2)}</strong><small>并发 {formatNumber(account?.concurrency_limit || 0)}</small></div>
-        <div className="sub2-inline-summary-item"><span>API Key</span><strong>{formatNumber(userKeys.length)}</strong><small>启用 {formatNumber(userKeys.filter((item) => item.enabled !== false).length)}</small></div>
-        <div className="sub2-inline-summary-item"><span>订阅</span><strong>{formatNumber(activeSubscriptions.length)}</strong><small>总数 {formatNumber(userSubscriptions.length)}</small></div>
-        <div className="sub2-inline-summary-item"><span>使用记录</span><strong>{formatNumber(usageRows.length)}</strong><small>{formatTokenCount(totalTokens)}</small></div>
-      </div>
-      <div className="dashboard-main-grid">
-        <div className="panel">
-          <div className="panel-head"><h3>账户资料</h3></div>
-          <div className="info-grid">
-            <div className="metric-line"><span>用户名称</span><strong>{account?.name || '-'}</strong></div>
-            <div className="metric-line"><span>邮箱</span><strong>{account?.email || '-'}</strong></div>
-            <div className="metric-line"><span>用户名</span><strong>{account?.username || '-'}</strong></div>
-            <div className="metric-line"><span>角色</span><strong>{account?.role || '-'}</strong></div>
-            <div className="metric-line"><span>状态</span><strong>{account?.status || '-'}</strong></div>
-            <div className="metric-line"><span>分组</span><strong>{account?.group_name || account?.group_id || '-'}</strong></div>
-            <div className="metric-line"><span>RPM</span><strong>{formatNumber(account?.rpm_limit || 0)}</strong></div>
-            <div className="metric-line"><span>密码</span><strong>{account?.password_set ? '已设置' : '未设置'}</strong></div>
-          </div>
+      <div className="sub2-page-head">
+        <div className="sub2-page-title">
+          <strong>个人资料</strong>
         </div>
-        <div className="panel">
-          <div className="panel-head"><h3>消费概览</h3></div>
-          <div className="info-grid">
-            <div className="metric-line"><span>请求数</span><strong>{formatNumber(usageRows.length)}</strong></div>
-            <div className="metric-line"><span>Token</span><strong>{formatTokenCount(totalTokens)}</strong></div>
-            <div className="metric-line"><span>字节数</span><strong>{formatByteCount(totalBytes)}</strong></div>
-            <div className="metric-line"><span>消费</span><strong>{formatUsdCost(totalCost)}</strong></div>
-            <div className="metric-line"><span>订单</span><strong>{formatNumber(userOrders.length)}</strong></div>
-            <div className="metric-line"><span>可购计划</span><strong>{formatNumber(visiblePlans.length)}</strong></div>
-            <div className="metric-line"><span>可用渠道</span><strong>{formatNumber(visibleAvailableChannels.length)}</strong></div>
-            <div className="metric-line"><span>最近使用</span><strong>{maskEmpty(account?.last_seen_at)}</strong></div>
-          </div>
+        <div className="sub2-inline-summary">
+          <div className="sub2-inline-summary-item"><span>余额</span><strong>{formatUsdCost(Number(account?.balance_cents || 0) / 100, 2)}</strong><small>并发 {formatNumber(account?.concurrency_limit || 0)}</small></div>
+          <div className="sub2-inline-summary-item"><span>API Key</span><strong>{formatNumber(apiKeys.length)}</strong><small>启用 {formatNumber(enabledKeys.length)}</small></div>
+          <div className="sub2-inline-summary-item"><span>订阅</span><strong>{formatNumber(activeSubscriptions.length)}</strong><small>总数 {formatNumber(subscriptions.length)}</small></div>
+          <div className="sub2-inline-summary-item"><span>使用记录</span><strong>{formatNumber(usageRows.length)}</strong><small>{formatTokenCount(totalTokens)}</small></div>
         </div>
       </div>
+
+      <TablePageLayout
+        filters={(
+          <FilterToolbar
+            right={(
+              <ToolbarButtonRow>
+                <Button onClick={() => { void reload(); void usageQuery.refetch(); }}><RefreshCw size={15} />刷新</Button>
+              </ToolbarButtonRow>
+            )}
+          />
+        )}
+        table={(
+          <div className="table-wrap table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>分类</th>
+                  <th>项目</th>
+                  <th>当前值</th>
+                  <th>说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                {profileRows.length ? profileRows.map((item) => (
+                  <tr key={`${item.category}-${item.label}`}>
+                    <td>{item.category}</td>
+                    <td>{item.label}</td>
+                    <td><strong>{item.value}</strong></td>
+                    <td>{item.note}</td>
+                  </tr>
+                )) : (
+                  <ListEmptyRow colSpan={4} title="暂无账户资料" />
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      />
     </section>
   );
 }
