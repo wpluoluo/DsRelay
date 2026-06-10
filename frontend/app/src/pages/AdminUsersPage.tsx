@@ -35,6 +35,7 @@ import {
   ToolbarButtonRow,
   ToolsMenu,
 } from '../components/admin';
+import { buildPageIntro } from '../navigation';
 import { queryClient } from '../state/queryClient';
 import type { AdminApiKey, AdminBalanceEvent, AdminAccount } from '../types';
 import { copyTextToClipboard, formatByteCount, formatNumber, formatTokenCount, formatUsdCost, getAccountId, readStorageJSON, writeStorageJSON } from '../utils';
@@ -537,11 +538,7 @@ export function AdminUsersPage() {
 
   return (
     <section className="grid-page">
-      <div className="sub2-page-head">
-        <div className="sub2-page-title">
-          <strong>用户管理</strong>
-        </div>
-      </div>
+      {buildPageIntro('/admin/users')}
       <TablePageLayout
         filters={
           <FilterToolbar

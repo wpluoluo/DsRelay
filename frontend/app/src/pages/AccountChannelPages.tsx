@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { Eye, RefreshCw } from 'lucide-react';
-import { fetchAccountUsage } from '../api';
+import { fetchAccountUsage, updateAccountProfile } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
 import { ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
+import { buildPageIntro } from '../navigation';
 import { useAccountCenter } from '../state/accountCenterContext';
 import { useDashboard } from '../state/dashboardContext';
 import type { AdminChannel, AdminChannelPricing, RouteObservability } from '../types';
-import { formatByteCount, formatNumber, formatTokenCount, formatUsdCost, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
+import { formatByteCount, formatNumber, formatPercent, formatTokenCount, formatUsdCost, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
 
 type StatusFilter = '' | 'enabled' | 'disabled';
 type RouteStatusFilter = '' | 'ok' | 'degraded';
@@ -15,6 +16,12 @@ type AvailableChannelColumnKey = 'platform' | 'groups' | 'models' | 'pricing' | 
 type AvailableChannelFilterKey = 'group' | 'status';
 type MonitorColumnKey = 'status' | 'requests' | 'cache' | 'sessions' | 'reason';
 type MonitorFilterKey = 'status';
+type ProfileDraft = {
+  name: string;
+  email: string;
+  username: string;
+  password: string;
+};
 
 const DEFAULT_AVAILABLE_VISIBLE_COLUMNS: AvailableChannelColumnKey[] = ['platform', 'groups', 'models', 'pricing', 'status'];
 const DEFAULT_AVAILABLE_VISIBLE_FILTERS: AvailableChannelFilterKey[] = ['group', 'status'];
@@ -24,7 +31,7 @@ const AVAILABLE_CHANNELS_STORAGE_KEY = 'account-available-channels-view-state';
 const ACCOUNT_MONITOR_STORAGE_KEY = 'account-monitor-view-state';
 
 export function AccountAvailableChannelsPage() {
-  const { account, groups, visiblePlans, visibleAvailableChannels, reload } = useAccountCenter();
+  const { groups, visibleAvailableChannels, reload } = useAccountCenter();
   const savedState = readStorageJSON(AVAILABLE_CHANNELS_STORAGE_KEY, {
     search: '',
     statusFilter: '' as StatusFilter,
@@ -73,12 +80,6 @@ export function AccountAvailableChannelsPage() {
     const start = (page - 1) * pageSize;
     return channelRows.slice(start, start + pageSize);
   }, [channelRows, page, pageSize]);
-  const activeCount = channelRows.filter((item) => item.enabled !== false).length;
-  const pricingCount = channelRows.reduce((sum, item) => sum + Number(item.pricing_count || item.model_pricing?.length || 0), 0);
-  const supportedModelCount = new Set(
-    channelRows.flatMap((item) => (item.model_pricing || []).map((price) => String(price.model || '').trim()).filter(Boolean)),
-  ).size;
-
   useEffect(() => {
     writeStorageJSON(AVAILABLE_CHANNELS_STORAGE_KEY, {
       search,
@@ -110,17 +111,7 @@ export function AccountAvailableChannelsPage() {
 
   return (
     <section className="grid-page">
-      <div className="sub2-page-head">
-        <div className="sub2-page-title">
-          <strong>可用渠道</strong>
-        </div>
-        <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>账户</span><strong>{account?.name || '-'}</strong><small>{account?.group_name || account?.source_type || '-'}</small></div>
-          <div className="sub2-inline-summary-item"><span>可用渠道</span><strong>{formatNumber(activeCount)}</strong><small>当前筛选 {formatNumber(channelRows.length)}</small></div>
-          <div className="sub2-inline-summary-item"><span>可购计划</span><strong>{formatNumber(visiblePlans.length)}</strong><small>启用计划</small></div>
-          <div className="sub2-inline-summary-item"><span>支持模型</span><strong>{formatNumber(supportedModelCount)}</strong><small>价格规则 {formatNumber(pricingCount)}</small></div>
-        </div>
-      </div>
+      {buildPageIntro('/available-channels')}
 
       <TablePageLayout
         filters={(
@@ -307,11 +298,6 @@ export function AccountMonitorPage() {
     const start = (page - 1) * pageSize;
     return rows.slice(start, start + pageSize);
   }, [page, pageSize, rows]);
-  const activeCount = rows.filter((item) => !item.cooling && Number(item.error_count || 0) === 0).length;
-  const degradedCount = rows.length - activeCount;
-  const totalRequests = rows.reduce((sum, item) => sum + Number(item.request_count || 0), 0);
-  const cacheHitRequests = rows.reduce((sum, item) => sum + Number(item.upstream_prompt_cache_hit_count || 0), 0);
-
   useEffect(() => {
     writeStorageJSON(ACCOUNT_MONITOR_STORAGE_KEY, {
       search,
@@ -342,17 +328,7 @@ export function AccountMonitorPage() {
 
   return (
     <section className="grid-page">
-      <div className="sub2-page-head">
-        <div className="sub2-page-title">
-          <strong>渠道状态</strong>
-        </div>
-        <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>线路数</span><strong>{formatNumber(rows.length)}</strong><small>正常 {formatNumber(activeCount)}</small></div>
-          <div className="sub2-inline-summary-item"><span>异常线路</span><strong>{formatNumber(degradedCount)}</strong><small>冷却 / 失败</small></div>
-          <div className="sub2-inline-summary-item"><span>请求数</span><strong>{formatNumber(totalRequests)}</strong><small>观测窗口</small></div>
-          <div className="sub2-inline-summary-item"><span>缓存命中</span><strong>{formatNumber(cacheHitRequests)}</strong><small>上游读取</small></div>
-        </div>
-      </div>
+      {buildPageIntro('/monitor')}
 
       <TablePageLayout
         filters={(
@@ -503,8 +479,8 @@ export function AccountMonitorPage() {
               <Field label="状态说明"><TextInput readOnly value={inspectRoute.route_status_note || '-'} /></Field>
               <Field label="最近原因"><TextInput readOnly value={inspectRoute.last_reason || '-'} /></Field>
               <Field label="平均缓存读取"><TextInput readOnly value={formatTokenCount(inspectRoute.avg_cache_read_input_tokens || 0)} /></Field>
-              <Field label="亲和率"><TextInput readOnly value={`${formatNumber(inspectRoute.sticky_session_rate || 0)}%`} /></Field>
-              <Field label="提示率"><TextInput readOnly value={`${formatNumber(inspectRoute.hint_applied_rate || 0)}%`} /></Field>
+              <Field label="亲和率"><TextInput readOnly value={formatPercent(inspectRoute.sticky_session_rate || 0)} /></Field>
+              <Field label="提示率"><TextInput readOnly value={formatPercent(inspectRoute.hint_applied_rate || 0)} /></Field>
               <Field label="429 次数"><TextInput readOnly value={formatNumber(inspectRoute.status_429_count || 0)} /></Field>
             </div>
           </div>
@@ -517,6 +493,7 @@ export function AccountMonitorPage() {
 export function AccountProfilePage() {
   const { account, apiKeys, subscriptions, orders, visiblePlans, visibleAvailableChannels, reload } = useAccountCenter();
   const usageQuery = useQuery({ queryKey: ['account-usage'], queryFn: () => fetchAccountUsage(), refetchInterval: 30000, retry: false });
+  const [draft, setDraft] = useState<ProfileDraft | null>(null);
   const usageRows = usageQuery.data?.items || [];
   const totalTokens = usageRows.reduce((sum, item) => sum + Number(item.total_tokens || 0), 0);
   const totalInputBytes = usageRows.reduce((sum, item) => sum + Number(item.input_bytes || 0), 0);
@@ -524,6 +501,14 @@ export function AccountProfilePage() {
   const totalCost = usageRows.reduce((sum, item) => sum + Number(item.actual_cost || item.total_cost || 0), 0);
   const activeSubscriptions = subscriptions.filter((item) => item.status === 'active');
   const enabledKeys = apiKeys.filter((item) => item.enabled !== false);
+  const updateMutation = useMutation({
+    mutationFn: updateAccountProfile,
+    onSuccess: async () => {
+      setDraft(null);
+      await reload();
+      await usageQuery.refetch();
+    },
+  });
 
   const profileRows = useMemo(() => ([
     { category: '账户资料', label: '账户名称', value: account?.name || '-', note: account?.id || '-' },
@@ -540,19 +525,28 @@ export function AccountProfilePage() {
     { category: '业务资源', label: '可购计划', value: formatNumber(visiblePlans.length), note: `可用渠道 ${formatNumber(visibleAvailableChannels.length)}` },
   ]), [account, activeSubscriptions.length, apiKeys.length, enabledKeys.length, orders.length, totalCost, totalInputBytes, totalOutputBytes, totalTokens, usageRows.length, visibleAvailableChannels.length, visiblePlans.length]);
 
+  function openEdit() {
+    setDraft({
+      name: account?.name || '',
+      email: account?.email || '',
+      username: account?.username || '',
+      password: '',
+    });
+  }
+
+  function submitProfile() {
+    if (!draft) return;
+    updateMutation.mutate({
+      name: draft.name,
+      email: draft.email,
+      username: draft.username,
+      ...(draft.password.trim() ? { password: draft.password } : {}),
+    });
+  }
+
   return (
     <section className="grid-page">
-      <div className="sub2-page-head">
-        <div className="sub2-page-title">
-          <strong>个人资料</strong>
-        </div>
-        <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>余额</span><strong>{formatUsdCost(Number(account?.balance_cents || 0) / 100, 2)}</strong><small>并发 {formatNumber(account?.concurrency_limit || 0)}</small></div>
-          <div className="sub2-inline-summary-item"><span>API Key</span><strong>{formatNumber(apiKeys.length)}</strong><small>启用 {formatNumber(enabledKeys.length)}</small></div>
-          <div className="sub2-inline-summary-item"><span>订阅</span><strong>{formatNumber(activeSubscriptions.length)}</strong><small>总数 {formatNumber(subscriptions.length)}</small></div>
-          <div className="sub2-inline-summary-item"><span>使用记录</span><strong>{formatNumber(usageRows.length)}</strong><small>{formatTokenCount(totalTokens)}</small></div>
-        </div>
-      </div>
+      {buildPageIntro('/profile')}
 
       <TablePageLayout
         filters={(
@@ -560,6 +554,7 @@ export function AccountProfilePage() {
             right={(
               <ToolbarButtonRow>
                 <Button onClick={() => { void reload(); void usageQuery.refetch(); }}><RefreshCw size={15} />刷新</Button>
+                <Button tone="primary" onClick={openEdit}>编辑资料</Button>
               </ToolbarButtonRow>
             )}
           />
@@ -591,6 +586,34 @@ export function AccountProfilePage() {
           </div>
         )}
       />
+
+      {draft ? (
+        <Modal
+          title="编辑资料"
+          size="lg"
+          onClose={() => setDraft(null)}
+          footer={(
+            <ModalActions>
+              <Button onClick={() => setDraft(null)}>取消</Button>
+              <Button tone="primary" disabled={updateMutation.isPending || !draft.name.trim()} onClick={submitProfile}>
+                保存
+              </Button>
+            </ModalActions>
+          )}
+        >
+          <div className="admin-dialog">
+            <div className="admin-dialog-intro">
+              <strong>{account?.id || '当前账户'}</strong>
+            </div>
+            <div className="admin-dialog-grid modal-grid">
+              <Field label="账户名称"><TextInput value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></Field>
+              <Field label="邮箱"><TextInput type="email" value={draft.email} onChange={(event) => setDraft({ ...draft, email: event.target.value })} /></Field>
+              <Field label="用户名"><TextInput value={draft.username} onChange={(event) => setDraft({ ...draft, username: event.target.value })} /></Field>
+              <Field label="新密码"><TextInput type="password" value={draft.password} onChange={(event) => setDraft({ ...draft, password: event.target.value })} /></Field>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
     </section>
   );
 }

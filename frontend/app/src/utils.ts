@@ -8,6 +8,12 @@ export function formatNumber(value: unknown): string {
   return number.toLocaleString('zh-CN');
 }
 
+export function formatPercent(value: unknown, fractionDigits = 1): string {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return `${(0).toFixed(fractionDigits)}%`;
+  return `${(number * 100).toFixed(fractionDigits)}%`;
+}
+
 export function formatTokenCount(value: unknown): string {
   return `${formatNumber(value)} Token`;
 }

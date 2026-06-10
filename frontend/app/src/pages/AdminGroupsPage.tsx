@@ -4,6 +4,7 @@ import { ArrowDown, ArrowUp, Ban, Bolt, DollarSign, Eye, Pencil, Plus, RefreshCw
 import { deleteAdminGroup, fetchAdminGroups, saveAdminGroup } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
 import { ActionButton, ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
+import { buildPageIntro } from '../navigation';
 import { queryClient } from '../state/queryClient';
 import type { AdminGroup } from '../types';
 import { cn, formatByteCount, formatNumber, formatTokenCount, readStorageJSON, writeStorageJSON } from '../utils';
@@ -289,11 +290,7 @@ export function AdminGroupsPage() {
 
   return (
     <section className="grid-page">
-      <div className="sub2-page-head">
-        <div className="sub2-page-title">
-          <strong>分组管理</strong>
-        </div>
-      </div>
+      {buildPageIntro('/admin/groups')}
       <TablePageLayout
         filters={
           <FilterToolbar

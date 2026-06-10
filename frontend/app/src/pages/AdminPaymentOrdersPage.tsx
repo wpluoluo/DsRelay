@@ -4,6 +4,7 @@ import { BadgeCheck, CircleX, CreditCard, Eye, Plus, RefreshCw, ReceiptText, Shi
 import { createAdminPaymentOrder, fetchAdminAccounts, fetchAdminPaymentChannels, fetchAdminPaymentOrders, fetchAdminSubscriptionPlans, updateAdminPaymentOrderStatus } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
 import { ActionButton, ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
+import { buildPageIntro } from '../navigation';
 import { queryClient } from '../state/queryClient';
 import type { AdminPaymentOrder } from '../types';
 import { buildAccountPayload, formatCost, formatNumber, getAccountId, getAccountName, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
@@ -141,19 +142,7 @@ export function AdminPaymentOrdersPage() {
 
   return (
     <section className="grid-page">
-      <div className="sub2-page-head">
-        <div className="sub2-page-title">
-          <strong>订单管理</strong>
-        </div>
-        <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>订单总数</span><strong>{items.length}</strong><small>支付流水总量</small></div>
-          <div className="sub2-inline-summary-item"><span>已支付</span><strong>{paidCount}</strong><small>待支付 {pendingCount}</small></div>
-          <div className="sub2-inline-summary-item"><span>失败订单</span><strong>{failedCount}</strong><small>需要人工跟进</small></div>
-          <div className="sub2-inline-summary-item"><span>履约日志</span><strong>{fulfilledCount}</strong><small>已关联订阅或履约记录</small></div>
-          <div className="sub2-inline-summary-item"><span>人工订单</span><strong>{manualCount}</strong><small>后台创建</small></div>
-          <div className="sub2-inline-summary-item"><span>累计订单金额</span><strong>${formatCost(totalAmount / 100, 2)}</strong><small>订单金额合计</small></div>
-        </div>
-      </div>
+      {buildPageIntro('/admin/orders')}
       <TablePageLayout
         filters={
           <FilterToolbar

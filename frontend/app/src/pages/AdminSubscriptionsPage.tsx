@@ -4,6 +4,7 @@ import { Ban, Calendar, Eye, Plus, RefreshCw, RotateCcw } from 'lucide-react';
 import { assignAdminAccountSubscription, extendAdminAccountSubscription, fetchAdminAccounts, fetchAdminSubscriptionPlans, fetchAdminAccountSubscriptions, resetAdminAccountSubscriptionQuota, revokeAdminAccountSubscription } from '../api';
 import { Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
 import { ActionButton, ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
+import { buildPageIntro } from '../navigation';
 import { queryClient } from '../state/queryClient';
 import { buildAccountPayload, cn, formatNumber, getAccountId, getAccountName, readStorageJSON, writeStorageJSON } from '../utils';
 
@@ -136,17 +137,7 @@ export function AdminSubscriptionsPage() {
 
   return (
     <section className="grid-page">
-      <div className="sub2-page-head">
-        <div className="sub2-page-title">
-          <strong>订阅管理</strong>
-        </div>
-        <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>订阅数</span><strong>{formatNumber(filteredItems.length)}</strong><small>订阅</small></div>
-          <div className="sub2-inline-summary-item"><span>有效订阅</span><strong>{formatNumber(activeCount)}</strong><small>已过期 {formatNumber(expiredCount)}</small></div>
-          <div className="sub2-inline-summary-item"><span>即将到期</span><strong>{formatNumber(expiringSoonCount)}</strong><small>7 天内到期</small></div>
-          <div className="sub2-inline-summary-item"><span>日累计用量</span><strong>{formatNumber(totalDailyUsed)}</strong><small>筛选订阅合计</small></div>
-        </div>
-      </div>
+      {buildPageIntro('/admin/subscriptions')}
       <TablePageLayout
         filters={
           <FilterToolbar

@@ -10,7 +10,7 @@ import { DashboardProvider } from '../state/dashboardContext';
 import { queryClient } from '../state/queryClient';
 import { AccountCenterProvider } from '../state/accountCenterContext';
 import type { RuntimeConfig } from '../types';
-import { adminNavSections, type NavItem } from '../navigation';
+import { adminNavSections, getRouteMeta, type NavItem } from '../navigation';
 
 export function DashboardLayout() {
   const locationHref = useRouterState({ select: (state) => state.location.href });
@@ -100,6 +100,8 @@ export function DashboardLayout() {
   };
   const isAdminPath = locationPathname === '/admin' || locationPathname.startsWith('/admin/');
   const holdAdminOutlet = isAdminPath && (isAuthPending || role === 'user');
+  const currentMeta = getRouteMeta(locationPathname);
+  const currentSectionTitle = role === 'user' ? '我的账户' : (isAdminPath ? '管理后台' : '我的账户');
 
   return (
     <DashboardProvider value={contextValue}>
@@ -107,7 +109,7 @@ export function DashboardLayout() {
         <aside className="sidebar">
           <div className="brand">
             <div className="brand-mark">DR</div>
-            <div className="brand-copy"><strong>DsRelay</strong><span>管理控制台</span></div>
+            <div className="brand-copy"><strong>DsRelay</strong><span>{currentSectionTitle}</span></div>
           </div>
           <nav className="sidebar-nav">
             {navSections.map((section) => (
@@ -135,7 +137,8 @@ export function DashboardLayout() {
           <header className="topbar">
             <div className="topbar-main">
               <div className="topbar-title">
-                <h1>DsRelay</h1>
+                <h1>{currentMeta?.title || '仪表盘'}</h1>
+                <p>{currentSectionTitle}</p>
               </div>
             </div>
             <div className="hero-actions">

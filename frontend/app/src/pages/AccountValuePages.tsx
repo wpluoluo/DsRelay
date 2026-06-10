@@ -4,6 +4,7 @@ import { CheckCircle2, Copy, Eye, Gift, RefreshCw, Wallet } from 'lucide-react';
 import { fetchAccountAffiliate, fetchAccountRedeem, redeemAccountCode, transferAccountAffiliateQuota } from '../api';
 import { Badge, Button, Modal, ModalActions, Select, TextInput } from '../components';
 import { ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
+import { buildPageIntro } from '../navigation';
 import { useAccountCenter } from '../state/accountCenterContext';
 import { queryClient } from '../state/queryClient';
 import type { AccountRedeemHistoryItem, AdminContentItem } from '../types';
@@ -29,7 +30,7 @@ const DEFAULT_AFFILIATE_VISIBLE_COLUMNS: AffiliateColumnKey[] = ['bucket', 'stat
 const DEFAULT_AFFILIATE_VISIBLE_FILTERS: AffiliateFilterKey[] = ['bucket', 'status'];
 
 export function AccountRedeemPage() {
-  const { account, reload } = useAccountCenter();
+  const { reload } = useAccountCenter();
   const savedState = readStorageJSON(REDEEM_STORAGE_KEY, {
     search: '',
     typeFilter: '' as RedeemTypeFilter,
@@ -68,8 +69,6 @@ export function AccountRedeemPage() {
   });
 
   const history = redeemQuery.data?.history || [];
-  const balanceCents = redeemQuery.data?.balance_cents ?? account?.balance_cents ?? 0;
-  const concurrency = redeemQuery.data?.concurrency_limit ?? account?.concurrency_limit ?? 0;
   const filteredRows = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     return history.filter((item) => {
@@ -92,9 +91,6 @@ export function AccountRedeemPage() {
     const start = (page - 1) * pageSize;
     return filteredRows.slice(start, start + pageSize);
   }, [filteredRows, page, pageSize]);
-  const positiveCount = filteredRows.filter((item) => Number(item.amount_cents || 0) > 0).length;
-  const totalRedeemedCents = filteredRows.reduce((sum, item) => sum + Number(item.amount_cents || 0), 0);
-
   useEffect(() => {
     writeStorageJSON(REDEEM_STORAGE_KEY, {
       search,
@@ -131,17 +127,7 @@ export function AccountRedeemPage() {
 
   return (
     <section className="grid-page">
-      <div className="sub2-page-head">
-        <div className="sub2-page-title">
-          <strong>兑换</strong>
-        </div>
-        <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>账户</span><strong>{account?.name || '-'}</strong><small>{account?.id || '-'}</small></div>
-          <div className="sub2-inline-summary-item"><span>余额</span><strong>{formatUsdCost(Number(balanceCents) / 100, 2)}</strong><small>当前余额</small></div>
-          <div className="sub2-inline-summary-item"><span>并发</span><strong>{formatNumber(concurrency)}</strong><small>请求并发</small></div>
-          <div className="sub2-inline-summary-item"><span>兑换记录</span><strong>{formatNumber(filteredRows.length)}</strong><small>入账 {formatNumber(positiveCount)} · 累计 {formatUsdCost(totalRedeemedCents / 100, 2)}</small></div>
-        </div>
-      </div>
+      {buildPageIntro('/redeem')}
 
       <TablePageLayout
         filters={(
@@ -310,7 +296,7 @@ export function AccountRedeemPage() {
 }
 
 export function AccountAffiliatePage() {
-  const { account, reload } = useAccountCenter();
+  const { reload } = useAccountCenter();
   const savedState = readStorageJSON(AFFILIATE_STORAGE_KEY, {
     search: '',
     bucketFilter: '' as AffiliateBucket,
@@ -416,17 +402,7 @@ export function AccountAffiliatePage() {
 
   return (
     <section className="grid-page">
-      <div className="sub2-page-head">
-        <div className="sub2-page-title">
-          <strong>邀请返利</strong>
-        </div>
-        <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>账户</span><strong>{account?.name || '-'}</strong><small>{account?.id || '-'}</small></div>
-          <div className="sub2-inline-summary-item"><span>返利比例</span><strong>{formatNumber(detail?.effective_rebate_rate_percent || 0)}%</strong><small>当前策略</small></div>
-          <div className="sub2-inline-summary-item"><span>邀请用户</span><strong>{formatNumber(detail?.aff_count || invitees.length)}</strong><small>当前记录 {formatNumber(filteredRows.length)}</small></div>
-          <div className="sub2-inline-summary-item"><span>可转余额</span><strong>{formatUsdCost(Number(detail?.aff_quota_cents || 0) / 100, 2)}</strong><small>累计 {formatUsdCost(Number(detail?.aff_history_quota_cents || 0) / 100, 2)}</small></div>
-        </div>
-      </div>
+      {buildPageIntro('/affiliate')}
 
       <TablePageLayout
         actions={(

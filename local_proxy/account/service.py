@@ -50,6 +50,18 @@ class AccountPortalService:
         account = self._require_account(account_id)
         return {"ok": True, "item": self._account_item(account)}
 
+    def update_profile(self, account_id: str, payload: dict) -> dict:
+        account = self._require_account(account_id)
+        next_payload = {}
+        for key in ("name", "email", "username", "password", "clear_password"):
+            if key in payload:
+                next_payload[key] = payload.get(key)
+        updated = self.admin_service.update_user(account["id"], next_payload)
+        item = updated.get("item") if isinstance(updated, dict) else None
+        if not isinstance(item, dict):
+            item = self._require_account(account["id"])
+        return {"ok": True, "item": self._account_item(item)}
+
     def list_groups(self, account_id: str) -> dict:
         account = self._require_account(account_id)
         allowed_ids = self._visible_group_ids(account)

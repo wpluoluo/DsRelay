@@ -16,6 +16,7 @@ import {
   ToolbarButtonRow,
   ToolsMenu,
 } from '../components/admin';
+import { buildPageIntro } from '../navigation';
 import type { AdminProviderAccount } from '../types';
 import type { Pool, PoolTestResult, RuntimeConfig } from '../types';
 import { splitLines, textFromLines, formatByteCount, formatNumber, formatTokenCount, readStorageJSON, writeStorageJSON } from '../utils';
@@ -119,7 +120,7 @@ export function AdminAccountsPage() {
       await queryClient.invalidateQueries({ queryKey: ['admin-provider-accounts'] });
     },
     onError: (error) => {
-      setAccountStatus(error instanceof Error ? error.message : '上游账号保存失败');
+      setAccountStatus(error instanceof Error ? error.message : '账号保存失败');
     },
   });
   const testMutation = useMutation({
@@ -347,11 +348,7 @@ export function AdminAccountsPage() {
 
   return (
     <section className="grid-page">
-      <div className="sub2-page-head">
-        <div className="sub2-page-title">
-          <strong>账号管理</strong>
-        </div>
-      </div>
+      {buildPageIntro('/admin/accounts')}
 
       <TablePageLayout
         filters={
@@ -365,7 +362,7 @@ export function AdminAccountsPage() {
                     <strong>{visibleFilters.has('status') ? '✓' : ''}</strong>
                   </button>
                   <button type="button" onClick={() => toggleFilter('pool')}>
-                    <span>上游账号</span>
+                    <span>账号</span>
                     <strong>{visibleFilters.has('pool') ? '✓' : ''}</strong>
                   </button>
                   <button type="button" onClick={() => toggleFilter('protocol')}>
@@ -429,11 +426,11 @@ export function AdminAccountsPage() {
                     <Download size={14} />
                   </button>
                 </ToolsMenu>
-                <Button tone="primary" data-tour="accounts-create-btn" onClick={() => openAccountForm(null)}><Plus size={15} />添加上游账号</Button>
+                <Button tone="primary" data-tour="accounts-create-btn" onClick={() => openAccountForm(null)}><Plus size={15} />添加账号</Button>
               </ToolbarButtonRow>
             }
           >
-            <SearchField value={search} placeholder="搜索上游账号 / 线路 / 模型" onChange={(value) => { setSearch(value); setPage(1); }} />
+            <SearchField value={search} placeholder="搜索账号 / 线路 / 模型" onChange={(value) => { setSearch(value); setPage(1); }} />
             {visibleFilters.has('status') ? (
               <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StatusFilter); setPage(1); }}>
                 <option value="">全部状态</option>
@@ -443,7 +440,7 @@ export function AdminAccountsPage() {
             ) : null}
             {visibleFilters.has('pool') ? (
               <Select value={poolFilter} onChange={(event) => { setPoolFilter(event.target.value); setPage(1); }}>
-                <option value="">全部上游账号</option>
+                <option value="">全部账号</option>
                 {poolOptions.map((pool) => <option key={pool} value={pool}>{pool}</option>)}
               </Select>
             ) : null}
@@ -467,7 +464,7 @@ export function AdminAccountsPage() {
           <div className="table-wrap table-scroll table-wide">
             {selectedIds.size ? (
               <div className="sub2-bulk-bar">
-                <strong>已选择 {formatNumber(selectedIds.size)} 个上游账号</strong>
+                <strong>已选择 {formatNumber(selectedIds.size)} 个账号</strong>
                 <div className="button-row">
                   <Button tone="danger" onClick={() => setBulkDeleteOpen(true)}><Trash2 size={14} />删除</Button>
                   <Button onClick={() => updateSelectedAccountsEnabled(true)}><ShieldCheck size={14} />启用</Button>
@@ -481,7 +478,7 @@ export function AdminAccountsPage() {
               <thead>
                 <tr>
                   <th><input type="checkbox" checked={allPageSelected} onChange={togglePageSelected} aria-label="选择当前页账号" /></th>
-                  <th>上游账号</th>
+                  <th>账号</th>
                   {visibleColumns.has('route') ? <th>线路</th> : null}
                   {visibleColumns.has('protocol') ? <th>协议</th> : null}
                   {visibleColumns.has('models') ? <th>模型</th> : null}
@@ -565,8 +562,8 @@ export function AdminAccountsPage() {
                 )) : (
                   <ListEmptyRow
                     colSpan={visibleColumns.size + 3}
-                    title="暂无上游账号数据"
-                    action={<Button tone="primary" data-tour="accounts-create-btn" onClick={() => openAccountForm(null)}><Plus size={14} />添加上游账号</Button>}
+                    title="暂无账号数据"
+                    action={<Button tone="primary" data-tour="accounts-create-btn" onClick={() => openAccountForm(null)}><Plus size={14} />添加账号</Button>}
                   />
                 )}
               </tbody>
@@ -599,7 +596,7 @@ export function AdminAccountsPage() {
             </div>
             <div className="admin-dialog-summary">
               <div className="admin-dialog-summary-card">
-                <span>上游账号</span>
+                <span>账号</span>
                 <strong>{inspectAccount.pool_name || '-'}</strong>
                 <small>优先级 {formatNumber(inspectAccount.priority || 0)} · 线路 {formatNumber(inspectAccount.route_count || inspectAccount.route_urls?.length || 0)}</small>
               </div>
@@ -672,7 +669,7 @@ export function AdminAccountsPage() {
 
       {bulkDeleteOpen ? (
         <Modal
-          title="批量删除上游账号"
+          title="批量删除账号"
           size="md"
           onClose={() => setBulkDeleteOpen(false)}
           footer={
@@ -684,13 +681,13 @@ export function AdminAccountsPage() {
         >
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
-              <strong>已选择 {formatNumber(selectedItems.length)} 个上游账号</strong>
+              <strong>已选择 {formatNumber(selectedItems.length)} 个账号</strong>
             </div>
             <div className="table-wrap table-scroll">
               <table>
                 <thead>
                   <tr>
-                    <th>上游账号</th>
+                    <th>账号</th>
                     <th>线路</th>
                     <th>状态</th>
                   </tr>
@@ -712,7 +709,7 @@ export function AdminAccountsPage() {
 
       {bulkEditTarget ? (
         <Modal
-          title="批量编辑上游账号"
+          title="批量编辑账号"
           size="lg"
           onClose={() => setBulkEditTarget(null)}
           footer={
@@ -724,7 +721,7 @@ export function AdminAccountsPage() {
         >
           <div className="admin-dialog">
             <div className="admin-dialog-intro">
-              <strong>{bulkTargetLabel(bulkEditTarget)} {formatNumber(getBulkTargetItems(bulkEditTarget).length)} 个上游账号</strong>
+              <strong>{bulkTargetLabel(bulkEditTarget)} {formatNumber(getBulkTargetItems(bulkEditTarget).length)} 个账号</strong>
             </div>
             <div className="admin-dialog-section">
               <div className="admin-dialog-section-head">
@@ -802,7 +799,7 @@ export function AdminAccountsPage() {
       {accountDraft ? (
         <ProviderAccountModal
           pool={accountDraft}
-          title={accountIndex == null ? '添加上游账号' : '编辑上游账号'}
+          title={accountIndex == null ? '添加账号' : '编辑账号'}
           saving={savePoolsMutation.isPending}
           testing={testMutation.isPending}
           status={accountStatus}
@@ -863,7 +860,7 @@ export function ProviderAccountModal({
         <ModalActions>
           <Button onClick={onTest} disabled={!canTest || testing}>{testing ? '测试中' : '测试线路'}</Button>
           <Button onClick={onClose}>取消</Button>
-          <Button tone="primary" disabled={saving || !String(p.name || '').trim()} onClick={onSave}>{saving ? '保存中' : '保存上游账号'}</Button>
+          <Button tone="primary" disabled={saving || !String(p.name || '').trim()} onClick={onSave}>{saving ? '保存中' : '保存账号'}</Button>
         </ModalActions>
       }
     >
@@ -873,7 +870,7 @@ export function ProviderAccountModal({
             <strong>基础信息</strong>
           </div>
           <div className="admin-dialog-grid modal-grid">
-            <Field label="上游账号名称"><TextInput value={p.name || ''} onChange={(event) => patch({ name: event.target.value })} /></Field>
+            <Field label="账号名称"><TextInput value={p.name || ''} onChange={(event) => patch({ name: event.target.value })} /></Field>
             <Field label="优先级"><NumberInput value={p.priority ?? 100} onChange={(event) => patch({ priority: Number(event.target.value || 100) })} /></Field>
             <Toggle label="启用账号" checked={p.enabled !== false} onChange={(enabled) => patch({ enabled })} />
           </div>

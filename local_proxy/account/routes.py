@@ -12,6 +12,12 @@ def register_account_routes(app, *, account_required, account_service, get_accou
     def account_me():
         return jsonify(account_service.account_me(current_account_id()))
 
+    @app.post("/account/me")
+    @account_required
+    def account_me_update():
+        payload = request.get_json(silent=True) or {}
+        return jsonify(account_service.update_profile(current_account_id(), payload))
+
     @app.get("/account/groups")
     @account_required
     def account_groups():

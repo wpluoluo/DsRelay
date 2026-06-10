@@ -14,6 +14,7 @@ import {
   ToolbarButtonRow,
   ToolsMenu,
 } from '../components/admin';
+import { buildPageIntro } from '../navigation';
 import { useAccountCenter } from '../state/accountCenterContext';
 import type { AdminAccountSubscription } from '../types';
 import { formatNumber, formatUsdCost, readStorageJSON, writeStorageJSON } from '../utils';
@@ -26,7 +27,7 @@ const DEFAULT_VISIBLE_FILTERS: SubscriptionFilterKey[] = ['status', 'group'];
 const STORAGE_KEY = 'account-subscriptions-view-state';
 
 export function AccountSubscriptionsPage() {
-  const { account, groups, subscriptions, reload } = useAccountCenter();
+  const { groups, subscriptions, reload } = useAccountCenter();
   const savedState = readStorageJSON(STORAGE_KEY, {
     search: '',
     statusFilter: '',
@@ -79,11 +80,6 @@ export function AccountSubscriptionsPage() {
     const start = (page - 1) * pageSize;
     return filteredItems.slice(start, start + pageSize);
   }, [filteredItems, page, pageSize]);
-  const activeCount = filteredItems.filter((item) => item.status === 'active').length;
-  const expiredCount = filteredItems.filter((item) => item.status === 'expired').length;
-  const expiringSoonCount = filteredItems.filter((item) => isExpiringSoon(item.expires_at)).length;
-  const totalPrice = filteredItems.reduce((sum, item) => sum + Number(item.price_cents || 0), 0);
-
   useEffect(() => {
     writeStorageJSON(STORAGE_KEY, {
       search,
@@ -115,17 +111,7 @@ export function AccountSubscriptionsPage() {
 
   return (
     <section className="grid-page">
-      <div className="sub2-page-head">
-        <div className="sub2-page-title">
-          <strong>我的订阅</strong>
-        </div>
-        <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>账户</span><strong>{account?.name || '-'}</strong><small>{account?.group_name || account?.source_type || '-'}</small></div>
-          <div className="sub2-inline-summary-item"><span>订阅总数</span><strong>{formatNumber(filteredItems.length)}</strong><small>有效 {formatNumber(activeCount)}</small></div>
-          <div className="sub2-inline-summary-item"><span>即将到期</span><strong>{formatNumber(expiringSoonCount)}</strong><small>已过期 {formatNumber(expiredCount)}</small></div>
-          <div className="sub2-inline-summary-item"><span>套餐金额</span><strong>{formatUsdCost(totalPrice / 100, 2)}</strong><small>筛选结果累计</small></div>
-        </div>
-      </div>
+      {buildPageIntro('/subscriptions')}
 
       <TablePageLayout
         filters={(

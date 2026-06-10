@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download, Eye, RefreshCw, Settings2 } from 'lucide-react';
-import { fetchAdminBilling, fetchAdminOverview, fetchAdminUsage } from '../api';
+import { fetchAdminBilling, fetchAdminUsage } from '../api';
 import { Button, Field, Modal, ModalActions, TextArea, TextInput } from '../components';
-import { ActionButton, ColumnMenu, EmptyState, FilterToolbar, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
+import { ColumnMenu, EmptyState, FilterToolbar, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
+import { buildPageIntro } from '../navigation';
 import type { AdminBillingAccountItem, AdminBillingGroupItem, AdminBillingOrderItem, AdminBillingPlanItem, AdminBillingSubscriptionItem, AdminUsageItem } from '../types';
 import { formatByteCount, formatCost, formatNumber, formatTokenCount, formatUsdCost, getAccountId, getAccountName, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
 
@@ -32,11 +33,10 @@ const SORT_OPTIONS: Array<{ value: BillingSortKey; label: string }> = [
 const TIME_PRESET_SET = new Set<TimePresetKey>(TIME_PRESET_OPTIONS.map((option) => option.value));
 const SORT_SET = new Set<BillingSortKey>(SORT_OPTIONS.map((option) => option.value));
 
-export function AdminBillingPage() {
+export function AdminUsagePage() {
   const now = new Date();
   const defaultDateTo = toDateTimeLocal(now);
   const defaultDateFrom = toDateTimeLocal(new Date(now.getTime() - 24 * 60 * 60 * 1000));
-  const overviewQuery = useQuery({ queryKey: ['admin-overview'], queryFn: fetchAdminOverview, refetchInterval: 10000 });
   const savedState = readStorageJSON(STORAGE_KEY, {
     search: '',
     statusFilter: '',
@@ -72,7 +72,6 @@ export function AdminBillingPage() {
     queryFn: () => fetchAdminBilling({ started_after: startedAfter, started_before: startedBefore }),
     refetchInterval: 10000,
   });
-  const overview = overviewQuery.data || {};
   const items = usageQuery.data?.items || [];
   const billing = billingQuery.data;
 
@@ -130,7 +129,6 @@ export function AdminBillingPage() {
     });
   }, [dateFrom, dateTo, pageSize, scope, search, sortBy, statusFilter, timePreset, visibleColumns]);
 
-  const billingSummary = billing?.summary || {};
   const billingAccounts = billing?.by_account || [];
   const billingGroups = billing?.by_group || [];
   const billingPlans = billing?.by_plan || [];
@@ -166,29 +164,6 @@ export function AdminBillingPage() {
     const start = (page - 1) * pageSize;
     return filteredAggregateRows.slice(start, start + pageSize);
   }, [filteredAggregateRows, page, pageSize, scope]);
-
-  const successCount = filteredItems.filter((item) => (item.status_code || 0) < 400 && !item.error).length;
-  const errorCount = filteredItems.length - successCount;
-  const totalInputBytes = filteredItems.reduce((sum, item) => sum + Number(item.input_bytes || 0), 0);
-  const totalOutputBytes = filteredItems.reduce((sum, item) => sum + Number(item.output_bytes || 0), 0);
-  const totalTokens = filteredItems.reduce((sum, item) => sum + Number(item.total_tokens || 0), 0);
-  const averageDuration = filteredItems.length
-    ? Math.round(filteredItems.reduce((sum, item) => sum + Number(item.duration_ms || 0), 0) / filteredItems.length)
-    : 0;
-  const cacheTaggedCount = filteredItems.filter((item) => Boolean(item.local_cache_status || item.upstream_cache_status || Number(item.cache_read_tokens || 0))).length;
-  const latestStartedAt = filteredItems.reduce<number | null>((latest, item) => {
-    const current = parseStartedAt(item.started_at);
-    if (current === null) return latest;
-    if (latest === null || current > latest) return current;
-    return latest;
-  }, null);
-  const summaryRequestCount = Number(billingSummary.request_count || 0);
-  const summaryErrorCount = Number(billingSummary.error_count || 0);
-  const summaryTotalTokens = Number(billingSummary.total_tokens || 0);
-  const summaryInputBytes = Number(billingSummary.input_bytes || 0);
-  const summaryOutputBytes = Number(billingSummary.output_bytes || 0);
-  const summaryCoveredRequests = Number(billingSummary.covered_request_count || 0);
-  const summaryActiveSubscriptions = Number(billingSummary.active_subscription_count || 0);
 
   function toggleColumn(key: BillingColumnKey) {
     setVisibleColumns((current) => {
@@ -245,27 +220,14 @@ export function AdminBillingPage() {
 
   return (
     <section className="grid-page">
-      <div className="sub2-page-head">
-        <div className="sub2-page-title">
-          <strong>使用记录</strong>
-        </div>
-        <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>请求总数</span><strong>{formatNumber(summaryRequestCount)}</strong><small>当前页 {formatNumber(filteredRowsForPager.length)}</small></div>
-          <div className="sub2-inline-summary-item"><span>成功 / 异常</span><strong>{formatNumber(Math.max(0, summaryRequestCount - summaryErrorCount))} / {formatNumber(summaryErrorCount)}</strong><small>{TIME_PRESET_OPTIONS.find((option) => option.value === timePreset)?.label || '全部时间'}</small></div>
-          <div className="sub2-inline-summary-item"><span>总 Token</span><strong>{formatTokenCount(summaryTotalTokens)}</strong><small>当前筛选 {formatTokenCount(totalTokens)}</small></div>
-          <div className="sub2-inline-summary-item"><span>标准成本</span><strong>{formatUsdCost(billingSummary.total_cost || 0)}</strong><small>实际计费 {formatUsdCost(billingSummary.actual_cost || 0)}</small></div>
-          <div className="sub2-inline-summary-item"><span>用户计费</span><strong>{formatUsdCost(billingSummary.account_cost || 0)}</strong><small>覆盖请求 {formatNumber(summaryCoveredRequests)}</small></div>
-          <div className="sub2-inline-summary-item"><span>活跃订阅</span><strong>{formatNumber(summaryActiveSubscriptions)}</strong><small>总用户 {formatNumber(overview.account_count || 0)}</small></div>
-        </div>
-      </div>
+      {buildPageIntro('/admin/usage')}
 
       <TablePageLayout
         filters={
           <FilterToolbar
             right={
               <ToolbarButtonRow>
-                <ActionButton onClick={() => { void overviewQuery.refetch(); void usageQuery.refetch(); }}><RefreshCw size={15} />刷新</ActionButton>
-                <ActionButton onClick={() => { void billingQuery.refetch(); }} tone="ghost">账单聚合</ActionButton>
+                <Button onClick={() => { void usageQuery.refetch(); void billingQuery.refetch(); }}><RefreshCw size={15} />刷新</Button>
                 <ColumnMenu
                   label="列设置"
                   items={[

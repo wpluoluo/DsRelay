@@ -4,6 +4,7 @@ import { Ban, Eye, Pencil, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
 import { fetchAdminGroups, fetchAdminSubscriptionPlans, saveAdminSubscriptionPlan } from '../api';
 import { Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
 import { ActionButton, ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
+import { buildPageIntro } from '../navigation';
 import { queryClient } from '../state/queryClient';
 import { cn, formatNumber, maskEmpty, readStorageJSON, writeStorageJSON } from '../utils';
 
@@ -96,17 +97,7 @@ export function AdminSubscriptionPlansPage() {
 
   return (
     <section className="grid-page">
-      <div className="sub2-page-head">
-        <div className="sub2-page-title">
-          <strong>订阅计划</strong>
-        </div>
-        <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>计划数</span><strong>{formatNumber(filteredItems.length)}</strong><small>计划</small></div>
-          <div className="sub2-inline-summary-item"><span>启用计划</span><strong>{formatNumber(enabledCount)}</strong><small>{filteredItems.length ? `${Math.round((enabledCount / filteredItems.length) * 100)}%` : '0%'}</small></div>
-          <div className="sub2-inline-summary-item"><span>基础价格</span><strong>{formatNumber(totalPrice)}</strong><small>筛选计划基础价合计</small></div>
-          <div className="sub2-inline-summary-item"><span>最长有效期</span><strong>{formatNumber(maxValidity)} 天</strong><small>绑定分组 {formatNumber(groupedCount)}</small></div>
-        </div>
-      </div>
+      {buildPageIntro('/admin/orders/plans')}
       <TablePageLayout
         filters={
           <FilterToolbar

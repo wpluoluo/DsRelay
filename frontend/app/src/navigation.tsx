@@ -173,7 +173,7 @@ export function buildPageIntro(path: string): ReactNode {
   const current = getRouteMeta(path);
   if (!current) return null;
   return (
-    <div className="sub2-page-head">
+    <div className="sub2-page-head sub2-page-head-compact">
       <div className="sub2-page-title">
         <strong>{current.title}</strong>
       </div>

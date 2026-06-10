@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download, RefreshCw } from 'lucide-react';
-import { fetchAccountUsage } from '../api';
+import { fetchAccountUsage, fetchAccountUsageStats } from '../api';
 import { Button, Select, TextInput } from '../components';
 import { ColumnMenu, FilterToolbar, Pager, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
 import { RequestRow, type RequestTableColumnKey } from '../features/requests/RequestsView';
+import { buildPageIntro } from '../navigation';
 import { useAccountCenter } from '../state/accountCenterContext';
 import type { RequestEntry } from '../types';
 import { formatMs, formatNumber, formatTokenCount, formatUsdCost, readStorageJSON, writeStorageJSON } from '../utils';
@@ -39,6 +40,13 @@ export function AccountUsagePage() {
   const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
   const [visibleColumns, setVisibleColumns] = useState<Set<RequestTableColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
   const [visibleFilters, setVisibleFilters] = useState<Set<UsageFilterKey>>(new Set(savedState.visibleFilters || DEFAULT_VISIBLE_FILTERS));
+  const hasNarrowFilters = Boolean(filters.apiKeyId || (filters.model || '').trim() || (filters.status && filters.status !== 'all'));
+  const statsQuery = useQuery({
+    queryKey: ['account-usage-stats', filters.start, filters.end],
+    queryFn: () => fetchAccountUsageStats({ started_after: filters.start || undefined, started_before: filters.end || undefined }),
+    refetchInterval: 10000,
+    retry: false,
+  });
 
   const rows = useMemo<RequestEntry[]>(() => {
     const items = usageQuery.data?.items || [];
@@ -80,12 +88,13 @@ export function AccountUsagePage() {
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
 
   const stats = useMemo(() => {
-    return rows.reduce(
+    const local = rows.reduce(
       (acc, row) => {
         const prompt = Number(row.prompt_tokens || 0);
         const completion = Number(row.completion_tokens || 0);
         const total = Number(row.total_tokens || 0) || prompt + completion;
         acc.requests += 1;
+        if (row.error || Number(row.status_code || 0) >= 400) acc.errors += 1;
         acc.tokens += total;
         acc.promptTokens += prompt;
         acc.completionTokens += completion;
@@ -96,9 +105,23 @@ export function AccountUsagePage() {
         acc.totalCost += Number(row.total_cost || 0) || 0;
         return acc;
       },
-      { requests: 0, tokens: 0, promptTokens: 0, completionTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, duration: 0, actualCost: 0, totalCost: 0 },
+      { requests: 0, errors: 0, tokens: 0, promptTokens: 0, completionTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, duration: 0, actualCost: 0, totalCost: 0 },
     );
-  }, [rows]);
+    if (hasNarrowFilters) return local;
+    const summary = statsQuery.data?.summary || {};
+    return {
+      requests: Number(summary.request_count || local.requests || 0),
+      errors: Number(summary.error_count || 0),
+      tokens: Number(summary.total_tokens || 0),
+      promptTokens: Number(summary.prompt_tokens || 0),
+      completionTokens: Number(summary.completion_tokens || 0),
+      cacheReadTokens: Number(summary.cache_read_tokens || 0),
+      cacheWriteTokens: Number(summary.cache_write_tokens || 0),
+      duration: local.duration,
+      actualCost: Number(summary.actual_cost || 0),
+      totalCost: Number(summary.total_cost || 0),
+    };
+  }, [hasNarrowFilters, rows, statsQuery.data?.summary]);
 
   const averageDuration = stats.requests ? Math.round(stats.duration / stats.requests) : 0;
 
@@ -161,15 +184,32 @@ export function AccountUsagePage() {
 
   return (
     <section className="grid-page">
-      <div className="sub2-page-head">
-        <div className="sub2-page-title">
-          <strong>使用记录</strong>
+      {buildPageIntro('/usage')}
+      <div className="sub2-inline-summary">
+        <div className="sub2-inline-summary-item">
+          <span>请求数</span>
+          <strong>{formatNumber(stats.requests)}</strong>
+          <small>异常 {formatNumber(stats.errors)}</small>
         </div>
-        <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>账户</span><strong>{account?.name || '-'}</strong><small>{account?.group_name || account?.source_type || '-'}</small></div>
-          <div className="sub2-inline-summary-item"><span>记录数</span><strong>{formatNumber(stats.requests)}</strong><small>记录</small></div>
-          <div className="sub2-inline-summary-item"><span>总 Token</span><strong>{formatTokenCount(stats.tokens)}</strong><small>请求 {formatTokenCount(stats.promptTokens)} / 回复 {formatTokenCount(stats.completionTokens)}</small></div>
-          <div className="sub2-inline-summary-item"><span>总消费</span><strong>{formatUsdCost(stats.actualCost)}</strong><small>标准 {formatUsdCost(stats.totalCost)} / 平均耗时 {formatMs(averageDuration)}</small></div>
+        <div className="sub2-inline-summary-item">
+          <span>总 Token</span>
+          <strong>{formatTokenCount(stats.tokens)}</strong>
+          <small>输入 {formatTokenCount(stats.promptTokens)} / 输出 {formatTokenCount(stats.completionTokens)}</small>
+        </div>
+        <div className="sub2-inline-summary-item">
+          <span>缓存 Token</span>
+          <strong>{formatTokenCount(stats.cacheReadTokens)}</strong>
+          <small>写入 {formatTokenCount(stats.cacheWriteTokens)}</small>
+        </div>
+        <div className="sub2-inline-summary-item">
+          <span>消费金额</span>
+          <strong>{formatUsdCost(stats.actualCost)}</strong>
+          <small>标准 {formatUsdCost(stats.totalCost)}</small>
+        </div>
+        <div className="sub2-inline-summary-item">
+          <span>平均耗时</span>
+          <strong>{formatMs(averageDuration)}</strong>
+          <small>{hasNarrowFilters ? '当前筛选' : '当前时间范围'}</small>
         </div>
       </div>
 
@@ -178,7 +218,7 @@ export function AccountUsagePage() {
           <FilterToolbar
             right={(
               <ToolbarButtonRow>
-                <Button onClick={() => void usageQuery.refetch()}><RefreshCw size={15} />刷新</Button>
+                <Button onClick={() => { void usageQuery.refetch(); void statsQuery.refetch(); }}><RefreshCw size={15} />刷新</Button>
                 <ToolsMenu label="筛选设置" icon={false}>
                   <button type="button" onClick={() => toggleFilter('apiKeyId')}>
                     <span>API Key</span>
@@ -253,15 +293,6 @@ export function AccountUsagePage() {
         table={(
           <div className="table-wrap table-scroll table-requests">
             <table>
-              <colgroup>
-                <col className="col-req-time" />
-                <col className="col-req-source" />
-                <col className="col-req-route" />
-                <col className="col-req-model" />
-                <col className="col-req-metrics" />
-                <col className="col-req-repairs" />
-                <col className="col-req-status" />
-              </colgroup>
               <thead>
                 <tr>
                   <th>时间</th>

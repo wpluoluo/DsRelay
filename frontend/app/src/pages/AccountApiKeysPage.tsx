@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Copy, Edit, Eye, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { Copy, Edit, Eye, ExternalLink, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { createAccountApiKey, deleteAccountApiKey, fetchAccountUsage, setAccountApiKeyEnabled, updateAccountApiKey } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextInput } from '../components';
 import {
@@ -15,9 +15,10 @@ import {
   ToolbarButtonRow,
   ToolsMenu,
 } from '../components/admin';
+import { buildPageIntro } from '../navigation';
 import { queryClient } from '../state/queryClient';
 import { useAccountCenter } from '../state/accountCenterContext';
-import type { AdminApiKey, AdminGroup } from '../types';
+import type { AdminApiKey, AdminChannel, AdminGroup } from '../types';
 import { copyTextToClipboard, formatNumber, formatTokenCount, formatUsdCost, readStorageJSON, writeStorageJSON } from '../utils';
 
 type KeyDraft = {
@@ -31,13 +32,17 @@ type StatusFilter = '' | 'enabled' | 'disabled';
 type SubscriptionFilter = '' | 'active' | 'inactive';
 type ColumnKey = 'group' | 'subscription' | 'preview' | 'usage' | 'lastUsed' | 'status';
 type FilterKey = 'group' | 'status' | 'subscription';
+type UseKeyClient = 'codex' | 'claude' | 'gemini' | 'opencode';
+type UseKeyShell = 'unix' | 'powershell' | 'windows';
+type UseKeyFile = { id: string; path: string; content: string; hint?: string };
 
 const DEFAULT_VISIBLE_COLUMNS: ColumnKey[] = ['group', 'subscription', 'preview', 'usage', 'lastUsed', 'status'];
 const DEFAULT_VISIBLE_FILTERS: FilterKey[] = ['group', 'status', 'subscription'];
 const STORAGE_KEY = 'account-api-keys-view-state';
+const RAW_KEY_STORAGE = 'account-api-key-raw-secrets';
 
 export function AccountApiKeysPage() {
-  const { account, groups, apiKeys, reload } = useAccountCenter();
+  const { account, groups, apiKeys, reload, visibleAvailableChannels } = useAccountCenter();
   const usageQuery = useQuery({ queryKey: ['account-usage'], queryFn: () => fetchAccountUsage(), refetchInterval: 10000, retry: false });
   const savedState = readStorageJSON(STORAGE_KEY, {
     search: '',
@@ -51,12 +56,17 @@ export function AccountApiKeysPage() {
 
   const [draft, setDraft] = useState<KeyDraft | null>(null);
   const [generatedKey, setGeneratedKey] = useState('');
+  const [generatedKeyId, setGeneratedKeyId] = useState('');
   const [copiedKeyId, setCopiedKeyId] = useState('');
   const [search, setSearch] = useState(savedState.search);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(savedState.statusFilter || '');
   const [subscriptionFilter, setSubscriptionFilter] = useState<SubscriptionFilter>(savedState.subscriptionFilter || '');
   const [groupFilter, setGroupFilter] = useState(savedState.groupFilter || '');
   const [inspectKey, setInspectKey] = useState<AdminApiKey | null>(null);
+  const [useKeyTarget, setUseKeyTarget] = useState<AdminApiKey | null>(null);
+  const [useKeyClient, setUseKeyClient] = useState<UseKeyClient>('codex');
+  const [useKeyShell, setUseKeyShell] = useState<UseKeyShell>('powershell');
+  const [copiedSnippetId, setCopiedSnippetId] = useState('');
   const [toggleTarget, setToggleTarget] = useState<AdminApiKey | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminApiKey | null>(null);
   const [page, setPage] = useState(1);
@@ -67,6 +77,10 @@ export function AccountApiKeysPage() {
   const createMutation = useMutation({
     mutationFn: createAccountApiKey,
     onSuccess: async (result) => {
+      if (result.item?.id && result.generated_key) {
+        storeRawKeySecret(result.item.id, result.generated_key);
+      }
+      setGeneratedKeyId(result.item?.id || '');
       setGeneratedKey(result.generated_key || '');
       setDraft(null);
       await refreshKeyData();
@@ -123,10 +137,11 @@ export function AccountApiKeysPage() {
 
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   const pagedRows = rows.slice((page - 1) * pageSize, page * pageSize);
-  const activeRows = rows.filter((item) => item.enabled !== false);
-  const coveredRows = rows.filter((item) => item.subscription_active);
-  const uncoveredRows = rows.filter((item) => !item.subscription_active);
-  const selectedUserKeys = apiKeys.length;
+  const apiBaseUrl = useMemo(() => {
+    if (typeof window === 'undefined') return '/v1';
+    return `${window.location.origin.replace(/\/+$/, '')}/v1`;
+  }, []);
+  const defaultModel = useMemo(() => getDefaultAccountModel(visibleAvailableChannels), [visibleAvailableChannels]);
   const usageByKey = useMemo(() => {
     const usage = new Map<string, { requests: number; tokens: number; cost: number; last_used_at: string }>();
     for (const item of usageQuery.data?.items || []) {
@@ -155,6 +170,13 @@ export function AccountApiKeysPage() {
       visibleFilters: Array.from(visibleFilters),
     });
   }, [groupFilter, pageSize, search, statusFilter, subscriptionFilter, visibleColumns, visibleFilters]);
+
+  useEffect(() => {
+    if (!useKeyTarget) return;
+    setUseKeyClient('codex');
+    setUseKeyShell('powershell');
+    setCopiedSnippetId('');
+  }, [useKeyTarget?.id]);
 
   function openCreate() {
     setDraft({ group_id: defaultKeyGroupId(account, groups), name: '', enabled: true });
@@ -216,21 +238,39 @@ export function AccountApiKeysPage() {
     } catch {}
   }
 
+  async function copyUseKeyContent(file: UseKeyFile) {
+    const ok = await copyTextToClipboard(file.content);
+    if (!ok) return;
+    setCopiedSnippetId(file.id);
+    window.setTimeout(() => setCopiedSnippetId((current) => (current === file.id ? '' : current)), 1500);
+  }
+
+  const currentUseKeySecret = useMemo(
+    () => (useKeyTarget ? readRawKeySecret(useKeyTarget.id) : ''),
+    [useKeyTarget],
+  );
+  const useKeyFiles = useMemo(
+    () => buildUseKeyFiles({ client: useKeyClient, shell: useKeyShell, apiBaseUrl, apiKey: currentUseKeySecret, defaultModel }),
+    [apiBaseUrl, currentUseKeySecret, defaultModel, useKeyClient, useKeyShell],
+  );
+
   return (
     <section className="grid-page">
-      <div className="sub2-page-head">
-        <div className="sub2-page-title">
-          <strong>API 密钥</strong>
-        </div>
-        <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>账户</span><strong>{account?.name || '-'}</strong><small>{account?.group_name || account?.source_type || '-'}</small></div>
-          <div className="sub2-inline-summary-item"><span>Key 数量</span><strong>{formatNumber(selectedUserKeys)}</strong><small>当前筛选 {formatNumber(rows.length)}</small></div>
-          <div className="sub2-inline-summary-item"><span>启用 Key</span><strong>{formatNumber(activeRows.length)}</strong><small>停用 {formatNumber(rows.length - activeRows.length)}</small></div>
-          <div className="sub2-inline-summary-item"><span>订阅覆盖</span><strong>{formatNumber(coveredRows.length)}</strong><small>未覆盖 {formatNumber(uncoveredRows.length)}</small></div>
-        </div>
-      </div>
+      {buildPageIntro('/keys')}
 
       <TablePageLayout
+        actions={(
+          <div className="endpoint-strip">
+            <span>接口入口</span>
+            <code title={apiBaseUrl}>{apiBaseUrl}</code>
+            <button type="button" onClick={() => copyText(apiBaseUrl)} aria-label="复制接口入口">
+              <Copy size={14} />
+            </button>
+            <a href={apiBaseUrl} target="_blank" rel="noreferrer" aria-label="打开接口入口">
+              <ExternalLink size={14} />
+            </a>
+          </div>
+        )}
         filters={(
           <FilterToolbar
             right={
@@ -361,6 +401,7 @@ export function AccountApiKeysPage() {
                     ) : null}
                     <td className="row-actions-cell">
                       <RowActions>
+                        <RowAction icon={Copy} label="接入" onClick={() => setUseKeyTarget(item)} />
                         <RowAction icon={Eye} label="详情" onClick={() => setInspectKey(item)} />
                         <RowAction icon={Edit} label="编辑" onClick={() => openEdit(item)} />
                         <ToolsMenu label="更多">
@@ -401,6 +442,16 @@ export function AccountApiKeysPage() {
           footer={
             <ModalActions>
               <Button onClick={() => setGeneratedKey('')}>关闭</Button>
+              <Button
+                onClick={() => {
+                  const latest = apiKeys.find((item) => item.id === generatedKeyId) || null;
+                  setGeneratedKey('');
+                  setGeneratedKeyId('');
+                  setUseKeyTarget(latest || null);
+                }}
+              >
+                接入方式
+              </Button>
               <Button tone="primary" onClick={() => copyText(generatedKey)}>复制 Key</Button>
             </ModalActions>
           }
@@ -413,6 +464,73 @@ export function AccountApiKeysPage() {
                 <Button onClick={() => copyText(generatedKey)}>复制</Button>
               </div>
             </div>
+          </div>
+        </Modal>
+      ) : null}
+
+      {useKeyTarget ? (
+        <Modal
+          title="接入方式"
+          size="lg"
+          onClose={() => setUseKeyTarget(null)}
+          footer={<ModalActions><Button onClick={() => setUseKeyTarget(null)}>关闭</Button></ModalActions>}
+        >
+          <div className="use-key-modal">
+            <div className="admin-dialog-intro">
+              <strong>{useKeyTarget.name}</strong>
+            </div>
+            <div className="admin-dialog-summary">
+              <div className="admin-dialog-summary-card">
+                <span>接口入口</span>
+                <strong title={apiBaseUrl}>{apiBaseUrl}</strong>
+                <small>默认模型 {defaultModel}</small>
+              </div>
+              <div className="admin-dialog-summary-card">
+                <span>Key 分组</span>
+                <strong>{keyGroupName(useKeyTarget, groups)}</strong>
+                <small>{keyGroupId(useKeyTarget) || '-'}</small>
+              </div>
+              <div className="admin-dialog-summary-card">
+                <span>原始 Key</span>
+                <strong>{currentUseKeySecret ? '当前浏览器已保存' : '当前浏览器未保存'}</strong>
+                <small>{useKeyTarget.key_preview || '-'}</small>
+              </div>
+            </div>
+
+            {!currentUseKeySecret ? (
+              <div className="admin-dialog-note">当前浏览器没有这条 Key 的原始值。新建 Key 后可立即复制接入配置。</div>
+            ) : (
+              <>
+                <div className="sub2-toolbar-row">
+                  <Button tone={useKeyClient === 'codex' ? 'primary' : 'ghost'} onClick={() => setUseKeyClient('codex')}>Codex</Button>
+                  <Button tone={useKeyClient === 'claude' ? 'primary' : 'ghost'} onClick={() => setUseKeyClient('claude')}>Claude Code</Button>
+                  <Button tone={useKeyClient === 'gemini' ? 'primary' : 'ghost'} onClick={() => setUseKeyClient('gemini')}>Gemini CLI</Button>
+                  <Button tone={useKeyClient === 'opencode' ? 'primary' : 'ghost'} onClick={() => setUseKeyClient('opencode')}>OpenCode</Button>
+                </div>
+
+                {useKeyClient !== 'opencode' ? (
+                  <div className="sub2-toolbar-row">
+                    <Button tone={useKeyShell === 'unix' ? 'primary' : 'ghost'} onClick={() => setUseKeyShell('unix')}>macOS / Linux</Button>
+                    <Button tone={useKeyShell === 'powershell' ? 'primary' : 'ghost'} onClick={() => setUseKeyShell('powershell')}>PowerShell</Button>
+                    <Button tone={useKeyShell === 'windows' ? 'primary' : 'ghost'} onClick={() => setUseKeyShell('windows')}>Windows</Button>
+                  </div>
+                ) : null}
+
+                {useKeyFiles.map((file) => (
+                  <div key={file.id} className="code-block">
+                    <div className="code-block-head">
+                      <span>{file.path}</span>
+                      <button type="button" className={copiedSnippetId === file.id ? 'copied' : ''} onClick={() => void copyUseKeyContent(file)}>
+                        <Copy size={14} />
+                        <span>{copiedSnippetId === file.id ? '已复制' : '复制'}</span>
+                      </button>
+                    </div>
+                    <pre><code>{file.content}</code></pre>
+                    {file.hint ? <div className="admin-dialog-note">{file.hint}</div> : null}
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         </Modal>
       ) : null}
@@ -572,4 +690,144 @@ function defaultKeyGroupId(account: { group_id?: string; group_ids?: string[]; a
   const userGroups = account?.group_ids || (account?.group_id ? [account.group_id] : []);
   const firstUsable = userGroups.find((groupId) => options.some((group) => group.id === groupId));
   return firstUsable || '';
+}
+
+function readRawKeyMap(): Record<string, string> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.sessionStorage.getItem(RAW_KEY_STORAGE);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function storeRawKeySecret(keyId: string, rawKey: string) {
+  if (typeof window === 'undefined' || !keyId || !rawKey) return;
+  const next = { ...readRawKeyMap(), [keyId]: rawKey };
+  window.sessionStorage.setItem(RAW_KEY_STORAGE, JSON.stringify(next));
+}
+
+function readRawKeySecret(keyId: string): string {
+  return readRawKeyMap()[keyId] || '';
+}
+
+function getDefaultAccountModel(channels: AdminChannel[]): string {
+  for (const channel of channels) {
+    for (const pricing of channel.model_pricing || []) {
+      const model = String(pricing.model || '').trim();
+      if (model) return model;
+    }
+  }
+  return 'deepseek-v4-flash';
+}
+
+function buildUseKeyFiles({
+  client,
+  shell,
+  apiBaseUrl,
+  apiKey,
+  defaultModel,
+}: {
+  client: UseKeyClient;
+  shell: UseKeyShell;
+  apiBaseUrl: string;
+  apiKey: string;
+  defaultModel: string;
+}): UseKeyFile[] {
+  const codexDir = shell === 'unix' ? '~/.codex' : '%USERPROFILE%\\.codex';
+  const joinPath = (base: string, name: string) => (shell === 'unix' ? `${base}/${name}` : `${base}\\${name}`);
+  const openCodeConfig = JSON.stringify(
+    {
+      provider: {
+        openai: {
+          options: {
+            baseURL: apiBaseUrl,
+            apiKey,
+          },
+          models: {
+            [defaultModel]: {
+              name: defaultModel,
+              limit: {
+                context: 1000000,
+                output: 128000,
+              },
+              options: {
+                store: false,
+              },
+            },
+          },
+        },
+      },
+      $schema: 'https://opencode.ai/config.json',
+    },
+    null,
+    2,
+  );
+  if (client === 'codex') {
+    return [
+      {
+        id: 'codex-config',
+        path: joinPath(codexDir, 'config.toml'),
+        content: `model_provider = "OpenAI"
+model = "${defaultModel}"
+review_model = "${defaultModel}"
+disable_response_storage = true
+network_access = "enabled"
+
+[model_providers.OpenAI]
+name = "OpenAI"
+base_url = "${apiBaseUrl}"
+wire_api = "responses"
+requires_openai_auth = true`,
+      },
+      {
+        id: 'codex-auth',
+        path: joinPath(codexDir, 'auth.json'),
+        content: `{
+  "OPENAI_API_KEY": "${apiKey}"
+}`,
+      },
+    ];
+  }
+  if (client === 'claude') {
+    const block =
+      shell === 'unix'
+        ? `export ANTHROPIC_BASE_URL="${apiBaseUrl}"
+export ANTHROPIC_AUTH_TOKEN="${apiKey}"
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`
+        : shell === 'windows'
+          ? `set ANTHROPIC_BASE_URL=${apiBaseUrl}
+set ANTHROPIC_AUTH_TOKEN=${apiKey}
+set CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`
+          : `$env:ANTHROPIC_BASE_URL="${apiBaseUrl}"
+$env:ANTHROPIC_AUTH_TOKEN="${apiKey}"
+$env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`;
+    return [{ id: 'claude-env', path: shell === 'unix' ? 'Terminal' : shell === 'windows' ? 'Command Prompt' : 'PowerShell', content: block }];
+  }
+  if (client === 'gemini') {
+    const block =
+      shell === 'unix'
+        ? `export GOOGLE_GEMINI_BASE_URL="${apiBaseUrl}"
+export GEMINI_API_KEY="${apiKey}"
+export GEMINI_MODEL="${defaultModel}"`
+        : shell === 'windows'
+          ? `set GOOGLE_GEMINI_BASE_URL=${apiBaseUrl}
+set GEMINI_API_KEY=${apiKey}
+set GEMINI_MODEL=${defaultModel}`
+          : `$env:GOOGLE_GEMINI_BASE_URL="${apiBaseUrl}"
+$env:GEMINI_API_KEY="${apiKey}"
+$env:GEMINI_MODEL="${defaultModel}"`;
+    return [{ id: 'gemini-env', path: shell === 'unix' ? 'Terminal' : shell === 'windows' ? 'Command Prompt' : 'PowerShell', content: block }];
+  }
+  return [
+    {
+      id: 'opencode-config',
+      path: 'opencode.json',
+      content: openCodeConfig,
+      hint: '把文件放到当前工作目录或 OpenCode 配置目录。',
+    },
+  ];
 }

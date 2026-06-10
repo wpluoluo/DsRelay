@@ -522,7 +522,7 @@ export function AdminChannelsMonitorPage() {
       await queryClient.invalidateQueries({ queryKey: ['admin-provider-accounts'] });
     },
     onError: (error) => {
-      setAccountStatus(error instanceof Error ? error.message : '上游账号保存失败');
+      setAccountStatus(error instanceof Error ? error.message : '账号保存失败');
     },
   });
   const platformOptions = useMemo(
@@ -655,7 +655,7 @@ export function AdminChannelsMonitorPage() {
                     { key: 'platform', label: '平台', checked: visibleColumns.has('platform'), onToggle: () => toggleColumn('platform') },
                     { key: 'groups', label: '分组 / 套餐', checked: visibleColumns.has('groups'), onToggle: () => toggleColumn('groups') },
                     { key: 'pricing', label: '价格规则', checked: visibleColumns.has('pricing'), onToggle: () => toggleColumn('pricing') },
-                    { key: 'accounts', label: '上游能力', checked: visibleColumns.has('accounts'), onToggle: () => toggleColumn('accounts') },
+                    { key: 'accounts', label: '账号能力', checked: visibleColumns.has('accounts'), onToggle: () => toggleColumn('accounts') },
                     { key: 'requests', label: '请求 / 异常', checked: visibleColumns.has('requests'), onToggle: () => toggleColumn('requests') },
                     { key: 'status', label: '状态', checked: visibleColumns.has('status'), onToggle: () => toggleColumn('status') },
                   ]}
@@ -671,7 +671,7 @@ export function AdminChannelsMonitorPage() {
                     <span>切换 50 / 页</span>
                   </button>
                 </ToolsMenu>
-                <Button tone="primary" onClick={openCreateAccount}><Plus size={15} />添加上游账号</Button>
+                <Button tone="primary" onClick={openCreateAccount}><Plus size={15} />添加账号</Button>
               </ToolbarButtonRow>
             }
           >
@@ -700,7 +700,7 @@ export function AdminChannelsMonitorPage() {
                   {visibleColumns.has('platform') ? <th>平台</th> : null}
                   {visibleColumns.has('groups') ? <th>分组 / 套餐</th> : null}
                   {visibleColumns.has('pricing') ? <th>价格规则</th> : null}
-                  {visibleColumns.has('accounts') ? <th>上游能力</th> : null}
+                  {visibleColumns.has('accounts') ? <th>账号能力</th> : null}
                   {visibleColumns.has('requests') ? <th>请求 / 异常</th> : null}
                   {visibleColumns.has('status') ? <th>状态</th> : null}
                   <th>操作</th>
@@ -757,7 +757,7 @@ export function AdminChannelsMonitorPage() {
                     </td>
                   </tr>
                 )) : (
-                  <ListEmptyRow colSpan={visibleColumns.size + 2} title="暂无渠道监控数据" action={<Button tone="primary" onClick={openCreateAccount}>添加上游账号</Button>} />
+                  <ListEmptyRow colSpan={visibleColumns.size + 2} title="暂无渠道监控数据" action={<Button tone="primary" onClick={openCreateAccount}>添加账号</Button>} />
                 )}
               </tbody>
             </table>
@@ -797,7 +797,7 @@ export function AdminChannelsMonitorPage() {
       {accountDraft ? (
         <ProviderAccountModal
           pool={accountDraft}
-          title="添加上游账号"
+          title="添加账号"
           saving={savePoolsMutation.isPending}
           testing={false}
           status={accountStatus}

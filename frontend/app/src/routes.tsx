@@ -1,7 +1,7 @@
 import { createHashHistory, createRootRoute, createRoute, createRouter, redirect } from '@tanstack/react-router';
 import { DashboardLayout } from './layout/DashboardLayout';
 import { AdminAccountsPage } from './pages/AdminAccountsPage';
-import { AdminBillingPage } from './pages/AdminBillingPage';
+import { AdminUsagePage } from './pages/AdminUsagePage';
 import { AdminChannelsMonitorPage, AdminChannelsPricingPage } from './pages/AdminChannelsPage';
 import {
   AdminAffiliateInvitesPage,
@@ -37,7 +37,7 @@ function AdminDashboardRoute() {
 }
 
 function AdminUsageRoute() {
-  return <AdminBillingPage />;
+  return <AdminUsagePage />;
 }
 
 function AccountKeysRoute() {

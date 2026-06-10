@@ -4,6 +4,7 @@ import { CreditCard, Eye, RefreshCw } from 'lucide-react';
 import { createAccountOrder } from '../api';
 import { Badge, Button, Field, Modal, ModalActions, Select, TextArea, TextInput } from '../components';
 import { ColumnMenu, FilterToolbar, ListEmptyRow, Pager, RowAction, RowActions, SearchField, TablePageLayout, ToolbarButtonRow, ToolsMenu } from '../components/admin';
+import { buildPageIntro } from '../navigation';
 import { queryClient } from '../state/queryClient';
 import { useAccountCenter } from '../state/accountCenterContext';
 import type { AdminPaymentOrder, AdminSubscriptionPlan } from '../types';
@@ -138,11 +139,6 @@ export function PurchaseCenterPage() {
 
   const selectedPlan = visiblePlans.find((item) => item.id === draft.plan_id);
   const selectedChannel = visibleChannels.find((item) => item.id === draft.channel_id);
-  const paidOrders = filteredOrders.filter((item) => item.status === 'paid').length;
-  const pendingOrders = filteredOrders.filter((item) => item.status === 'pending').length;
-  const failedOrders = filteredOrders.filter((item) => item.status === 'failed').length;
-  const totalOrderAmount = filteredOrders.reduce((sum, item) => sum + Number(item.final_price_cents ?? item.amount_cents ?? 0), 0);
-
   const planTotalPages = Math.max(1, Math.ceil(filteredPlans.length / planPageSize));
   const pagedPlans = filteredPlans.slice((planPage - 1) * planPageSize, planPage * planPageSize);
   const orderTotalPages = Math.max(1, Math.ceil(filteredOrders.length / orderPageSize));
@@ -197,18 +193,7 @@ export function PurchaseCenterPage() {
 
   return (
     <section className="grid-page">
-      <div className="sub2-page-head">
-        <div className="sub2-page-title">
-          <strong>充值/订阅</strong>
-        </div>
-        <div className="sub2-inline-summary">
-          <div className="sub2-inline-summary-item"><span>账户</span><strong>{account?.name || '-'}</strong><small>{account?.group_name || account?.source_type || '-'}</small></div>
-          <div className="sub2-inline-summary-item"><span>可用计划</span><strong>{formatNumber(visiblePlans.length)}</strong><small>当前筛选 {formatNumber(filteredPlans.length)}</small></div>
-          <div className="sub2-inline-summary-item"><span>有效订阅</span><strong>{formatNumber(activeSubscriptions.length)}</strong><small>可续费分组 {formatNumber(activeGroupIds.size)}</small></div>
-          <div className="sub2-inline-summary-item"><span>支付通道</span><strong>{formatNumber(visibleChannels.length)}</strong><small>待支付 {formatNumber(pendingOrders)}</small></div>
-          <div className="sub2-inline-summary-item"><span>订单金额</span><strong>{formatUsdCost(totalOrderAmount / 100, 2)}</strong><small>已支付 {formatNumber(paidOrders)} / 失败 {formatNumber(failedOrders)}</small></div>
-        </div>
-      </div>
+      {buildPageIntro('/purchase')}
 
       <TablePageLayout
         actions={(

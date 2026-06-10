@@ -317,6 +317,13 @@ export function fetchAccountMe(): Promise<{ ok?: boolean; item?: AdminAccount }>
   return requestJson<{ ok?: boolean; item?: AdminAccount }>('/account/me');
 }
 
+export function updateAccountProfile(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminAccount }> {
+  return requestJson<{ ok?: boolean; item?: AdminAccount }>('/account/me', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 export function fetchAccountGroups(): Promise<AdminListPayload<AdminGroup>> {
   return requestJson<AdminListPayload<AdminGroup>>('/account/groups');
 }
@@ -362,6 +369,14 @@ export function fetchAccountUsage(params?: { started_after?: string; started_bef
   if (params?.started_before) query.set('started_before', params.started_before);
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return requestJson<AdminListPayload<AdminUsageItem>>(`/account/usage${suffix}`);
+}
+
+export function fetchAccountUsageStats(params?: { started_after?: string; started_before?: string }): Promise<{ ok?: boolean; summary?: Record<string, number> }> {
+  const query = new URLSearchParams();
+  if (params?.started_after) query.set('started_after', params.started_after);
+  if (params?.started_before) query.set('started_before', params.started_before);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return requestJson<{ ok?: boolean; summary?: Record<string, number> }>(`/account/usage/stats${suffix}`);
 }
 
 export function fetchAccountSubscriptionPlans(): Promise<AdminListPayload<AdminSubscriptionPlan>> {
