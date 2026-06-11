@@ -179,7 +179,7 @@ export function AccountApiKeysPage() {
   }, [useKeyTarget?.id]);
 
   function openCreate() {
-    setDraft({ group_id: defaultKeyGroupId(account, groups), name: '', enabled: true });
+    setDraft({ group_id: defaultKeyGroupId(account, groups), name: '默认业务 Key', enabled: true });
   }
 
   function openEdit(item: AdminApiKey) {
@@ -193,7 +193,8 @@ export function AccountApiKeysPage() {
 
   function submitDraft() {
     if (!draft) return;
-    const payload = { name: draft.name, enabled: draft.enabled, group_id: draft.group_id };
+    const trimmedName = draft.name.trim();
+    const payload = { ...(trimmedName ? { name: trimmedName } : {}), enabled: draft.enabled, group_id: draft.group_id };
     if (draft.id) {
       updateMutation.mutate({ keyId: draft.id, payload });
       return;
@@ -545,7 +546,7 @@ export function AccountApiKeysPage() {
               <Button onClick={() => setDraft(null)}>取消</Button>
               <Button
                 tone="primary"
-                disabled={createMutation.isPending || updateMutation.isPending || !draft.name.trim()}
+                disabled={createMutation.isPending || updateMutation.isPending}
                 onClick={submitDraft}
               >
                 保存
@@ -562,7 +563,7 @@ export function AccountApiKeysPage() {
                 </Select>
               </Field>
               <Field label="Key 名称">
-                <TextInput value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+                <TextInput value={draft.name} placeholder="默认业务 Key" onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
               </Field>
               <Field label="状态">
                 <Select value={draft.enabled ? 'enabled' : 'disabled'} onChange={(e) => setDraft({ ...draft, enabled: e.target.value === 'enabled' })}>

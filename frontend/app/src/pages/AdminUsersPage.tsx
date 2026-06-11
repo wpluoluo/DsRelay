@@ -997,14 +997,25 @@ export function AdminUsersPage() {
           footer={
             <ModalActions>
               <Button onClick={() => setKeyDraft(null)}>取消</Button>
-              <Button tone="primary" disabled={!keyDraft.name.trim() || createKeyMutation.isPending} onClick={() => createKeyMutation.mutate({ account_id: keyDraft.accountId, name: keyDraft.name, group_id: keyDraft.groupId, enabled: keyDraft.enabled })}>生成</Button>
+              <Button
+                tone="primary"
+                disabled={createKeyMutation.isPending}
+                onClick={() => createKeyMutation.mutate({
+                  account_id: keyDraft.accountId,
+                  ...(keyDraft.name.trim() ? { name: keyDraft.name.trim() } : {}),
+                  group_id: keyDraft.groupId,
+                  enabled: keyDraft.enabled,
+                })}
+              >
+                生成
+              </Button>
             </ModalActions>
           }
         >
           <div className="admin-dialog">
             <div className="admin-dialog-grid">
               <Field label="Key 名称">
-                <TextInput value={keyDraft.name} onChange={(event) => setKeyDraft({ ...keyDraft, name: event.target.value })} />
+                <TextInput value={keyDraft.name} placeholder="默认业务 Key" onChange={(event) => setKeyDraft({ ...keyDraft, name: event.target.value })} />
               </Field>
               <Field label="分组">
                 <Select value={keyDraft.groupId} onChange={(event) => setKeyDraft({ ...keyDraft, groupId: event.target.value })}>
