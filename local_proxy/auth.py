@@ -130,6 +130,15 @@ def _set_authenticated_account(account: dict | None) -> None:
         session["_proxy_account_id"] = account_id
 
 
+def login_account_session(account: dict | None, *, role: str = "user") -> None:
+    session.clear()
+    session["_proxy_authed"] = True
+    session["_proxy_role"] = str(role or "user").strip().lower() or "user"
+    _set_authenticated_account(account)
+    session.permanent = False
+    _generate_csrf_token()
+
+
 def _generate_csrf_token() -> str:
     token = session.get("_csrf_token", "")
     if not token:
@@ -232,7 +241,9 @@ LOGIN_PAGE_HTML = """<!doctype html>
 
 def login_page():
     if is_authenticated():
-        return redirect(url_for("dashboard_redirect"))
+        if get_authenticated_role() == "user":
+            return redirect("/v1#/keys")
+        return redirect("/v1#/admin/dashboard")
     error = ""
     info = ""
     username = ""
@@ -286,7 +297,7 @@ def login_page():
             next_url = request.args.get("next", "")
             if next_url and (next_url.startswith("/") and "//" not in next_url):
                 return redirect(next_url)
-            return redirect(url_for("dashboard_redirect"))
+            return redirect("/v1#/admin/dashboard")
 
         if _ACCOUNT_AUTHENTICATOR is not None:
             account = _ACCOUNT_AUTHENTICATOR(username, password_val)
@@ -301,7 +312,7 @@ def login_page():
                 next_url = request.args.get("next", "")
                 if next_url and (next_url.startswith("/") and "//" not in next_url):
                     return redirect(next_url)
-                return redirect(url_for("dashboard_redirect"))
+                return redirect("/v1#/keys")
 
         _record_attempt(rate_key)
         remaining = _MAX_ATTEMPTS - len(

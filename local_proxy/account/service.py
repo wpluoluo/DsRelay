@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
+import time
+import uuid
 
 from local_proxy.admin.base import coerce_text, safe_float, safe_int
 
@@ -45,6 +48,55 @@ class AccountPortalService:
         if not hmac.compare_digest(password_hash, candidate):
             return None
         return account
+
+    def find_account_by_affiliate_code(self, aff_code: str) -> dict | None:
+        needle = coerce_text(aff_code).lower()
+        if not needle or self.storage is None:
+            return None
+        for account in self.storage.list_admin_accounts():
+            if not isinstance(account, dict):
+                continue
+            extra = account.get("extra") if isinstance(account.get("extra"), dict) else {}
+            if coerce_text(extra.get("aff_code")).lower() == needle:
+                return account
+        return None
+
+    def register_account(self, payload: dict) -> dict:
+        if self.storage is None:
+            raise RuntimeError("storage not configured")
+        email = coerce_text(payload.get("email"))
+        username = coerce_text(payload.get("username"))
+        password = coerce_text(payload.get("password"))
+        display_name = coerce_text(payload.get("name")) or username or email
+        if not display_name:
+            raise ValueError("name, email, or username is required")
+        if not password:
+            raise ValueError("password is required")
+        created = self.admin_service.create_user(
+            {
+                "name": display_name,
+                "email": email,
+                "username": username,
+                "password": password,
+                "external_key": email or username,
+                "role": "user",
+                "enabled": True,
+                "status": "active",
+                "balance_cents": 0,
+                "concurrency_limit": 1,
+                "rpm_limit": 0,
+                "group_ids": [],
+                "allowed_group_ids": [],
+                "note": coerce_text(payload.get("note")),
+            }
+        )
+        item = created.get("item") if isinstance(created, dict) else None
+        if not isinstance(item, dict):
+            raise ValueError("register account failed")
+        aff_code = coerce_text(payload.get("aff_code"))
+        if aff_code:
+            item = self._attach_affiliate_invite(item, aff_code)
+        return {"ok": True, "item": self._account_item(item)}
 
     def account_me(self, account_id: str) -> dict:
         account = self._require_account(account_id)
@@ -267,6 +319,59 @@ class AccountPortalService:
             item["group_name"] = coerce_text(first_group.get("name"))
         item.update(self.admin_service._get_account_subscription_status(coerce_text(item.get("id"))))
         return item
+
+    def _attach_affiliate_invite(self, account: dict, aff_code: str) -> dict:
+        inviter = self.find_account_by_affiliate_code(aff_code)
+        if not inviter:
+            return account
+        invited_account_id = coerce_text(account.get("id"))
+        inviter_account_id = coerce_text(inviter.get("id"))
+        normalized_aff_code = coerce_text(aff_code)
+        if not invited_account_id or not inviter_account_id or invited_account_id == inviter_account_id or self.storage is None:
+            return account
+
+        current_account = self.storage.get_admin_account(invited_account_id) or account
+        extra = current_account.get("extra") if isinstance(current_account.get("extra"), dict) else {}
+        if coerce_text(extra.get("invited_by_account_id")) == inviter_account_id:
+            return current_account
+
+        next_extra = {
+            **extra,
+            "invited_by_account_id": inviter_account_id,
+            "invited_by_aff_code": normalized_aff_code,
+        }
+        saved_account = self.storage.upsert_admin_account({**current_account, "extra": next_extra})
+
+        invite_items = self.admin_service._load_content_bucket("affiliate-invites")
+        now = time.time()
+        invite_payload = {
+            "account_id": inviter_account_id,
+            "invited_account_id": invited_account_id,
+            "aff_code": normalized_aff_code,
+            "invitee_name": coerce_text(saved_account.get("name")),
+            "invitee_email": coerce_text(next_extra.get("email")),
+            "invitee_username": coerce_text(next_extra.get("username")),
+        }
+        invite_item = {
+            "id": f"aff_invite_{uuid.uuid4().hex[:16]}",
+            "title": f"{normalized_aff_code} invite",
+            "status": "active",
+            "summary": coerce_text(saved_account.get("name")) or invited_account_id,
+            "content": json.dumps(invite_payload, ensure_ascii=False, separators=(",", ":")),
+            "note": "",
+            "created_at": now,
+            "updated_at": now,
+        }
+        deduped_items = [
+            item
+            for item in invite_items
+            if not (
+                coerce_text(self.admin_service._content_payload(item).get("invited_account_id")) == invited_account_id
+                and coerce_text(self.admin_service._content_payload(item).get("aff_code")).lower() == normalized_aff_code.lower()
+            )
+        ]
+        self.admin_service._save_content_bucket("affiliate-invites", [invite_item, *deduped_items])
+        return saved_account
 
     def _allowed_group_ids(self, account: dict) -> list[str]:
         allowed = account.get("allowed_group_ids") if isinstance(account.get("allowed_group_ids"), list) else []

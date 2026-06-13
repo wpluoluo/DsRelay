@@ -803,7 +803,7 @@ export function AdminUsersPage() {
           footer={
             <ModalActions>
               <Button onClick={() => setDraft(null)}>取消</Button>
-              <Button tone="primary" disabled={!draft.name.trim() || createMutation.isPending || updateMutation.isPending} onClick={submitDraft}>
+              <Button tone="primary" disabled={!(draft.name.trim() || draft.email.trim() || draft.username.trim()) || createMutation.isPending || updateMutation.isPending} onClick={submitDraft}>
                 保存
               </Button>
             </ModalActions>

@@ -29,21 +29,60 @@ def _normalize_user_extra(payload: dict, current: dict | None = None) -> dict:
 
 
 class AdminUsersMixin(AdminServiceBase):
+    def _ensure_account_identity_unique(
+        self,
+        *,
+        current_id: str = "",
+        next_id: str = "",
+        external_key: str = "",
+        email: str = "",
+        username: str = "",
+    ) -> None:
+        if self.storage is None:
+            return
+        target_id = coerce_text(next_id)
+        current_key = coerce_text(current_id)
+        normalized_external_key = coerce_text(external_key).lower()
+        normalized_email = coerce_text(email).lower()
+        normalized_username = coerce_text(username).lower()
+        for account in self.storage.list_admin_accounts():
+            if not isinstance(account, dict):
+                continue
+            account_id = coerce_text(account.get("id"))
+            if current_key and account_id == current_key:
+                continue
+            extra = account.get("extra") if isinstance(account.get("extra"), dict) else {}
+            if target_id and account_id == target_id:
+                raise ValueError("user id already exists")
+            if normalized_external_key and coerce_text(account.get("external_key")).lower() == normalized_external_key:
+                raise ValueError("external key already exists")
+            if normalized_email and coerce_text(extra.get("email")).lower() == normalized_email:
+                raise ValueError("email already exists")
+            if normalized_username and coerce_text(extra.get("username")).lower() == normalized_username:
+                raise ValueError("username already exists")
+
     def create_user(self, payload: dict) -> dict:
         if self.storage is None:
             raise RuntimeError("storage not configured")
         email = coerce_text(payload.get("email"))
         username = coerce_text(payload.get("username"))
         display_name = coerce_text(payload.get("name")) or username or email
-        external_key = coerce_text(payload.get("external_key")) or email or f"acct_{uuid.uuid4().hex[:16]}"
+        next_id = coerce_text(payload.get("id")) or f"acct_{uuid.uuid4().hex[:16]}"
+        external_key = coerce_text(payload.get("external_key")) or email or username or f"acct_{uuid.uuid4().hex[:16]}"
         allowed_group_ids = self._normalize_group_ids(payload.get("allowed_group_ids") if isinstance(payload.get("allowed_group_ids"), list) else [])
         group_ids = self._normalize_group_ids(payload.get("group_ids") if isinstance(payload.get("group_ids"), list) else [])
         self._validate_group_set(group_ids)
         self._validate_group_set(allowed_group_ids)
+        self._ensure_account_identity_unique(
+            next_id=next_id,
+            external_key=external_key,
+            email=email,
+            username=username,
+        )
         item = normalize_admin_account_payload(
             {
                 **payload,
-                "id": coerce_text(payload.get("id")) or f"acct_{uuid.uuid4().hex[:16]}",
+                "id": next_id,
                 "name": display_name,
                 "external_key": external_key,
                 "source_type": "managed",
@@ -74,19 +113,27 @@ class AdminUsersMixin(AdminServiceBase):
             if isinstance(payload.get("allowed_group_ids"), list)
             else self._normalize_group_ids(current.get("allowed_group_ids") if isinstance(current.get("allowed_group_ids"), list) else [])
         )
+        next_external_key = coerce_text(payload.get("external_key")) or coerce_text(current.get("external_key"))
         group_ids = payload.get("group_ids")
         normalized_group_ids = (
             self._normalize_group_ids(group_ids) if isinstance(group_ids, list) else self._normalize_group_ids(current.get("group_ids") if isinstance(current.get("group_ids"), list) else [])
         )
         self._validate_group_set(normalized_group_ids)
         self._validate_group_set(allowed_group_ids)
+        self._ensure_account_identity_unique(
+            current_id=current["id"],
+            next_id=current["id"],
+            external_key=next_external_key,
+            email=email or coerce_text(current.get("email")),
+            username=username or coerce_text(current.get("username")),
+        )
         item = normalize_admin_account_payload(
             {
                 **current,
                 **payload,
                 "id": current["id"],
                 "name": display_name,
-                "external_key": coerce_text(payload.get("external_key")) or coerce_text(current.get("external_key")),
+                "external_key": next_external_key,
                 "source_type": "managed",
                 "role": coerce_text(payload.get("role")) or coerce_text(current.get("role")) or "user",
                 "status": coerce_text(payload.get("status")) or ("active" if payload.get("enabled", current.get("enabled")) is not False else "disabled"),

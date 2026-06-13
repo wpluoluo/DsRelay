@@ -620,7 +620,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
             except Exception:
                 subscriptions = {}
             try:
-                for order in self.storage.list_payment_orders():
+                for order in self.storage.list_admin_payment_orders():
                     if not isinstance(order, dict):
                         continue
                     subscription_id = coerce_text(order.get("subscription_id"))

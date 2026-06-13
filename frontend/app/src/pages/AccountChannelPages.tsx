@@ -595,7 +595,7 @@ export function AccountProfilePage() {
           footer={(
             <ModalActions>
               <Button onClick={() => setDraft(null)}>取消</Button>
-              <Button tone="primary" disabled={updateMutation.isPending || !draft.name.trim()} onClick={submitProfile}>
+              <Button tone="primary" disabled={updateMutation.isPending || !(draft.name.trim() || draft.email.trim() || draft.username.trim())} onClick={submitProfile}>
                 保存
               </Button>
             </ModalActions>

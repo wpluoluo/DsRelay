@@ -59,6 +59,7 @@ from local_proxy.auth import (
     get_authenticated_account_id,
     get_authenticated_role,
     init_auth,
+    login_account_session,
     login_page,
     login_required,
     logout,
@@ -171,6 +172,7 @@ from local_proxy.runtime.route_compat import (
 )
 from local_proxy.runtime import tool_result_cache as tool_result_cache_runtime
 from local_proxy.storage import ProxyStorage
+from local_proxy.storage_local import LocalProxyStorage
 from local_proxy.upstream.capabilities import (
     DEFAULT_MODEL_CAPABILITIES_TEXT,
     clamp_payload_output_tokens,
@@ -757,11 +759,16 @@ MODEL_CANDIDATE_RACE_TIMEOUT_SECONDS = max(1, int(os.getenv("MODEL_CANDIDATE_RAC
 MODEL_ROUTE_CACHE_PATH = resolve_project_path(
     os.getenv("MODEL_ROUTE_CACHE_PATH", str(CACHE_DIR / "model-route-cache.json"))
 )
+LOCAL_STORAGE_PATH = resolve_project_path(
+    os.getenv("LOCAL_STORAGE_PATH", str(VAR_DIR / "data" / "local-storage.json"))
+)
 _storage_db_host = os.getenv("STORAGE_DB_HOST", "").strip()
 _storage_db_port = int(os.getenv("STORAGE_DB_PORT", "3306"))
 _storage_db_user = os.getenv("STORAGE_DB_USER", "")
 _storage_db_password = os.getenv("STORAGE_DB_PASSWORD", "")
 _storage_db_name = os.getenv("STORAGE_DB_NAME", "")
+_storage_init_error = ""
+STORAGE_DB_CONNECTED = False
 
 if _storage_db_host:
     _storage_db_config = {
@@ -773,16 +780,19 @@ if _storage_db_host:
     }
     try:
         storage = ProxyStorage(_storage_db_config)
-    except Exception:
-        storage = None
+        STORAGE_BACKEND = "mysql"
+        STORAGE_DB_LABEL = f"mysql://{_storage_db_host}:{_storage_db_port}/{_storage_db_name}"
+        STORAGE_DB_CONNECTED = True
+    except Exception as exc:
+        _storage_init_error = str(exc)
+        storage = LocalProxyStorage(LOCAL_STORAGE_PATH)
+        STORAGE_BACKEND = "local"
+        STORAGE_DB_LABEL = f"local://{LOCAL_STORAGE_PATH.as_posix()}"
 else:
     _storage_db_config = None
-    storage = None
-STORAGE_DB_LABEL = (
-    f"mysql://{_storage_db_host}:{_storage_db_port}/{_storage_db_name}"
-    if _storage_db_host
-    else "none"
-)
+    storage = LocalProxyStorage(LOCAL_STORAGE_PATH)
+    STORAGE_BACKEND = "local"
+    STORAGE_DB_LABEL = f"local://{LOCAL_STORAGE_PATH.as_posix()}"
 REQUEST_CACHE_TTL_SECONDS = max(60, int(os.getenv("REQUEST_CACHE_TTL_SECONDS", str(DEFAULT_REQUEST_CACHE_TTL_SECONDS))))
 TOOL_RESULT_CACHE_TTL_SECONDS = max(
     60,
@@ -879,6 +889,15 @@ if not proxy_logger.handlers:
     file_handler = logging.FileHandler(PROXY_LOG_PATH, encoding="utf-8")
     file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     proxy_logger.addHandler(file_handler)
+
+if _storage_init_error:
+    proxy_logger.warning(
+        "storage_backend_fallback backend=%s db_host=%s local_path=%s error=%s",
+        STORAGE_BACKEND,
+        _storage_db_host or "-",
+        str(LOCAL_STORAGE_PATH),
+        _storage_init_error,
+    )
 
 state_lock = Lock()
 config_lock = Lock()
@@ -1587,7 +1606,9 @@ def build_runtime_config_payload() -> dict:
             "primary_config_path": PROXY_CONFIG_PATH,
             "config_candidate_paths": list_runtime_config_candidate_paths(),
             "db_label": STORAGE_DB_LABEL,
-            "db_enabled": storage is not None,
+            "db_enabled": STORAGE_DB_CONNECTED,
+            "storage_backend": STORAGE_BACKEND,
+            "storage_enabled": storage is not None,
             "config_source": CONFIG_SOURCE,
         }
     )
@@ -4227,7 +4248,9 @@ def build_runtime_snapshot() -> dict:
             "model_list_cache_entries": model_route_cache.get("model_lists") or {},
             "model_route_cache_path": MODEL_ROUTE_CACHE_PATH,
             "db_label": STORAGE_DB_LABEL,
-            "db_enabled": storage is not None,
+            "db_enabled": STORAGE_DB_CONNECTED,
+            "storage_backend": STORAGE_BACKEND,
+            "storage_enabled": storage is not None,
             "cache_stats_snapshot": cache_stats.snapshot,
             "config_path": ACTIVE_RUNTIME_CONFIG_PATH,
             "config_file_exists": ACTIVE_RUNTIME_CONFIG_PATH.exists(),
@@ -9603,7 +9626,11 @@ def proxy_gemini_versioned(subpath: str):
 def dashboard_redirect():
     from flask import redirect
 
-    return redirect("/v1", code=302)
+    if not is_authenticated():
+        return redirect("/login", code=302)
+    if get_authenticated_role() == "user":
+        return redirect("/v1#/keys", code=302)
+    return redirect("/v1#/admin/dashboard", code=302)
 
 
 def dashboard_asset(path: str):
@@ -9645,6 +9672,7 @@ register_account_routes(
     account_required=account_required,
     account_service=account_portal_service,
     get_account_id=get_authenticated_account_id,
+    login_account_session=login_account_session,
 )
 
 app.add_url_rule("/", endpoint="dashboard_redirect", view_func=dashboard_redirect)
