@@ -73,10 +73,12 @@ export function AccountApiKeysPage() {
   const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(new Set(savedState.visibleColumns || DEFAULT_VISIBLE_COLUMNS));
   const [visibleFilters, setVisibleFilters] = useState<Set<FilterKey>>(new Set(savedState.visibleFilters || DEFAULT_VISIBLE_FILTERS));
+  const [actionError, setActionError] = useState('');
 
   const createMutation = useMutation({
     mutationFn: createAccountApiKey,
     onSuccess: async (result) => {
+      setActionError('');
       if (result.item?.id && result.generated_key) {
         storeRawKeySecret(result.item.id, result.generated_key);
       }
@@ -85,14 +87,17 @@ export function AccountApiKeysPage() {
       setDraft(null);
       await refreshKeyData();
     },
+    onError: (error) => setActionError(error instanceof Error ? error.message : '保存失败'),
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ keyId, payload }: { keyId: string; payload: Record<string, unknown> }) => updateAccountApiKey(keyId, payload),
     onSuccess: async () => {
+      setActionError('');
       setDraft(null);
       await refreshKeyData();
     },
+    onError: (error) => setActionError(error instanceof Error ? error.message : '保存失败'),
   });
 
   const toggleMutation = useMutation({
@@ -179,10 +184,12 @@ export function AccountApiKeysPage() {
   }, [useKeyTarget?.id]);
 
   function openCreate() {
+    setActionError('');
     setDraft({ group_id: defaultKeyGroupId(account, groups), name: '默认业务 Key', enabled: true });
   }
 
   function openEdit(item: AdminApiKey) {
+    setActionError('');
     setDraft({
       id: item.id,
       group_id: keyGroupId(item),
@@ -434,6 +441,7 @@ export function AccountApiKeysPage() {
           />
         ) : null}
       />
+      {actionError ? <div className="bad-text" style={{ marginBottom: 12 }}>{actionError}</div> : null}
 
       {generatedKey ? (
         <Modal
@@ -555,6 +563,7 @@ export function AccountApiKeysPage() {
           }
         >
           <div className="admin-dialog">
+            {actionError ? <div className="bad-text">{actionError}</div> : null}
             <div className="admin-dialog-grid modal-grid">
               <Field label="Key 分组">
                 <Select value={draft.group_id} onChange={(e) => setDraft({ ...draft, group_id: e.target.value })}>

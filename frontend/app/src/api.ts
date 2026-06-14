@@ -33,6 +33,7 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   const text = await response.text();
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
   let payload: any = {};
   if (text) {
     try {
@@ -41,8 +42,17 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
       payload = { ok: false, message: text };
     }
   }
+  if (response.redirected && response.url.includes('/login')) {
+    throw new Error('登录已失效，请重新登录');
+  }
   if (!response.ok) {
     throw new Error(payload?.message || payload?.error?.message || `HTTP ${response.status}`);
+  }
+  if (!contentType.includes('application/json')) {
+    throw new Error(payload?.message || '接口返回了无效响应');
+  }
+  if (payload && typeof payload === 'object' && 'ok' in payload && payload.ok === false) {
+    throw new Error(payload?.message || payload?.error?.message || '请求失败');
   }
   return payload as T;
 }

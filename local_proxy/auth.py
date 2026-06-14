@@ -32,16 +32,19 @@ _WINDOW_SECONDS = 300  # 5 minutes
 _login_attempts: dict[str, list[float]] = {}  # key -> [timestamps]
 _ACCOUNT_AUTHENTICATOR: Callable[[str, str], dict | None] | None = None
 _ACCOUNT_LOOKUP: Callable[[str], dict | None] | None = None
+_ADMIN_ACCOUNT_LOOKUP: Callable[[str], dict | None] | None = None
 
 
 def set_account_auth_handlers(
     *,
     authenticator: Callable[[str, str], dict | None] | None = None,
     lookup: Callable[[str], dict | None] | None = None,
+    admin_lookup: Callable[[str], dict | None] | None = None,
 ) -> None:
-    global _ACCOUNT_AUTHENTICATOR, _ACCOUNT_LOOKUP
+    global _ACCOUNT_AUTHENTICATOR, _ACCOUNT_LOOKUP, _ADMIN_ACCOUNT_LOOKUP
     _ACCOUNT_AUTHENTICATOR = authenticator
     _ACCOUNT_LOOKUP = lookup
+    _ADMIN_ACCOUNT_LOOKUP = admin_lookup
 
 
 def _prune_attempts(key: str, now: float) -> list[float]:
@@ -290,8 +293,12 @@ def login_page():
             session.clear()
             session["_proxy_authed"] = True
             session["_proxy_role"] = "admin"
-            if _ACCOUNT_LOOKUP is not None:
-                _set_authenticated_account(_ACCOUNT_LOOKUP(username))
+            admin_account = None
+            if _ADMIN_ACCOUNT_LOOKUP is not None:
+                admin_account = _ADMIN_ACCOUNT_LOOKUP(username)
+            elif _ACCOUNT_LOOKUP is not None:
+                admin_account = _ACCOUNT_LOOKUP(username)
+            _set_authenticated_account(admin_account)
             session.permanent = False
             _generate_csrf_token()
             next_url = request.args.get("next", "")

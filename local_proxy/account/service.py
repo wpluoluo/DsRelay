@@ -17,6 +17,37 @@ class AccountPortalService:
     def storage(self):
         return self.admin_service.storage
 
+    def ensure_admin_session_account(self, identifier: str) -> dict | None:
+        normalized_identifier = coerce_text(identifier)
+        if not normalized_identifier or self.storage is None:
+            return None
+        external_key = f"env-admin:{normalized_identifier.lower()}"
+        current = self.storage.get_admin_account_by_external_key(external_key)
+        current_extra = current.get("extra") if isinstance(current, dict) and isinstance(current.get("extra"), dict) else {}
+        payload = {
+            "id": coerce_text(current.get("id")) or f"acct_admin_{hashlib.sha256(external_key.encode('utf-8')).hexdigest()[:16]}",
+            "name": coerce_text(current.get("name")) or normalized_identifier,
+            "external_key": external_key,
+            "source_type": "env",
+            "role": "admin",
+            "status": "active",
+            "balance_cents": current.get("balance_cents") if isinstance(current, dict) else 0,
+            "concurrency_limit": current.get("concurrency_limit") if isinstance(current, dict) else 1,
+            "allowed_group_ids": current.get("allowed_group_ids") if isinstance(current, dict) and isinstance(current.get("allowed_group_ids"), list) else [],
+            "enabled": True,
+            "note": coerce_text(current.get("note")) if isinstance(current, dict) else "environment admin session",
+            "extra": {
+                **current_extra,
+                "username": normalized_identifier,
+                "password_set": True,
+                "password_managed_by_env": True,
+                "env_admin": True,
+            },
+        }
+        saved = self.storage.upsert_admin_account(payload)
+        refreshed = self.storage.get_admin_account(saved["id"]) or saved
+        return refreshed if isinstance(refreshed, dict) else saved
+
     def find_account_by_identifier(self, identifier: str) -> dict | None:
         needle = coerce_text(identifier).lower()
         if not needle or self.storage is None:

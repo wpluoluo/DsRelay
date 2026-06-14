@@ -51,6 +51,7 @@ export function DashboardLayout() {
   const state = stateQuery.data || {};
   const isAuthPending = stateQuery.isLoading && !stateQuery.data;
   const role = state.auth?.role === 'user' ? 'user' : 'admin';
+  const isAdminPath = locationPathname === '/admin' || locationPathname.startsWith('/admin/');
   const navSections = useMemo(
     () => {
       if (isAuthPending) return [];
@@ -98,7 +99,6 @@ export function DashboardLayout() {
     patchDraft,
     saveConfig: () => saveMutation.mutate(draft),
   };
-  const isAdminPath = locationPathname === '/admin' || locationPathname.startsWith('/admin/');
   const holdAdminOutlet = isAdminPath && (isAuthPending || role === 'user');
   const currentMeta = getRouteMeta(locationPathname);
   const currentSectionTitle = role === 'user' ? '我的账户' : (isAdminPath ? '管理后台' : '我的账户');

@@ -9661,6 +9661,7 @@ account_portal_service = AccountPortalService(admin_analytics_service)
 set_account_auth_handlers(
     authenticator=account_portal_service.authenticate_account,
     lookup=account_portal_service.find_account_by_identifier,
+    admin_lookup=account_portal_service.ensure_admin_session_account,
 )
 register_admin_routes(
     app,
