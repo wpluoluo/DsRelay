@@ -311,30 +311,75 @@ class AdminAnalyticsMixin(AdminServiceBase):
         return {"ok": True, "items": items[:limit], "total": len(items)}
 
     def list_users(self, limit: int = 200) -> dict:
-        accounts_payload = self.list_accounts(limit=limit)
+        if self.storage is None:
+            return {"ok": True, "items": [], "total": 0}
+        groups, memberships = self._group_map()
+        stored_accounts = [item for item in self.storage.list_admin_accounts() if isinstance(item, dict)]
+        managed_accounts = self._managed_accounts()
+        usage_by_account: dict[str, dict] = {}
         key_counts: dict[str, int] = {}
         active_key_counts: dict[str, int] = {}
         subscription_counts: dict[str, int] = {}
         active_subscription_counts: dict[str, int] = {}
-        if self.storage is not None:
-            for row in self.storage.list_admin_api_keys():
-                account_id = coerce_text(row.get("account_id"))
-                if not account_id:
-                    continue
-                key_counts[account_id] = key_counts.get(account_id, 0) + 1
-                if row.get("enabled") is not False:
-                    active_key_counts[account_id] = active_key_counts.get(account_id, 0) + 1
-            for row in self.storage.list_admin_account_subscriptions():
-                account_id = coerce_text(row.get("account_id"))
-                if not account_id:
-                    continue
-                subscription_counts[account_id] = subscription_counts.get(account_id, 0) + 1
-                if coerce_text(row.get("status")) == "active":
-                    active_subscription_counts[account_id] = active_subscription_counts.get(account_id, 0) + 1
+        for row in self.storage.list_admin_api_keys():
+            account_id = coerce_text(row.get("account_id"))
+            if not account_id:
+                continue
+            key_counts[account_id] = key_counts.get(account_id, 0) + 1
+            if row.get("enabled") is not False:
+                active_key_counts[account_id] = active_key_counts.get(account_id, 0) + 1
+        for row in self.storage.list_admin_account_subscriptions():
+            account_id = coerce_text(row.get("account_id"))
+            if not account_id:
+                continue
+            subscription_counts[account_id] = subscription_counts.get(account_id, 0) + 1
+            if coerce_text(row.get("status")) == "active":
+                active_subscription_counts[account_id] = active_subscription_counts.get(account_id, 0) + 1
+        for row in self._load_recent_requests(limit=5000):
+            consumer_id = coerce_text(row.get("proxy_consumer_id"))
+            if not consumer_id:
+                continue
+            stored = managed_accounts.get(consumer_id)
+            if not stored:
+                continue
+            account_id = coerce_text(stored.get("id"))
+            if not account_id:
+                continue
+            entry = usage_by_account.setdefault(
+                account_id,
+                {
+                    "request_count": 0,
+                    "error_count": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "input_bytes": 0,
+                    "output_bytes": 0,
+                    "last_seen_at": "",
+                },
+            )
+            prompt_tokens = safe_int(row.get("prompt_tokens"))
+            completion_tokens = safe_int(row.get("completion_tokens"))
+            total_tokens = safe_int(row.get("total_tokens")) or (prompt_tokens + completion_tokens)
+            started_at = coerce_text(row.get("started_at"))
+            entry["request_count"] += 1
+            if row.get("error") or safe_int(row.get("status_code")) >= 400:
+                entry["error_count"] += 1
+            entry["prompt_tokens"] += prompt_tokens
+            entry["completion_tokens"] += completion_tokens
+            entry["total_tokens"] += total_tokens
+            entry["input_bytes"] += safe_int(row.get("input_bytes"))
+            entry["output_bytes"] += safe_int(row.get("bytes_sent"))
+            if started_at and started_at > coerce_text(entry.get("last_seen_at")):
+                entry["last_seen_at"] = started_at
         items = []
-        for account in accounts_payload.get("items", []):
+        for account in stored_accounts:
             account_id = coerce_text(account.get("id"))
+            usage = usage_by_account.get(account_id, {})
             account_fields = self._account_public_fields(account)
+            group_ids = memberships.get(account_id, [])
+            primary_group = groups.get(group_ids[0], {}) if group_ids else {}
+            subscription_status = self._get_account_subscription_status(account_id)
             items.append(
                 {
                     "id": account_id,
@@ -344,10 +389,10 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     "rpm_limit": account_fields["rpm_limit"],
                     "password_set": account_fields["password_set"],
                     "preview": coerce_text(account.get("preview")),
-                    "source_type": coerce_text(account.get("source_type")),
-                    "group_id": coerce_text(account.get("group_id")),
-                    "group_name": coerce_text(account.get("group_name")),
-                    "group_ids": account.get("group_ids") if isinstance(account.get("group_ids"), list) else [],
+                    "source_type": coerce_text(account.get("source_type")) or "managed",
+                    "group_id": coerce_text(primary_group.get("id")),
+                    "group_name": coerce_text(primary_group.get("name")),
+                    "group_ids": group_ids,
                     "enabled": account.get("enabled") is not False,
                     "status": coerce_text(account.get("status")) or "active",
                     "role": coerce_text(account.get("role")) or "user",
@@ -355,26 +400,31 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     "balance_cents": safe_int(account.get("balance_cents")),
                     "concurrency_limit": safe_int(account.get("concurrency_limit")),
                     "allowed_group_ids": account.get("allowed_group_ids") if isinstance(account.get("allowed_group_ids"), list) else [],
-                    "prompt_tokens": safe_int(account.get("prompt_tokens")),
-                    "completion_tokens": safe_int(account.get("completion_tokens")),
-                    "total_tokens": safe_int(account.get("total_tokens")),
-                    "input_bytes": safe_int(account.get("input_bytes")),
-                    "output_bytes": safe_int(account.get("output_bytes")),
-                    "error_count": safe_int(account.get("error_count")),
-                    "request_count": safe_int(account.get("request_count")),
-                    "last_seen_at": coerce_text(account.get("last_seen_at")),
+                    "prompt_tokens": safe_int(usage.get("prompt_tokens")),
+                    "completion_tokens": safe_int(usage.get("completion_tokens")),
+                    "total_tokens": safe_int(usage.get("total_tokens")),
+                    "input_bytes": safe_int(usage.get("input_bytes")),
+                    "output_bytes": safe_int(usage.get("output_bytes")),
+                    "error_count": safe_int(usage.get("error_count")),
+                    "request_count": safe_int(usage.get("request_count")),
+                    "last_seen_at": coerce_text(usage.get("last_seen_at")),
                     "key_count": key_counts.get(account_id, 0),
                     "active_key_count": active_key_counts.get(account_id, 0),
                     "subscription_count": subscription_counts.get(account_id, 0),
                     "active_subscription_count": active_subscription_counts.get(account_id, 0),
-                    "subscription_active": account.get("subscription_active") is True,
-                    "active_plan_name": coerce_text(account.get("active_plan_name")),
-                    "active_group_id": coerce_text(account.get("active_group_id")),
-                    "active_group_name": coerce_text(account.get("active_group_name")),
+                    **subscription_status,
                     **account_fields,
                 }
             )
-        return {"ok": True, "items": items, "total": len(items)}
+        items.sort(
+            key=lambda item: (
+                -safe_int(item.get("request_count")),
+                -safe_int(item.get("total_tokens")),
+                coerce_text(item.get("name")),
+                coerce_text(item.get("id")),
+            )
+        )
+        return {"ok": True, "items": items[:limit], "total": len(items)}
 
     def list_groups(self) -> dict:
         rows = self._load_recent_requests()
@@ -551,13 +601,24 @@ class AdminAnalyticsMixin(AdminServiceBase):
         self.storage.delete_admin_group(target)
         return {"ok": True, "id": target}
 
-    def list_usage(self, limit: int = 200, *, started_after=None, started_before=None) -> dict:
-        rows = self._load_recent_requests(limit=max(limit, 500))
+    def list_usage(self, limit: int = 200, *, started_after=None, started_before=None, account_id: str = "", api_key_id: str = "") -> dict:
+        scan_limit = max(limit, 5000) if account_id or api_key_id else max(limit, 500)
+        rows = self._load_recent_requests(limit=scan_limit)
         rows = self._filter_rows_by_started_at(rows, started_after=started_after, started_before=started_before)
         items = []
-        for row in rows[:limit]:
+        normalized_account_id = coerce_text(account_id)
+        normalized_api_key_id = coerce_text(api_key_id)
+        if normalized_account_id:
+            self._require_account(normalized_account_id)
+        for row in rows:
             consumer_id, consumer_name, consumer_type, preview = self._consumer_key(row)
             resolved = self._resolve_account_metadata(consumer_id, consumer_name, consumer_type, preview)
+            resolved_account_id = coerce_text(resolved.get("id"))
+            current_api_key_id = coerce_text(row.get("proxy_api_key_id"))
+            if normalized_account_id and resolved_account_id != normalized_account_id:
+                continue
+            if normalized_api_key_id and current_api_key_id != normalized_api_key_id:
+                continue
             prompt_tokens = safe_int(row.get("prompt_tokens"))
             completion_tokens = safe_int(row.get("completion_tokens"))
             total_tokens = safe_int(row.get("total_tokens")) or (prompt_tokens + completion_tokens)
@@ -570,7 +631,7 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     "consumer_type": resolved["source_type"],
                     "consumer_preview": preview,
                     **self._account_public_fields(resolved),
-                    "api_key_id": coerce_text(row.get("proxy_api_key_id")),
+                    "api_key_id": current_api_key_id,
                     "api_key_name": coerce_text(row.get("proxy_api_key_name")),
                     "api_key_preview": coerce_text(row.get("proxy_api_key_preview")),
                     "api_key_type": coerce_text(row.get("proxy_api_key_type")),
@@ -599,6 +660,8 @@ class AdminAnalyticsMixin(AdminServiceBase):
                     **self._extract_costs(row),
                 }
             )
+            if len(items) >= limit:
+                break
         return {"ok": True, "items": items, "total": len(items)}
 
     def billing_summary(self, limit: int = 5000, *, started_after=None, started_before=None) -> dict:

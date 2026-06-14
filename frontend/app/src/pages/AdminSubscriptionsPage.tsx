@@ -16,7 +16,7 @@ const DEFAULT_VISIBLE_FILTERS: SubscriptionFilterKey[] = ['status', 'group'];
 const STORAGE_KEY = 'admin-subscriptions-view-state';
 
 export function AdminSubscriptionsPage() {
-  const subsQuery = useQuery({ queryKey: ['admin-account-subscriptions'], queryFn: fetchAdminAccountSubscriptions, refetchInterval: 10000 });
+  const subsQuery = useQuery({ queryKey: ['admin-account-subscriptions'], queryFn: () => fetchAdminAccountSubscriptions(), refetchInterval: 10000 });
   const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
   const plansQuery = useQuery({ queryKey: ['admin-subscription-plans'], queryFn: fetchAdminSubscriptionPlans, refetchInterval: 10000 });
   const [draft, setDraft] = useState<any | null>(null);

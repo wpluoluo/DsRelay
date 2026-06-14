@@ -559,7 +559,7 @@ export function AccountApiKeysPage() {
               <Field label="Key 分组">
                 <Select value={draft.group_id} onChange={(e) => setDraft({ ...draft, group_id: e.target.value })}>
                   <option value="">不绑定分组</option>
-                  {keyGroupOptions(account, groups).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+                  {keyGroupOptions(groups).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
                 </Select>
               </Field>
               <Field label="Key 名称">
@@ -679,14 +679,12 @@ function keyGroupName(item: AdminApiKey | null | undefined, groups: AdminGroup[]
   return String(item?.group_name || groups.find((group) => group.id === groupId)?.name || groupId);
 }
 
-function keyGroupOptions(account: { allowed_group_ids?: string[] } | null | undefined, groups: AdminGroup[]): AdminGroup[] {
-  const allowedIds = account?.allowed_group_ids || [];
-  if (!allowedIds.length) return groups;
-  return groups.filter((group) => allowedIds.includes(group.id));
+function keyGroupOptions(groups: AdminGroup[]): AdminGroup[] {
+  return groups.filter((group) => group.enabled !== false);
 }
 
 function defaultKeyGroupId(account: { group_id?: string; group_ids?: string[]; allowed_group_ids?: string[] } | null | undefined, groups: AdminGroup[]): string {
-  const options = keyGroupOptions(account, groups);
+  const options = keyGroupOptions(groups);
   if (options.length === 1) return options[0].id;
   const userGroups = account?.group_ids || (account?.group_id ? [account.group_id] : []);
   const firstUsable = userGroups.find((groupId) => options.some((group) => group.id === groupId));

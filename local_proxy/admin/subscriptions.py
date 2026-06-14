@@ -47,10 +47,18 @@ class AdminSubscriptionsMixin(AdminServiceBase):
             raise ValueError("plan name is required")
         return {"ok": True, "item": self.storage.upsert_admin_subscription_plan(item)}
 
-    def list_account_subscriptions(self) -> dict:
+    def list_account_subscriptions(self, *, account_id: str = "") -> dict:
         if self.storage is None:
             return {"ok": True, "items": [], "total": 0}
-        items = self.storage.list_admin_account_subscriptions()
+        normalized_account_id = coerce_text(account_id)
+        if normalized_account_id:
+            self._require_account(normalized_account_id)
+        items = []
+        for item in self.storage.list_admin_account_subscriptions():
+            storage_account_id = coerce_text(item.get("account_id"))
+            if normalized_account_id and storage_account_id != normalized_account_id:
+                continue
+            items.append(item)
         groups = {str(item.get("id") or ""): item for item in self.list_groups().get("items", [])}
         plans = {str(item.get("id") or ""): item for item in self.storage.list_admin_subscription_plans()}
         normalized = []

@@ -97,10 +97,18 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
     @app.get("/admin/usage")
     @admin_required
     def admin_usage():
+        limit = request.args.get("limit", "200")
+        try:
+            normalized_limit = int(limit)
+        except Exception:
+            normalized_limit = 200
         return jsonify(
             analytics_service.list_usage(
+                limit=normalized_limit,
                 started_after=request.args.get("started_after"),
                 started_before=request.args.get("started_before"),
+                account_id=str(request.args.get("account_id") or ""),
+                api_key_id=str(request.args.get("api_key_id") or ""),
             )
         )
 
@@ -117,7 +125,7 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
     @app.get("/admin/api-keys")
     @admin_required
     def admin_api_keys():
-        return jsonify(analytics_service.list_api_keys())
+        return jsonify(analytics_service.list_api_keys(account_id=str(request.args.get("account_id") or "")))
 
     @app.post("/admin/api-keys")
     @admin_required
@@ -156,7 +164,7 @@ def register_admin_routes(app, *, admin_required, analytics_service) -> None:
     @app.get("/admin/subscriptions")
     @admin_required
     def admin_subscriptions():
-        return jsonify(analytics_service.list_account_subscriptions())
+        return jsonify(analytics_service.list_account_subscriptions(account_id=str(request.args.get("account_id") or "")))
 
     @app.post("/admin/subscriptions/assign")
     @admin_required

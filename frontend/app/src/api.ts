@@ -167,10 +167,13 @@ export function deleteAdminChannel(channelId: string): Promise<{ ok?: boolean; i
   });
 }
 
-export function fetchAdminUsage(params?: { started_after?: string; started_before?: string }): Promise<AdminListPayload<AdminUsageItem>> {
+export function fetchAdminUsage(params?: { started_after?: string; started_before?: string; account_id?: string; api_key_id?: string; limit?: number }): Promise<AdminListPayload<AdminUsageItem>> {
   const query = new URLSearchParams();
   if (params?.started_after) query.set('started_after', params.started_after);
   if (params?.started_before) query.set('started_before', params.started_before);
+  if (params?.account_id) query.set('account_id', params.account_id);
+  if (params?.api_key_id) query.set('api_key_id', params.api_key_id);
+  if (typeof params?.limit === 'number' && Number.isFinite(params.limit)) query.set('limit', String(params.limit));
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return requestJson<AdminListPayload<AdminUsageItem>>(`/admin/usage${suffix}`);
 }
@@ -183,8 +186,11 @@ export function fetchAdminBilling(params?: { started_after?: string; started_bef
   return requestJson<AdminBillingPayload>(`/admin/billing${suffix}`);
 }
 
-export function fetchAdminApiKeys(): Promise<AdminListPayload<AdminApiKey>> {
-  return requestJson<AdminListPayload<AdminApiKey>>('/admin/api-keys');
+export function fetchAdminApiKeys(params?: { account_id?: string }): Promise<AdminListPayload<AdminApiKey>> {
+  const query = new URLSearchParams();
+  if (params?.account_id) query.set('account_id', params.account_id);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return requestJson<AdminListPayload<AdminApiKey>>(`/admin/api-keys${suffix}`);
 }
 
 export function createAdminApiKey(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminApiKey; generated_key?: string }> {
@@ -225,8 +231,11 @@ export function saveAdminSubscriptionPlan(payload: Record<string, unknown>): Pro
   });
 }
 
-export function fetchAdminAccountSubscriptions(): Promise<AdminListPayload<AdminAccountSubscription>> {
-  return requestJson<AdminListPayload<AdminAccountSubscription>>('/admin/subscriptions');
+export function fetchAdminAccountSubscriptions(params?: { account_id?: string }): Promise<AdminListPayload<AdminAccountSubscription>> {
+  const query = new URLSearchParams();
+  if (params?.account_id) query.set('account_id', params.account_id);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return requestJson<AdminListPayload<AdminAccountSubscription>>(`/admin/subscriptions${suffix}`);
 }
 
 export function assignAdminAccountSubscription(payload: Record<string, unknown>): Promise<{ ok?: boolean; item?: AdminAccountSubscription }> {

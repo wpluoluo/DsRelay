@@ -114,9 +114,6 @@ const STORAGE_KEY = 'admin-users-view-state';
 export function AdminUsersPage() {
   const usersQuery = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminAccounts, refetchInterval: 10000 });
   const groupsQuery = useQuery({ queryKey: ['admin-groups'], queryFn: fetchAdminGroups, refetchInterval: 10000 });
-  const keysQuery = useQuery({ queryKey: ['admin-api-keys'], queryFn: fetchAdminApiKeys, refetchInterval: 10000 });
-  const usageQuery = useQuery({ queryKey: ['admin-usage'], queryFn: () => fetchAdminUsage(), refetchInterval: 10000 });
-  const subscriptionsQuery = useQuery({ queryKey: ['admin-account-subscriptions'], queryFn: fetchAdminAccountSubscriptions, refetchInterval: 10000 });
   const plansQuery = useQuery({ queryKey: ['admin-subscription-plans'], queryFn: fetchAdminSubscriptionPlans, refetchInterval: 10000 });
 
   const savedState = readStorageJSON(STORAGE_KEY, {
@@ -247,10 +244,25 @@ export function AdminUsersPage() {
   });
 
   const groups = groupsQuery.data?.items || [];
-  const keyItems = keysQuery.data?.items || [];
-  const usageItems = usageQuery.data?.items || [];
-  const subscriptionItems = subscriptionsQuery.data?.items || [];
   const planItems = plansQuery.data?.items || [];
+  const keysQuery = useQuery({
+    queryKey: ['admin-api-keys', viewKeysUser?.id || ''],
+    queryFn: () => fetchAdminApiKeys({ account_id: viewKeysUser?.id || '' }),
+    enabled: Boolean(viewKeysUser?.id),
+    refetchInterval: 10000,
+  });
+  const subscriptionsQuery = useQuery({
+    queryKey: ['admin-account-subscriptions', viewSubscriptionsUser?.id || ''],
+    queryFn: () => fetchAdminAccountSubscriptions({ account_id: viewSubscriptionsUser?.id || '' }),
+    enabled: Boolean(viewSubscriptionsUser?.id),
+    refetchInterval: 10000,
+  });
+  const usageQuery = useQuery({
+    queryKey: ['admin-usage', viewUsageUser?.id || ''],
+    queryFn: () => fetchAdminUsage({ account_id: viewUsageUser?.id || '', limit: 50 }),
+    enabled: Boolean(viewUsageUser?.id),
+    refetchInterval: 10000,
+  });
   const balanceEventsQuery = useQuery({
     queryKey: ['admin-account-balance-events', balanceHistoryUser?.id || ''],
     queryFn: () => fetchAdminAccountBalanceEvents(balanceHistoryUser?.id || ''),
@@ -314,18 +326,9 @@ export function AdminUsersPage() {
   const selectedMutableUsers = useMemo(() => selectedUsers.filter((item) => (item.role || 'user') !== 'admin'), [selectedUsers]);
   const allPageSelected = pagedRows.length > 0 && pagedRows.every((item) => selectedIds.has(item.id));
 
-  const relatedKeys = useMemo(
-    () => keyItems.filter((item) => viewKeysUser && getAccountId(item) === viewKeysUser.id),
-    [keyItems, viewKeysUser],
-  );
-  const relatedSubscriptions = useMemo(
-    () => subscriptionItems.filter((item) => viewSubscriptionsUser && getAccountId(item) === viewSubscriptionsUser.id),
-    [subscriptionItems, viewSubscriptionsUser],
-  );
-  const relatedUsage = useMemo(
-    () => usageItems.filter((item) => viewUsageUser && getAccountId(item) === viewUsageUser.id),
-    [usageItems, viewUsageUser],
-  );
+  const relatedKeys = keysQuery.data?.items || [];
+  const relatedSubscriptions = subscriptionsQuery.data?.items || [];
+  const relatedUsage = usageQuery.data?.items || [];
   const keyOwner = keyDraft ? rows.find((item) => item.id === keyDraft.accountId) : null;
   const keyGroupOptions = useMemo(() => {
     if (!keyOwner) return groups;
@@ -933,7 +936,9 @@ export function AdminUsersPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {relatedKeys.length ? relatedKeys.map((item) => (
+                  {keysQuery.isLoading ? (
+                    <ListEmptyRow colSpan={7} title="加载中" />
+                  ) : relatedKeys.length ? relatedKeys.map((item) => (
                     <tr key={item.id}>
                       <td>
                         <div className="sub2-cell-stack sub2-cell-stack-tight">
@@ -956,7 +961,7 @@ export function AdminUsersPage() {
                           onChange={(event) => updateKeyMutation.mutate({ keyId: item.id, payload: { group_id: event.target.value } })}
                         >
                           <option value="">未绑定</option>
-                          {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+                          {keyGroupOptions.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
                         </Select>
                       </td>
                       <td>
@@ -1159,7 +1164,9 @@ export function AdminUsersPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {relatedSubscriptions.length ? relatedSubscriptions.map((item) => (
+                  {subscriptionsQuery.isLoading ? (
+                    <ListEmptyRow colSpan={5} title="加载中" />
+                  ) : relatedSubscriptions.length ? relatedSubscriptions.map((item) => (
                     <tr key={item.id}>
                       <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.id}</strong><small>{formatTime(item.expires_at)}</small></div></td>
                       <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.plan_name || item.plan_id}</strong><small>{formatMoneyCents(item.price_cents || 0)}</small></div></td>
@@ -1200,7 +1207,9 @@ export function AdminUsersPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {relatedUsage.length ? relatedUsage.slice(0, 50).map((item) => (
+                  {usageQuery.isLoading ? (
+                    <ListEmptyRow colSpan={5} title="加载中" />
+                  ) : relatedUsage.length ? relatedUsage.map((item) => (
                     <tr key={item.request_id}>
                       <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.started_at || '-'}</strong><small>{item.request_id}</small></div></td>
                       <td><div className="sub2-cell-stack sub2-cell-stack-tight"><strong>{item.model || '-'}</strong><small>{item.resolved_model || '-'}</small></div></td>

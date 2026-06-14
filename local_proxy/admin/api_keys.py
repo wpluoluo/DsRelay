@@ -16,18 +16,31 @@ class AdminApiKeysMixin(AdminServiceBase):
         self._validate_account_allowed_groups(account, [group_id])
         return group_id
 
-    def list_api_keys(self) -> dict:
+    def list_api_keys(self, *, account_id: str = "") -> dict:
         if self.storage is None:
             return {"ok": True, "items": [], "total": 0}
-        accounts = {str(item.get("id") or ""): item for item in self.list_accounts(limit=5000).get("items", [])}
+        normalized_account_id = coerce_text(account_id)
+        if normalized_account_id:
+            self._require_account(normalized_account_id)
+        accounts = {str(item.get("id") or ""): item for item in self.list_users(limit=5000).get("items", [])}
         key_counts: dict[str, int] = {}
         active_key_counts: dict[str, int] = {}
-        raw_rows = self.storage.list_admin_api_keys()
+        raw_rows = []
+        for row in self.storage.list_admin_api_keys():
+            storage_account_id = coerce_text(row.get("account_id"))
+            if normalized_account_id and storage_account_id != normalized_account_id:
+                continue
+            raw_rows.append(row)
         usage_by_key: dict[str, dict] = {}
         for request_row in self._load_recent_requests(limit=5000):
             key_id = coerce_text(request_row.get("proxy_api_key_id"))
             if not key_id:
                 continue
+            if normalized_account_id:
+                consumer_id = coerce_text(request_row.get("proxy_consumer_id"))
+                account = accounts.get(normalized_account_id, {})
+                if consumer_id and consumer_id != coerce_text(account.get("external_key")):
+                    continue
             entry = usage_by_key.setdefault(
                 key_id,
                 {
@@ -101,9 +114,9 @@ class AdminApiKeysMixin(AdminServiceBase):
                 "total_cost": safe_float(usage.get("total_cost")),
                 "last_used_request_at": coerce_text(usage.get("last_used_request_at")),
             })
-        for account_id, account in accounts.items():
-            account["key_count"] = key_counts.get(account_id, 0)
-            account["active_key_count"] = active_key_counts.get(account_id, 0)
+        for current_account_id, account in accounts.items():
+            account["key_count"] = key_counts.get(current_account_id, 0)
+            account["active_key_count"] = active_key_counts.get(current_account_id, 0)
         return {"ok": True, "items": items, "total": len(items)}
 
     def create_api_key(self, payload: dict) -> dict:
