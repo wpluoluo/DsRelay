@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -42,15 +43,15 @@ def _build_storage(args: argparse.Namespace):
         )
 
     env = _load_env_file(Path(args.env_file))
-    db_host = (env.get("STORAGE_DB_HOST") or "").strip()
+    db_host = (env.get("STORAGE_DB_HOST") or os.getenv("STORAGE_DB_HOST") or "").strip()
     if db_host:
         return ProxyStorage(
             {
                 "host": db_host,
-                "port": int(env.get("STORAGE_DB_PORT") or "3306"),
-                "user": env.get("STORAGE_DB_USER") or "",
-                "password": env.get("STORAGE_DB_PASSWORD") or "",
-                "database": env.get("STORAGE_DB_NAME") or "",
+                "port": int(env.get("STORAGE_DB_PORT") or os.getenv("STORAGE_DB_PORT") or "3306"),
+                "user": env.get("STORAGE_DB_USER") or os.getenv("STORAGE_DB_USER") or "",
+                "password": env.get("STORAGE_DB_PASSWORD") or os.getenv("STORAGE_DB_PASSWORD") or "",
+                "database": env.get("STORAGE_DB_NAME") or os.getenv("STORAGE_DB_NAME") or "",
             }
         )
     return LocalProxyStorage(args.local_storage_path)
