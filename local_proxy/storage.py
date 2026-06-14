@@ -998,9 +998,49 @@ class ProxyStorage:
         try:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM admin_account_groups WHERE group_id = %s", (target,))
+                cur.execute("SELECT id, allowed_group_ids_json FROM admin_accounts")
+                account_updates = []
+                for row in cur.fetchall():
+                    account_id = str(row[0] or "").strip()
+                    raw_allowed = row[1]
+                    try:
+                        allowed_group_ids = json.loads(raw_allowed) if raw_allowed else []
+                    except Exception:
+                        allowed_group_ids = []
+                    if not isinstance(allowed_group_ids, list):
+                        allowed_group_ids = []
+                    filtered_group_ids = [str(item or "").strip() for item in allowed_group_ids if str(item or "").strip() and str(item or "").strip() != target]
+                    if filtered_group_ids != allowed_group_ids:
+                        account_updates.append((json.dumps(filtered_group_ids, ensure_ascii=False, separators=(",", ":")), account_id))
+                if account_updates:
+                    cur.executemany(
+                        "UPDATE admin_accounts SET allowed_group_ids_json = %s, updated_at = %s WHERE id = %s",
+                        [(payload, time.time(), account_id) for payload, account_id in account_updates],
+                    )
                 cur.execute("UPDATE admin_api_keys SET group_id = NULL WHERE group_id = %s", (target,))
                 cur.execute("UPDATE admin_subscription_plans SET group_id = NULL WHERE group_id = %s", (target,))
                 cur.execute("UPDATE admin_account_subscriptions SET group_id = NULL WHERE group_id = %s", (target,))
+                cur.execute("SELECT id, config_json FROM admin_payment_channels")
+                channel_updates = []
+                for row in cur.fetchall():
+                    channel_id = str(row[0] or "").strip()
+                    raw_config = row[1]
+                    try:
+                        config = json.loads(raw_config) if raw_config else {}
+                    except Exception:
+                        config = {}
+                    if not isinstance(config, dict):
+                        config = {}
+                    allowed_group_ids = config.get("allowed_group_ids") if isinstance(config.get("allowed_group_ids"), list) else []
+                    filtered_group_ids = [str(item or "").strip() for item in allowed_group_ids if str(item or "").strip() and str(item or "").strip() != target]
+                    if filtered_group_ids != allowed_group_ids:
+                        next_config = {**config, "allowed_group_ids": filtered_group_ids}
+                        channel_updates.append((json.dumps(next_config, ensure_ascii=False, separators=(",", ":")), channel_id))
+                if channel_updates:
+                    cur.executemany(
+                        "UPDATE admin_payment_channels SET config_json = %s, updated_at = %s WHERE id = %s",
+                        [(payload, time.time(), channel_id) for payload, channel_id in channel_updates],
+                    )
                 cur.execute("DELETE FROM admin_groups WHERE id = %s", (target,))
             conn.commit()
         finally:

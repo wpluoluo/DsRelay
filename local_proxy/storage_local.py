@@ -435,12 +435,31 @@ class LocalProxyStorage:
                 for row in self._ensure_list_section("admin_account_groups")
                 if str((row or {}).get("group_id") or "") != target
             ]
+            accounts = self._ensure_dict_section("admin_accounts")
+            for item in accounts.values():
+                if not isinstance(item, dict):
+                    continue
+                allowed_group_ids = item.get("allowed_group_ids") if isinstance(item.get("allowed_group_ids"), list) else []
+                filtered_group_ids = [str(value or "").strip() for value in allowed_group_ids if str(value or "").strip() and str(value or "").strip() != target]
+                if filtered_group_ids != allowed_group_ids:
+                    item["allowed_group_ids"] = filtered_group_ids
+                    item["updated_at"] = time.time()
             for section_name in ("admin_api_keys", "admin_subscription_plans", "admin_account_subscriptions"):
                 section = self._ensure_dict_section(section_name)
                 for item in section.values():
                     if isinstance(item, dict) and str(item.get("group_id") or "") == target:
                         item["group_id"] = ""
                         item["updated_at"] = time.time()
+            payment_channels = self._ensure_dict_section("admin_payment_channels")
+            for item in payment_channels.values():
+                if not isinstance(item, dict):
+                    continue
+                config = item.get("config") if isinstance(item.get("config"), dict) else {}
+                allowed_group_ids = config.get("allowed_group_ids") if isinstance(config.get("allowed_group_ids"), list) else []
+                filtered_group_ids = [str(value or "").strip() for value in allowed_group_ids if str(value or "").strip() and str(value or "").strip() != target]
+                if filtered_group_ids != allowed_group_ids:
+                    item["config"] = {**config, "allowed_group_ids": filtered_group_ids}
+                    item["updated_at"] = time.time()
             self._ensure_dict_section("admin_groups").pop(target, None)
             self._persist_unlocked()
 

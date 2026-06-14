@@ -48,6 +48,35 @@ class FakeUserKeyBalanceStorage:
         self.memberships = memberships or {"acct_a": {"group_a"}}
         self.keys = {}
         self.balance_events = []
+        self.payment_channels = {
+            "channel_a": {
+                "id": "channel_a",
+                "name": "Channel A",
+                "provider": "manual",
+                "config": {"allowed_group_ids": ["group_a", "group_b"]},
+                "enabled": True,
+            }
+        }
+        self.app_config = {
+            "admin_channels": {
+                "items": [
+                    {
+                        "id": "channel_a",
+                        "name": "Channel A",
+                        "description": "",
+                        "platform": "openai",
+                        "billing_model_source": "channel_mapped",
+                        "group_ids": ["group_a", "group_b"],
+                        "model_pricing": [],
+                        "features_config": {},
+                        "enabled": True,
+                        "sort_order": 0,
+                        "created_at": 1.0,
+                        "updated_at": 1.0,
+                    }
+                ]
+            }
+        }
 
     def list_admin_accounts(self):
         return list(self.accounts.values())
@@ -130,6 +159,34 @@ class FakeUserKeyBalanceStorage:
         rows = [item for item in self.balance_events if not account_id or item["account_id"] == account_id]
         return rows[:limit]
 
+    def load_app_config(self, key):
+        return self.app_config.get(key, {})
+
+    def save_app_config(self, payload, key="runtime_config"):
+        self.app_config[key] = payload
+
+    def get_admin_group(self, group_id):
+        return dict(self.groups.get(group_id, {}))
+
+    def delete_admin_group(self, group_id):
+        target = str(group_id or "").strip()
+        self.groups.pop(target, None)
+        self.memberships = {
+            account_id: {current for current in group_ids if current != target}
+            for account_id, group_ids in self.memberships.items()
+        }
+        for account in self.accounts.values():
+            allowed_group_ids = account.get("allowed_group_ids") if isinstance(account.get("allowed_group_ids"), list) else []
+            account["allowed_group_ids"] = [current for current in allowed_group_ids if current != target]
+        for item in self.keys.values():
+            if item.get("group_id") == target:
+                item["group_id"] = ""
+                item["group_name"] = ""
+        for channel in self.payment_channels.values():
+            config = channel.get("config") if isinstance(channel.get("config"), dict) else {}
+            allowed_group_ids = config.get("allowed_group_ids") if isinstance(config.get("allowed_group_ids"), list) else []
+            channel["config"] = {**config, "allowed_group_ids": [current for current in allowed_group_ids if current != target]}
+
 
 class AdminUserKeyBalanceTests(unittest.TestCase):
     def test_api_key_group_is_validated_and_returned(self):
@@ -167,6 +224,18 @@ class AdminUserKeyBalanceTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["item"]["group_id"], "group_b")
+
+    def test_delete_group_cleans_allowed_group_ids(self):
+        storage = FakeUserKeyBalanceStorage(memberships={"acct_a": {"group_a", "group_b"}})
+        storage.accounts["acct_a"]["allowed_group_ids"] = ["group_a", "group_b"]
+        service = AdminConsoleService(storage=storage)
+
+        result = service.delete_group("group_b")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(storage.accounts["acct_a"]["allowed_group_ids"], ["group_a"])
+        self.assertEqual(storage.memberships["acct_a"], {"group_a"})
+        self.assertEqual(storage.payment_channels["channel_a"]["config"]["allowed_group_ids"], ["group_a"])
 
     def test_balance_adjustment_records_events(self):
         storage = FakeUserKeyBalanceStorage()

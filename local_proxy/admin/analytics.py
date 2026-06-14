@@ -599,6 +599,22 @@ class AdminAnalyticsMixin(AdminServiceBase):
         if not self.storage.get_admin_group(target):
             raise ValueError("group not found")
         self.storage.delete_admin_group(target)
+        if hasattr(self, "_load_admin_channels") and hasattr(self, "_save_admin_channels"):
+            items = self._load_admin_channels()
+            next_items = []
+            changed = False
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                current_group_ids = [coerce_text(value) for value in item.get("group_ids", []) if coerce_text(value)]
+                filtered_group_ids = [value for value in current_group_ids if value != target]
+                if filtered_group_ids != current_group_ids:
+                    changed = True
+                    next_items.append({**item, "group_ids": filtered_group_ids, "updated_at": time.time()})
+                else:
+                    next_items.append(item)
+            if changed:
+                self._save_admin_channels(next_items)
         return {"ok": True, "id": target}
 
     def list_usage(self, limit: int = 200, *, started_after=None, started_before=None, account_id: str = "", api_key_id: str = "") -> dict:
