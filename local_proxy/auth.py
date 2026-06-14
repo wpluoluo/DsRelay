@@ -122,7 +122,15 @@ def get_authenticated_role() -> str:
 
 
 def get_authenticated_account_id() -> str:
-    return str(session.get("_proxy_account_id") or "").strip()
+    account_id = str(session.get("_proxy_account_id") or "").strip()
+    if account_id:
+        return account_id
+    if get_authenticated_role() == "admin" and _ADMIN_ACCOUNT_LOOKUP is not None:
+        admin_identifier = str(session.get("_proxy_username") or ADMIN_USERNAME).strip() or ADMIN_USERNAME
+        admin_account = _ADMIN_ACCOUNT_LOOKUP(admin_identifier)
+        _set_authenticated_account(admin_account)
+        return str(session.get("_proxy_account_id") or "").strip()
+    return ""
 
 
 def _set_authenticated_account(account: dict | None) -> None:
@@ -137,6 +145,7 @@ def login_account_session(account: dict | None, *, role: str = "user") -> None:
     session.clear()
     session["_proxy_authed"] = True
     session["_proxy_role"] = str(role or "user").strip().lower() or "user"
+    session["_proxy_username"] = str((account or {}).get("username") or (account or {}).get("name") or "").strip()
     _set_authenticated_account(account)
     session.permanent = False
     _generate_csrf_token()
@@ -293,6 +302,7 @@ def login_page():
             session.clear()
             session["_proxy_authed"] = True
             session["_proxy_role"] = "admin"
+            session["_proxy_username"] = username
             admin_account = None
             if _ADMIN_ACCOUNT_LOOKUP is not None:
                 admin_account = _ADMIN_ACCOUNT_LOOKUP(username)
@@ -313,6 +323,7 @@ def login_page():
                 session.clear()
                 session["_proxy_authed"] = True
                 session["_proxy_role"] = "user"
+                session["_proxy_username"] = username
                 _set_authenticated_account(account)
                 session.permanent = False
                 _generate_csrf_token()
