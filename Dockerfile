@@ -17,8 +17,15 @@ RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua
 
 COPY . .
 
-RUN cd frontend/app && npm ci && \
-    node -e "const lock=require('./package-lock.json'); const pkgs=lock.packages||{}; const rolldown=pkgs['node_modules/rolldown']?.version; if (rolldown) { require('child_process').execFileSync('npm', ['install', '--no-save', '@rolldown/binding-linux-x64-gnu@' + rolldown], { stdio: 'inherit' }); }" && \
+RUN npm config set registry https://registry.npmmirror.com && \
+    npm config set fetch-retries 5 && \
+    npm config set fetch-retry-factor 2 && \
+    npm config set fetch-retry-mintimeout 1000 && \
+    npm config set fetch-retry-maxtimeout 20000 && \
+    npm config set network-timeout 120000
+
+RUN cd frontend/app && npm ci --registry https://registry.npmmirror.com && \
+    node -e "const lock=require('./package-lock.json'); const pkgs=lock.packages||{}; const rolldown=pkgs['node_modules/rolldown']?.version; if (rolldown) { require('child_process').execFileSync('npm', ['install', '--no-save', '@rolldown/binding-linux-x64-gnu@' + rolldown, '--registry', 'https://registry.npmmirror.com'], { stdio: 'inherit' }); }" && \
     npm run build
 
 RUN python - <<'PY'
