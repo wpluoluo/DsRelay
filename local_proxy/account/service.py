@@ -117,10 +117,17 @@ class AccountPortalService:
     def list_groups(self, account_id: str) -> dict:
         account = self._require_account(account_id)
         allowed_ids = self._visible_group_ids(account)
-        groups = self.admin_service.list_groups().get("items", [])
-        if allowed_ids:
-            groups = [item for item in groups if coerce_text(item.get("id")) in allowed_ids]
-        groups = [item for item in groups if item.get("enabled") is not False]
+        groups = []
+        for item in self.storage.list_admin_groups() if self.storage is not None else []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("enabled") is False:
+                continue
+            group_id = coerce_text(item.get("id"))
+            if allowed_ids and group_id and group_id not in allowed_ids:
+                continue
+            groups.append(item)
+        groups.sort(key=lambda item: (safe_int(item.get("sort_order")), coerce_text(item.get("name"))))
         return {"ok": True, "items": groups, "total": len(groups)}
 
     def list_channels(self, account_id: str) -> dict:
@@ -142,11 +149,68 @@ class AccountPortalService:
 
     def list_api_keys(self, account_id: str) -> dict:
         account = self._require_account(account_id)
-        items = [
-            item
-            for item in self.admin_service.list_api_keys().get("items", [])
-            if coerce_text(item.get("account_id")) == account["id"]
-        ]
+        usage_by_key: dict[str, dict] = {}
+        for request_row in self.admin_service._load_recent_requests(limit=5000):
+            key_id = coerce_text(request_row.get("proxy_api_key_id"))
+            if not key_id:
+                continue
+            entry = usage_by_key.setdefault(
+                key_id,
+                {
+                    "request_count": 0,
+                    "error_count": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "input_bytes": 0,
+                    "output_bytes": 0,
+                    "actual_cost": 0.0,
+                    "total_cost": 0.0,
+                    "last_used_request_at": "",
+                },
+            )
+            prompt_tokens = safe_int(request_row.get("prompt_tokens"))
+            completion_tokens = safe_int(request_row.get("completion_tokens"))
+            total_tokens = safe_int(request_row.get("total_tokens")) or prompt_tokens + completion_tokens
+            started_at = coerce_text(request_row.get("started_at"))
+            entry["request_count"] += 1
+            if request_row.get("error") or safe_int(request_row.get("status_code")) >= 400:
+                entry["error_count"] += 1
+            entry["prompt_tokens"] += prompt_tokens
+            entry["completion_tokens"] += completion_tokens
+            entry["total_tokens"] += total_tokens
+            entry["input_bytes"] += safe_int(request_row.get("input_bytes"))
+            entry["output_bytes"] += safe_int(request_row.get("bytes_sent"))
+            entry["actual_cost"] += safe_float(request_row.get("actual_cost")) or safe_float(request_row.get("total_cost"))
+            entry["total_cost"] += safe_float(request_row.get("total_cost"))
+            if started_at and started_at > entry["last_used_request_at"]:
+                entry["last_used_request_at"] = started_at
+        subscription_status = self.admin_service._get_account_subscription_status(account["id"])
+        items = []
+        for row in self.storage.list_admin_api_keys() if self.storage is not None else []:
+            if coerce_text(row.get("account_id")) != account["id"]:
+                continue
+            usage = usage_by_key.get(coerce_text(row.get("id")), {})
+            items.append(
+                {
+                    **row,
+                    "account_name": coerce_text(account.get("name")) or account["id"],
+                    "account_source_type": account.get("source_type"),
+                    "account_enabled": account.get("enabled"),
+                    "account_note": account.get("note"),
+                    **subscription_status,
+                    "request_count": safe_int(usage.get("request_count")),
+                    "error_count": safe_int(usage.get("error_count")),
+                    "prompt_tokens": safe_int(usage.get("prompt_tokens")),
+                    "completion_tokens": safe_int(usage.get("completion_tokens")),
+                    "total_tokens": safe_int(usage.get("total_tokens")),
+                    "input_bytes": safe_int(usage.get("input_bytes")),
+                    "output_bytes": safe_int(usage.get("output_bytes")),
+                    "actual_cost": safe_float(usage.get("actual_cost")),
+                    "total_cost": safe_float(usage.get("total_cost")),
+                    "last_used_request_at": coerce_text(usage.get("last_used_request_at")),
+                }
+            )
         return {"ok": True, "items": items, "total": len(items)}
 
     def create_api_key(self, account_id: str, payload: dict) -> dict:
@@ -381,12 +445,7 @@ class AccountPortalService:
         allowed = self._allowed_group_ids(account)
         if allowed:
             return allowed
-        _, memberships = self.admin_service._group_map()
-        return [
-            coerce_text(item)
-            for item in memberships.get(coerce_text(account.get("id")), [])
-            if coerce_text(item)
-        ]
+        return []
 
     def _require_account(self, account_id: str) -> dict:
         target = coerce_text(account_id)

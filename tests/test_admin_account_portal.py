@@ -182,6 +182,18 @@ class FakeAccountPortalStorage:
     def get_admin_api_key(self, key_id):
         return dict(self.api_keys.get(key_id, {}))
 
+    def upsert_admin_api_key(self, payload):
+        item = dict(payload)
+        group_id = item.get("group_id") or ""
+        group_name = ""
+        for group in self.list_admin_groups():
+            if group.get("id") == group_id:
+                group_name = group.get("name", "")
+                break
+        item["group_name"] = group_name
+        self.api_keys[item["id"]] = item
+        return dict(item)
+
     def list_admin_payment_orders(self):
         return list(self.payment_orders.values())
 
@@ -271,6 +283,8 @@ class AdminAccountPortalTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in keys["items"]], ["key_a"])
         self.assertEqual([item["id"] for item in orders["items"]], ["order_a"])
         self.assertEqual([item["request_id"] for item in usage["items"]], ["req_a"])
+        self.assertEqual([item["id"] for item in keys["items"]], ["key_a"])
+        self.assertEqual(keys["items"][0]["account_name"], "Account A")
 
     def test_account_portal_filters_channels_by_visible_groups(self):
         storage = FakeAccountPortalStorage()
@@ -280,6 +294,40 @@ class AdminAccountPortalTests(unittest.TestCase):
         channels = service.list_channels("acct_a")
 
         self.assertEqual([item["id"] for item in channels["items"]], ["channel_a", "channel_public"])
+
+    def test_account_without_allowed_groups_can_still_list_all_groups(self):
+        storage = FakeAccountPortalStorage()
+        storage.accounts["acct_a"]["allowed_group_ids"] = []
+        admin_service = AdminConsoleService(storage=storage)
+        service = AccountPortalService(admin_service)
+
+        groups = service.list_groups("acct_a")
+
+        self.assertEqual([item["id"] for item in groups["items"]], ["group_a", "group_b"])
+
+    def test_account_without_allowed_groups_can_create_key_for_existing_group(self):
+        storage = FakeAccountPortalStorage()
+        storage.accounts["acct_a"]["allowed_group_ids"] = []
+        admin_service = AdminConsoleService(storage=storage)
+        service = AccountPortalService(admin_service)
+
+        created = service.create_api_key("acct_a", {"name": "Key C", "group_id": "group_b", "enabled": True})
+
+        self.assertTrue(created["ok"])
+        self.assertEqual(created["item"]["account_id"], "acct_a")
+        self.assertEqual(created["item"]["group_id"], "group_b")
+        self.assertEqual(created["item"]["group_name"], "Group B")
+
+    def test_account_groups_are_loaded_from_storage_without_admin_analytics_shape(self):
+        storage = FakeAccountPortalStorage()
+        admin_service = AdminConsoleService(storage=storage)
+        service = AccountPortalService(admin_service)
+
+        groups = service.list_groups("acct_a")
+
+        self.assertEqual(groups["total"], 1)
+        self.assertEqual(groups["items"][0]["id"], "group_a")
+        self.assertEqual(groups["items"][0]["name"], "Group A")
 
 
 if __name__ == "__main__":
