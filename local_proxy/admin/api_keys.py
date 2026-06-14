@@ -115,13 +115,6 @@ class AdminApiKeysMixin(AdminServiceBase):
             raise ValueError("account_id is required")
         account = self._require_account(account_id)
         self._validate_account_active(account)
-        membership_rows = self.storage.list_admin_account_groups()
-        group_ids = [
-            coerce_text(row.get("group_id"))
-            for row in membership_rows
-            if coerce_text(row.get("account_id")) == account_id and coerce_text(row.get("group_id"))
-        ]
-        self._validate_account_allowed_groups(account, group_ids)
         group_id = self._resolve_key_group_id(account, payload.get("group_id"))
         raw_key = generate_proxy_api_key()
         saved = self.storage.upsert_admin_api_key(
@@ -149,13 +142,6 @@ class AdminApiKeysMixin(AdminServiceBase):
         next_name = coerce_text(payload.get("name")) or coerce_text(current.get("name")) or "默认业务 Key"
         account = self._require_account(next_account_id)
         self._validate_account_active(account)
-        membership_rows = self.storage.list_admin_account_groups()
-        group_ids = [
-            coerce_text(row.get("group_id"))
-            for row in membership_rows
-            if coerce_text(row.get("account_id")) == next_account_id and coerce_text(row.get("group_id"))
-        ]
-        self._validate_account_allowed_groups(account, group_ids)
         next_group_id = self._resolve_key_group_id(account, payload.get("group_id")) if "group_id" in payload else coerce_text(current.get("group_id"))
         saved = self.storage.upsert_admin_api_key(
             {

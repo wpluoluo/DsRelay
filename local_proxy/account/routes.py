@@ -150,24 +150,36 @@ def register_account_routes(app, *, account_required, account_service, get_accou
     @account_required
     def account_api_keys_create():
         payload = request.get_json(silent=True) or {}
-        return jsonify(account_service.create_api_key(current_account_id(), payload))
+        try:
+            return jsonify(account_service.create_api_key(current_account_id(), payload))
+        except Exception as exc:
+            return jsonify({"ok": False, "message": str(exc)}), 400
 
     @app.post("/account/keys/<key_id>")
     @account_required
     def account_api_keys_update(key_id: str):
         payload = request.get_json(silent=True) or {}
-        return jsonify(account_service.update_api_key(current_account_id(), key_id, payload))
+        try:
+            return jsonify(account_service.update_api_key(current_account_id(), key_id, payload))
+        except Exception as exc:
+            return jsonify({"ok": False, "message": str(exc)}), 400
 
     @app.post("/account/keys/<key_id>/enabled")
     @account_required
     def account_api_keys_enabled(key_id: str):
         payload = request.get_json(silent=True) or {}
-        return jsonify(account_service.set_api_key_enabled(current_account_id(), key_id, payload.get("enabled") is True))
+        try:
+            return jsonify(account_service.set_api_key_enabled(current_account_id(), key_id, payload.get("enabled") is True))
+        except Exception as exc:
+            return jsonify({"ok": False, "message": str(exc)}), 400
 
     @app.delete("/account/keys/<key_id>")
     @account_required
     def account_api_keys_delete(key_id: str):
-        return jsonify(account_service.delete_api_key(current_account_id(), key_id))
+        try:
+            return jsonify(account_service.delete_api_key(current_account_id(), key_id))
+        except Exception as exc:
+            return jsonify({"ok": False, "message": str(exc)}), 400
 
     @app.get("/account/usage")
     @account_required

@@ -4,7 +4,7 @@ from local_proxy.admin.service import AdminConsoleService
 
 
 class FakeUserKeyBalanceStorage:
-    def __init__(self):
+    def __init__(self, *, memberships=None):
         self.accounts = {
             "acct_a": {
                 "id": "acct_a",
@@ -45,7 +45,7 @@ class FakeUserKeyBalanceStorage:
                 "sort_order": 0,
             },
         }
-        self.memberships = {"acct_a": {"group_a"}}
+        self.memberships = memberships or {"acct_a": {"group_a"}}
         self.keys = {}
         self.balance_events = []
 
@@ -148,6 +148,25 @@ class AdminUserKeyBalanceTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             service.create_api_key({"account_id": "acct_a", "name": "Key B", "group_id": "group_b"})
+
+    def test_api_key_create_ignores_unrelated_membership_rows(self):
+        storage = FakeUserKeyBalanceStorage(memberships={"acct_a": {"group_a", "group_b"}})
+        service = AdminConsoleService(storage=storage)
+
+        result = service.create_api_key({"account_id": "acct_a", "name": "Key A", "group_id": "group_a"})
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["item"]["group_id"], "group_a")
+
+    def test_api_key_group_allows_any_valid_group_when_allowed_list_is_empty(self):
+        storage = FakeUserKeyBalanceStorage(memberships={"acct_a": {"group_a"}})
+        storage.accounts["acct_a"]["allowed_group_ids"] = []
+        service = AdminConsoleService(storage=storage)
+
+        result = service.create_api_key({"account_id": "acct_a", "name": "Key B", "group_id": "group_b"})
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["item"]["group_id"], "group_b")
 
     def test_balance_adjustment_records_events(self):
         storage = FakeUserKeyBalanceStorage()

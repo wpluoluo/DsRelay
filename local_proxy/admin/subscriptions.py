@@ -103,7 +103,12 @@ class AdminSubscriptionsMixin(AdminServiceBase):
             "weekly_used": safe_int(payload.get("weekly_used")),
             "monthly_used": safe_int(payload.get("monthly_used")),
         }
-        return {"ok": True, "item": self.storage.upsert_admin_account_subscription(item)}
+        saved = self.storage.upsert_admin_account_subscription(item)
+        if resolved_group_id:
+            _, memberships = self._group_map()
+            next_group_ids = sorted(set(memberships.get(account_id, [])) | {resolved_group_id})
+            self.storage.replace_admin_account_groups(account_id, next_group_ids)
+        return {"ok": True, "item": saved}
 
     def extend_subscription(self, subscription_id: str, payload: dict) -> dict:
         if self.storage is None:

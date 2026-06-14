@@ -254,6 +254,11 @@ class AdminPaymentsMixin(AdminServiceBase):
                 "monthly_used": 0,
             }
         )
+        if resolved_group_id:
+            account_id = coerce_text(current.get("account_id"))
+            _, memberships = self._group_map()
+            next_group_ids = sorted(set(memberships.get(account_id, [])) | {resolved_group_id})
+            self.storage.replace_admin_account_groups(account_id, next_group_ids)
         current["subscription_id"] = coerce_text(subscription.get("id"))
         current["status"] = "paid"
         current["provider_order_id"] = coerce_text(payload.get("provider_order_id")) or coerce_text(current.get("provider_order_id"))
