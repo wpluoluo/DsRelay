@@ -123,7 +123,7 @@ function parseLogRow(text: string, recentMap: Record<string, RequestEntry>): Par
   const pool = recent?.pool_name || recent?.selected_pool_name || text.match(/连接池=([^\s]+)/)?.[1] || '-';
   const keySwitch = text.match(/([a-f0-9]{8,12})->([a-f0-9]{8,12})/i);
   const keyText = keySwitch ? `${keySwitch[1]} -> ${keySwitch[2]}` : '-';
-  const model = text.match(/逻辑模型=([^\s]+)/)?.[1] || text.match(/模型=([^\s]+)/)?.[1] || '-';
+  const model = recent?.requested_model || text.match(/逻辑模型=([^\s]+)/)?.[1] || text.match(/模型=([^\s]+)/)?.[1] || '-';
   const status = text.match(/状态=([^\s]+)/)?.[1] || (text.includes('等待上游首包中') ? '等待首包' : '-');
   const eventTitle = eventTitleForLog(text);
   const message = text.replace(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s*/, '').replace(/\[(INFO|WARNING|ERROR|DEBUG)\]\s*/, '').trim();

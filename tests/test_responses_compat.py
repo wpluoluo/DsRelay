@@ -506,6 +506,26 @@ class ResponsesCompatTests(unittest.TestCase):
         self.assertEqual(result["forced_error_payload"]["error"]["code"], "model_not_supported_by_routes")
         self.assertIn("gpt-5.4", result["forced_error_payload"]["error"]["message"])
 
+    def test_build_request_meta_records_requested_model_truth(self):
+        with server.app.test_request_context("/v1/responses", method="POST", json={"model": "gpt-5.4", "input": "hi"}):
+            meta = server.build_request_meta(
+                request_id="req-meta-model",
+                sanitized_query="",
+                upstream_url="",
+                stream=False,
+                upstream_stream=False,
+                retry_count=0,
+                route_pool_size=0,
+                attempt_urls=[],
+                attempt_route_chain="",
+                protocol="openai_responses",
+                request_repairs=0,
+                request_payload={"model": "gpt-5.4", "input": "hi"},
+            )
+
+        self.assertEqual(meta["requested_model"], "gpt-5.4")
+        self.assertTrue(meta["request_model_present"])
+
     def test_execute_upstream_request_keeps_alias_only_route_when_it_matches_requested_model(self):
         original_pools = server.PROXY_POOLS
         original_upstream_pool = server.UPSTREAM_URL_POOL

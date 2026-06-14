@@ -289,11 +289,30 @@ class AdminAccountPortalTests(unittest.TestCase):
     def test_account_portal_filters_channels_by_visible_groups(self):
         storage = FakeAccountPortalStorage()
         admin_service = AdminConsoleService(storage=storage)
+        admin_service.proxy_pools = [
+            {
+                "name": "pool_a",
+                "enabled": True,
+                "group_ids": ["group_a"],
+                "supported_models_text": "model-a\nmodel-public",
+                "model_aliases_text": "",
+            },
+            {
+                "name": "pool_b",
+                "enabled": True,
+                "group_ids": ["group_b"],
+                "supported_models_text": "model-b",
+                "model_aliases_text": "",
+            },
+        ]
         service = AccountPortalService(admin_service)
 
         channels = service.list_channels("acct_a")
 
         self.assertEqual([item["id"] for item in channels["items"]], ["channel_a", "channel_public"])
+        self.assertEqual(channels["items"][0]["available_model_ids"], ["model-a", "model-public"])
+        self.assertEqual([row["model"] for row in channels["items"][0]["model_pricing"]], ["model-a"])
+        self.assertEqual([row["model"] for row in channels["items"][1]["model_pricing"]], ["model-public"])
 
     def test_account_without_allowed_groups_can_still_list_all_groups(self):
         storage = FakeAccountPortalStorage()

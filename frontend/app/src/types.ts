@@ -103,6 +103,8 @@ export type RequestEntry = Record<string, any> & {
   route_pool_size?: number;
   attempt_route_count?: number;
   pool_name?: string;
+  requested_model?: string;
+  request_model_present?: boolean;
   logical_model?: string;
   model?: string;
   resolved_model?: string;
@@ -514,6 +516,7 @@ export type AdminChannel = {
   plan_count?: number;
   pricing_count?: number;
   model_pricing?: AdminChannelPricing[];
+  available_model_ids?: string[];
   features_config?: Record<string, unknown>;
   enabled?: boolean;
   sort_order?: number;

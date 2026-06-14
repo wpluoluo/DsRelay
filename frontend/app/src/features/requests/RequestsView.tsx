@@ -117,7 +117,8 @@ export function RequestRow({
   const routeIndex = entry.selected_route_index == null ? '-' : `线路 ${Number(entry.selected_route_index) + 1}`;
   const routePoolSize = Number(entry.route_pool_size || 0);
   const routeAttemptCount = Number(entry.attempt_route_count || 0);
-  const logicalModel = entry.logical_model || entry.model || '-';
+  const requestedModel = entry.requested_model || '-';
+  const logicalModel = entry.logical_model || entry.model || requestedModel || '-';
   const resolvedModel = entry.resolved_model || logicalModel || '-';
   const inputBytes = Number(entry.input_bytes || 0);
   const outputBytes = Number(entry.bytes_sent || 0);
@@ -136,13 +137,13 @@ export function RequestRow({
     <tr>
       <td><div className="request-stack"><div className="request-cell-title">{maskEmpty(entry.started_at)}</div><div className="request-cell-sub request-mono">{maskEmpty(entry.request_id)}</div></div></td>
       {columns.has('source') ? (
-        <td><div className="request-stack"><div className="request-cell-title">{maskEmpty(entry.remote)}</div><div className="request-cell-sub">重试 {entry.retry_count || 0} · 候选 {routePoolSize || 1}{routeAttemptCount ? ` · 已试 ${routeAttemptCount}` : ''}</div></div></td>
+        <td><div className="request-stack"><div className="request-cell-title">{maskEmpty(entry.remote)}</div><div className="request-cell-sub">{maskEmpty(entry.protocol)} · {maskEmpty(entry.path)}</div><div className="request-cell-sub">重试 {entry.retry_count || 0} · 候选 {routePoolSize || 1}{routeAttemptCount ? ` · 已试 ${routeAttemptCount}` : ''}</div></div></td>
       ) : null}
       {columns.has('route') ? (
         <td><div className="request-stack"><div className="request-line-main">{poolName} · {routeIndex} · {keyIndex}</div><div className="request-line-path request-ellipsis">{maskEmpty(actualRouteUrl)}</div></div></td>
       ) : null}
       {columns.has('model') ? (
-        <td><div className="request-stack"><div className="request-cell-title request-ellipsis">{logicalModel}</div><div className="request-cell-sub request-ellipsis">{resolvedModel}</div><div className="request-cell-sub">{poolName}</div></div></td>
+        <td><div className="request-stack"><div className="request-cell-title request-ellipsis">{logicalModel}</div><div className="request-cell-sub request-ellipsis">请求 {requestedModel}</div><div className="request-cell-sub request-ellipsis">实际 {resolvedModel}</div></div></td>
       ) : null}
       {columns.has('metrics') ? (
         <td>

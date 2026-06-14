@@ -7,6 +7,7 @@ import time
 import uuid
 
 from local_proxy.admin.base import coerce_text, safe_float, safe_int
+from local_proxy.upstream.models import normalize_model_alias_key, parse_model_aliases, parse_supported_model_ids
 
 
 class AccountPortalService:
@@ -165,6 +166,8 @@ class AccountPortalService:
         account = self._require_account(account_id)
         visible_group_ids = self._visible_group_ids(account)
         items = []
+        available_models = self._visible_route_model_ids(account)
+        available_model_keys = {normalize_model_alias_key(model_id) for model_id in available_models}
         for channel in self.admin_service.list_channels().get("items", []):
             if channel.get("enabled") is False:
                 continue
@@ -175,7 +178,20 @@ class AccountPortalService:
             ]
             if visible_group_ids and channel_groups and not set(visible_group_ids).intersection(channel_groups):
                 continue
-            items.append(channel)
+            next_channel = dict(channel)
+            raw_pricing = channel.get("model_pricing") if isinstance(channel.get("model_pricing"), list) else []
+            next_channel["model_pricing"] = [
+                row
+                for row in raw_pricing
+                if isinstance(row, dict)
+                and (
+                    not available_model_keys
+                    or normalize_model_alias_key(row.get("model")) in available_model_keys
+                )
+            ]
+            next_channel["available_model_ids"] = list(available_models)
+            next_channel["pricing_count"] = len(next_channel["model_pricing"])
+            items.append(next_channel)
         return {"ok": True, "items": items, "total": len(items)}
 
     def list_api_keys(self, account_id: str) -> dict:
@@ -477,6 +493,42 @@ class AccountPortalService:
         if allowed:
             return allowed
         return []
+
+    def _visible_route_model_ids(self, account: dict) -> list[str]:
+        visible_group_ids = set(self._visible_group_ids(account))
+        model_ids: list[str] = []
+        seen: set[str] = set()
+
+        def add(model_name: str | None) -> None:
+            model_text = str(model_name or "").strip().removeprefix("models/")
+            if not model_text:
+                return
+            model_key = normalize_model_alias_key(model_text)
+            if model_key in seen:
+                return
+            seen.add(model_key)
+            model_ids.append(model_text)
+
+        runtime_pools = list(getattr(self.admin_service, "proxy_pools", []) or [])
+        for pool in runtime_pools:
+            if not isinstance(pool, dict):
+                continue
+            if pool.get("enabled") is False:
+                continue
+            pool_group_ids = {
+                coerce_text(item)
+                for item in (pool.get("group_ids") if isinstance(pool.get("group_ids"), list) else [])
+                if coerce_text(item)
+            }
+            if visible_group_ids and pool_group_ids and not visible_group_ids.intersection(pool_group_ids):
+                continue
+            for supported_model in parse_supported_model_ids(pool.get("supported_models_text")):
+                add(supported_model)
+            for logical_model, targets in parse_model_aliases(pool.get("model_aliases_text")).items():
+                add(logical_model)
+                for target in targets or []:
+                    add(target)
+        return model_ids
 
     def _require_account(self, account_id: str) -> dict:
         target = coerce_text(account_id)

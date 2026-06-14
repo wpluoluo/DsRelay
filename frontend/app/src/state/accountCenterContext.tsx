@@ -33,6 +33,13 @@ export type AccountCenterContextValue = {
   visiblePlans: AdminSubscriptionPlan[];
   visibleChannels: AdminPaymentChannel[];
   visibleAvailableChannels: AdminChannel[];
+  refreshAccountCore: () => Promise<void>;
+  refreshApiKeys: () => Promise<void>;
+  refreshSubscriptions: () => Promise<void>;
+  refreshOrders: () => Promise<void>;
+  refreshPlans: () => Promise<void>;
+  refreshPaymentChannels: () => Promise<void>;
+  refreshAvailableChannels: () => Promise<void>;
   reload: () => Promise<void>;
   loading: boolean;
 };
@@ -74,6 +81,30 @@ export function AccountCenterProvider({ children }: { children: React.ReactNode 
     visiblePlans,
     visibleChannels,
     visibleAvailableChannels,
+    refreshAccountCore: async () => {
+      await Promise.all([
+        accountQuery.refetch(),
+        groupsQuery.refetch(),
+      ]);
+    },
+    refreshApiKeys: async () => {
+      await keysQuery.refetch();
+    },
+    refreshSubscriptions: async () => {
+      await subscriptionsQuery.refetch();
+    },
+    refreshOrders: async () => {
+      await ordersQuery.refetch();
+    },
+    refreshPlans: async () => {
+      await plansQuery.refetch();
+    },
+    refreshPaymentChannels: async () => {
+      await channelsQuery.refetch();
+    },
+    refreshAvailableChannels: async () => {
+      await availableChannelsQuery.refetch();
+    },
     reload: async () => {
       await Promise.all([
         accountQuery.refetch(),

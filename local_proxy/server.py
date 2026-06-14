@@ -1479,6 +1479,12 @@ def rebuild_pool_state() -> None:
         url: connection_pool_state.get_api_keys_for_url(url)
         for url in UPSTREAM_URL_POOL
     }
+    service = globals().get("admin_analytics_service")
+    if service is not None:
+        try:
+            service.proxy_pools = PROXY_POOLS
+        except Exception:
+            pass
     save_pool_runtime_state_to_storage()
 
 
@@ -3356,49 +3362,56 @@ def request_upstream_with_retries(
         (request_meta or {}).get("session_affinity_key") or ""
     )
     route_selection_thread_context.last_debug = None
-    return orchestrated_request_upstream_with_retries(
-        request_kwargs,
-        subpath=subpath,
-        request_id=request_id,
-        upstream_urls=upstream_urls,
-        initial_blocked_urls=initial_blocked_urls,
-        model_candidates=model_candidates,
-        should_retry_request=should_retry_upstream_request,
-        max_retries=UPSTREAM_MAX_RETRIES,
-        should_enforce_route_switch_window=should_enforce_route_switch_window,
-        route_switch_window_seconds=UPSTREAM_ROUTE_SWITCH_WINDOW_SECONDS,
-        build_attempt_url_cycle=build_attempt_url_cycle,
-        build_model_candidate_order_for_route=build_model_candidate_order_for_route,
-        should_race_model_candidates_for_route=should_race_model_candidates_for_route,
-        get_api_keys_for_url=get_api_keys_for_url,
-        choose_api_key_for_url=choose_api_key_for_url,
-        mark_api_key_success=mark_api_key_success,
-        mark_api_key_failure=mark_api_key_failure,
-        mark_route_success=mark_route_success,
-        mark_route_failure=mark_route_failure,
-        response_indicates_model_unavailable=response_indicates_model_unavailable,
-        classify_upstream_response=classify_upstream_response,
-        extract_error_preview_from_response=extract_error_preview_from_response,
-        apply_model_candidate_to_request_kwargs=apply_model_candidate_to_request_kwargs,
-        apply_learned_completion_limit_to_request_kwargs=apply_learned_completion_limit_to_request_kwargs,
-        extract_completion_token_limit_from_response=extract_completion_token_limit_from_response,
-        extract_context_token_limit_from_response=extract_context_token_limit_from_response,
-        clamp_payload_output_tokens=clamp_payload_output_tokens,
-        record_learned_model_capability=record_learned_model_capability,
-        record_model_candidate_result=record_model_candidate_result,
-        compute_retry_delay_ms=compute_retry_delay_ms,
-        remaining_retry_window_ms=remaining_retry_window_ms,
-        append_race_attempts=append_race_attempts,
-        model_candidate_differs_from_logical=model_candidate_differs_from_logical,
-        logger=proxy_logger,
-        cache_stat_bump=bump_cache_stat,
-        model_candidate_race_limit=MODEL_CANDIDATE_RACE_LIMIT,
-        model_candidate_race_timeout_seconds=MODEL_CANDIDATE_RACE_TIMEOUT_SECONDS,
-        enable_model_candidate_race=ENABLE_MODEL_CANDIDATE_RACE,
-        request_sender=_node_aware_request,
-        get_rate_limit_retry_attempts=get_rate_limit_retry_attempts,
-        compute_rate_limit_retry_delay_ms=compute_rate_limit_retry_delay_ms,
-    )
+    try:
+        return orchestrated_request_upstream_with_retries(
+            request_kwargs,
+            subpath=subpath,
+            request_id=request_id,
+            upstream_urls=upstream_urls,
+            initial_blocked_urls=initial_blocked_urls,
+            model_candidates=model_candidates,
+            should_retry_request=should_retry_upstream_request,
+            max_retries=UPSTREAM_MAX_RETRIES,
+            should_enforce_route_switch_window=should_enforce_route_switch_window,
+            route_switch_window_seconds=UPSTREAM_ROUTE_SWITCH_WINDOW_SECONDS,
+            build_attempt_url_cycle=build_attempt_url_cycle,
+            build_model_candidate_order_for_route=build_model_candidate_order_for_route,
+            should_race_model_candidates_for_route=should_race_model_candidates_for_route,
+            get_api_keys_for_url=get_api_keys_for_url,
+            choose_api_key_for_url=choose_api_key_for_url,
+            mark_api_key_success=mark_api_key_success,
+            mark_api_key_failure=mark_api_key_failure,
+            mark_route_success=mark_route_success,
+            mark_route_failure=mark_route_failure,
+            response_indicates_model_unavailable=response_indicates_model_unavailable,
+            classify_upstream_response=classify_upstream_response,
+            extract_error_preview_from_response=extract_error_preview_from_response,
+            apply_model_candidate_to_request_kwargs=apply_model_candidate_to_request_kwargs,
+            apply_learned_completion_limit_to_request_kwargs=apply_learned_completion_limit_to_request_kwargs,
+            extract_completion_token_limit_from_response=extract_completion_token_limit_from_response,
+            extract_context_token_limit_from_response=extract_context_token_limit_from_response,
+            clamp_payload_output_tokens=clamp_payload_output_tokens,
+            record_learned_model_capability=record_learned_model_capability,
+            record_model_candidate_result=record_model_candidate_result,
+            compute_retry_delay_ms=compute_retry_delay_ms,
+            remaining_retry_window_ms=remaining_retry_window_ms,
+            append_race_attempts=append_race_attempts,
+            model_candidate_differs_from_logical=model_candidate_differs_from_logical,
+            logger=proxy_logger,
+            cache_stat_bump=bump_cache_stat,
+            model_candidate_race_limit=MODEL_CANDIDATE_RACE_LIMIT,
+            model_candidate_race_timeout_seconds=MODEL_CANDIDATE_RACE_TIMEOUT_SECONDS,
+            enable_model_candidate_race=ENABLE_MODEL_CANDIDATE_RACE,
+            request_sender=_node_aware_request,
+            get_rate_limit_retry_attempts=get_rate_limit_retry_attempts,
+            compute_rate_limit_retry_delay_ms=compute_rate_limit_retry_delay_ms,
+        )
+    finally:
+        for attr_name in ("request_id", "logical_model", "session_affinity_key", "last_debug"):
+            try:
+                setattr(route_selection_thread_context, attr_name, None)
+            except Exception:
+                pass
 
 
 def _node_aware_request(method, url, **kwargs):
@@ -3558,6 +3571,7 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
     execution = execution or {}
     upstream_payload = execution.get("upstream_payload")
     effective_payload = upstream_payload if isinstance(upstream_payload, dict) else request_payload
+    requested_model = str((request_payload or {}).get("model") or "").strip() if isinstance(request_payload, dict) else ""
     cached_response_body = execution.get("cached_response_body") if isinstance(execution.get("cached_response_body"), dict) else {}
     response_body = execution.get("response_body") if isinstance(execution.get("response_body"), dict) else cached_response_body
     usage_details = build_usage_observability_meta(response_body)
@@ -3651,6 +3665,8 @@ def build_request_observability_meta(execution: dict | None, request_payload: di
         upstream_prompt_cache_status = "miss"
         upstream_prompt_cache_note = "本次未返回缓存命中"
     meta = {
+        "requested_model": requested_model,
+        "request_model_present": bool(requested_model),
         "logical_model": logical_model,
         "resolved_model": resolved_model,
         "route_url": route_url,
@@ -3734,6 +3750,7 @@ def build_request_meta(
     extra_fields: dict | None = None,
 ) -> dict:
     consumer_meta = getattr(REQUEST_LOCAL, "proxy_consumer", None)
+    requested_model = str((request_payload or {}).get("model") or "").strip() if isinstance(request_payload, dict) else ""
     request_meta = {
         "request_id": request_id,
         "method": request.method,
@@ -3750,6 +3767,8 @@ def build_request_meta(
         "upstream_attempt_chain": attempt_route_chain,
         "protocol": protocol,
         "request_repairs": request_repairs,
+        "requested_model": requested_model,
+        "request_model_present": bool(requested_model),
     }
     if isinstance(consumer_meta, dict):
         request_meta.update(
@@ -9657,6 +9676,7 @@ register_http_routes(
 )
 
 admin_analytics_service = AdminConsoleService(storage=storage, request_recorder=request_recorder)
+admin_analytics_service.proxy_pools = PROXY_POOLS
 account_portal_service = AccountPortalService(admin_analytics_service)
 set_account_auth_handlers(
     authenticator=account_portal_service.authenticate_account,

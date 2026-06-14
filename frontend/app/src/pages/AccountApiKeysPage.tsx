@@ -723,11 +723,21 @@ function readRawKeySecret(keyId: string): string {
 }
 
 function getDefaultAccountModel(channels: AdminChannel[]): string {
+  const availableModels = new Set<string>();
+  for (const channel of channels) {
+    for (const modelId of channel.available_model_ids || []) {
+      const model = String(modelId || '').trim();
+      if (model) availableModels.add(model);
+    }
+  }
   for (const channel of channels) {
     for (const pricing of channel.model_pricing || []) {
       const model = String(pricing.model || '').trim();
-      if (model) return model;
+      if (model && (!availableModels.size || availableModels.has(model))) return model;
     }
+  }
+  for (const model of availableModels) {
+    if (model) return model;
   }
   return 'deepseek-v4-flash';
 }

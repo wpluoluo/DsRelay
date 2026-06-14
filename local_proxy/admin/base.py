@@ -36,6 +36,7 @@ class AdminServiceBase:
     def __init__(self, storage: Any = None, request_recorder: Any = None):
         self.storage = storage
         self.request_recorder = request_recorder
+        self.proxy_pools = []
 
     def _load_recent_requests(self, limit: int = 5000) -> list[dict]:
         rows: list[dict] = []
