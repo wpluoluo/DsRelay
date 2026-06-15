@@ -252,6 +252,42 @@ class PromptCacheHintTests(unittest.TestCase):
         self.assertTrue(metrics["reasoning_disabled_for_tool_choice"])
         self.assertEqual(set(metrics["reasoning_removed_fields"]), {"reasoning_effort", "thinking"})
 
+    def test_opencode_required_tool_choice_is_downgraded_to_auto(self):
+        payload = {
+            "model": "deepseek-v4-flash-free",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "Read",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+            "tool_choice": "required",
+        }
+        route_policy = {
+            "reasoning_effort": "high",
+            "prompt_cache_mode": "exact",
+            "prompt_cache_hints_mode": "auto",
+            "prompt_cache_provider": "auto",
+            "prompt_cache_retention": "24h",
+            "max_output_tokens": 0,
+        }
+
+        updated, repairs, metrics = apply_route_policy_to_payload(
+            "chat/completions",
+            payload,
+            route_policy,
+            upstream_url="https://opencode.ai/zen/v1/chat/completions",
+            session_affinity_key="session:v1:test",
+        )
+
+        self.assertEqual(updated["tool_choice"], "auto")
+        self.assertEqual(repairs, 1)
+        self.assertTrue(metrics["tool_choice_downgraded"])
+
     def test_openai_tool_choice_keeps_reasoning_effort(self):
         payload = {
             "model": "gpt-test",

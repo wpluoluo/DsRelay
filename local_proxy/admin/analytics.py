@@ -596,9 +596,39 @@ class AdminAnalyticsMixin(AdminServiceBase):
         target = coerce_text(group_id)
         if not target:
             raise ValueError("group_id is required")
-        if not self.storage.get_admin_group(target):
+        stored_group = self.storage.get_admin_group(target)
+        if stored_group:
+            self.storage.delete_admin_group(target)
+        elif not self._is_runtime_default_group_id(target):
             raise ValueError("group not found")
-        self.storage.delete_admin_group(target)
+        else:
+            existing_rows = self.storage.list_admin_account_groups()
+            membership_by_account: dict[str, set[str]] = {}
+            for row in existing_rows:
+                account_id = coerce_text(row.get("account_id"))
+                group_id = coerce_text(row.get("group_id"))
+                if not account_id or not group_id:
+                    continue
+                membership_by_account.setdefault(account_id, set()).add(group_id)
+            for account_id, group_ids in membership_by_account.items():
+                if target not in group_ids:
+                    continue
+                next_group_ids = sorted(group_id for group_id in group_ids if group_id != target)
+                self.storage.replace_admin_account_groups(account_id, next_group_ids)
+            if hasattr(self, "_load_admin_api_keys") and hasattr(self, "_save_admin_api_keys"):
+                api_keys = self._load_admin_api_keys()
+                next_api_keys = []
+                changed_api_keys = False
+                for item in api_keys:
+                    if not isinstance(item, dict):
+                        continue
+                    if coerce_text(item.get("group_id")) == target:
+                        changed_api_keys = True
+                        next_api_keys.append({**item, "group_id": "", "updated_at": time.time()})
+                    else:
+                        next_api_keys.append(item)
+                if changed_api_keys:
+                    self._save_admin_api_keys(next_api_keys)
         if hasattr(self, "_load_admin_channels") and hasattr(self, "_save_admin_channels"):
             items = self._load_admin_channels()
             next_items = []

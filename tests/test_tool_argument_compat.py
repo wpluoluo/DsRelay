@@ -839,6 +839,22 @@ class ToolArgumentCompatTests(unittest.TestCase):
         self.assertEqual(assistant_messages[0]["content"], "I will inspect that.")
         self.assertNotIn("tool_calls", assistant_messages[0])
 
+    def test_normalize_request_drops_empty_assistant_message_without_tool_calls(self):
+        payload = {
+            "model": "demo",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "   "},
+                {"role": "user", "content": "continue"},
+            ],
+        }
+
+        normalized, repairs = normalize_openai_request_payload(payload)
+
+        self.assertGreaterEqual(repairs, 1)
+        roles = [message["role"] for message in normalized["messages"] if isinstance(message, dict)]
+        self.assertEqual(roles.count("assistant"), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -91,6 +91,10 @@ class AdminServiceBase:
         if missing:
             raise ValueError(f"group not found: {', '.join(missing)}")
 
+    def _is_runtime_default_group_id(self, group_id: str) -> bool:
+        target = coerce_text(group_id)
+        return target.startswith("default:") and len(target) > len("default:")
+
     def _validate_group_set(self, group_ids: list[str]) -> None:
         normalized = self._normalize_group_ids(group_ids)
         self._validate_group_ids_exist(normalized)

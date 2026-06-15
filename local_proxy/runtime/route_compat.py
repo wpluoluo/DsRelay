@@ -33,6 +33,7 @@ def apply_deepseek_tool_choice_reasoning_compat(
         "reasoning_disabled_for_tool_choice": False,
         "reasoning_compat_provider": "",
         "reasoning_removed_fields": [],
+        "tool_choice_downgraded": False,
     }
     if not isinstance(payload, dict):
         return payload, 0, metrics
@@ -47,10 +48,14 @@ def apply_deepseek_tool_choice_reasoning_compat(
         if field in next_payload:
             next_payload.pop(field, None)
             removed_fields.append(field)
+    tool_choice = next_payload.get("tool_choice")
+    if isinstance(tool_choice, str) and tool_choice.strip().lower() == "required":
+        next_payload["tool_choice"] = "auto"
+        metrics["tool_choice_downgraded"] = True
     metrics["reasoning_disabled_for_tool_choice"] = True
     metrics["reasoning_compat_provider"] = "deepseek"
     metrics["reasoning_removed_fields"] = removed_fields
-    return next_payload, len(removed_fields), metrics
+    return next_payload, len(removed_fields) + (1 if metrics["tool_choice_downgraded"] else 0), metrics
 
 
 def should_skip_reasoning_effort_for_tool_choice(
@@ -59,4 +64,3 @@ def should_skip_reasoning_effort_for_tool_choice(
     upstream_url: str = "",
 ) -> bool:
     return payload_uses_tool_choice(payload) and route_is_deepseek_tool_choice_sensitive(upstream_url, payload)
-

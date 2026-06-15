@@ -237,6 +237,15 @@ class AdminUserKeyBalanceTests(unittest.TestCase):
         self.assertEqual(storage.memberships["acct_a"], {"group_a"})
         self.assertEqual(storage.payment_channels["channel_a"]["config"]["allowed_group_ids"], ["group_a"])
 
+    def test_delete_runtime_default_group_does_not_raise(self):
+        storage = FakeUserKeyBalanceStorage(memberships={"acct_a": {"group_a"}})
+        service = AdminConsoleService(storage=storage)
+
+        result = service.delete_group("default:account_api_key")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["id"], "default:account_api_key")
+
     def test_balance_adjustment_records_events(self):
         storage = FakeUserKeyBalanceStorage()
         service = AdminConsoleService(storage=storage)

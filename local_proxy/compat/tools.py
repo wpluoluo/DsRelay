@@ -2951,6 +2951,13 @@ def normalize_openai_messages(messages, tool_schemas: dict | None = None) -> tup
                 normalized_message["tool_calls"] = normalized_tool_calls
                 repairs += repaired_count
 
+        if normalized_message.get("role") == "assistant":
+            has_tool_calls = bool(normalized_message.get("tool_calls"))
+            has_meaningful_content = message_has_meaningful_assistant_content(normalized_message)
+            if not has_tool_calls and not has_meaningful_content:
+                repairs += 1
+                continue
+
         normalized_messages.append(normalized_message)
 
     normalized_messages, chain_repairs = normalize_tool_message_chain(normalized_messages, tool_schemas)
